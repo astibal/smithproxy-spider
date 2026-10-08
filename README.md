@@ -27,8 +27,9 @@ SPIDER_SMITHPROXY_KEY='configured-api-key' ./build/smithproxy-spider \
 
 Smithproxy must have `settings.webhook.enabled=true` and
 `settings.webhook.api_override=true`. Spider exchanges the configured API key
-for session tokens, renews the 60-second webhook lease every 20 seconds, and
-adds a process-local random token to its callback URL.
+for session tokens, acquires an owned v2 webhook lease (with automatic fallback
+to the legacy API), renews it every 20 seconds, and adds a process-local random
+token to its callback URL.
 
 Serve `frontend/` on the workstation, for example:
 

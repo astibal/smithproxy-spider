@@ -70,6 +70,40 @@ bool SmithproxyClient::authorize() {
 }
 
 bool SmithproxyClient::renew_webhook() {
+    if (!legacy_webhook_api_) {
+        auto params = nlohmann::json{{"url", config_.callback_url},
+                                     {"tls_verify", config_.verify_tls},
+                                     {"ttl_seconds", 60}};
+        if (!lease_id_.empty()) params["lease_id"] = lease_id_;
+        const auto response = post_json(config_.api_url + "/api/v2/webhook/lease",
+            {{"auth_token", auth_token_}, {"csrf_token", csrf_token_}, {"params", std::move(params)}},
+            config_.verify_tls);
+        if (!response.error.empty()) {
+            publish_status("error", "v2 lease: " + response.error);
+            return false;
+        }
+        if (response.status == 404) {
+            legacy_webhook_api_ = true;
+            publish_status("authorized", "Smithproxy uses legacy webhook API");
+        } else {
+            try {
+                const auto json = nlohmann::json::parse(response.body);
+                if ((response.status == 200 || response.status == 201) && json.contains("lease_id")) {
+                    lease_id_ = json.at("lease_id").get<std::string>();
+                    publish_status("connected", response.status == 201
+                        ? "owned webhook lease acquired" : "owned webhook lease renewed");
+                    return true;
+                }
+                publish_status("error", "v2 webhook lease rejected (HTTP " +
+                               std::to_string(response.status) + ")");
+                return false;
+            } catch (const nlohmann::json::exception&) {
+                publish_status("error", "v2 lease returned invalid JSON");
+                return false;
+            }
+        }
+    }
+
     const nlohmann::json request = {
         {"auth_token", auth_token_}, {"csrf_token", csrf_token_},
         {"params", {{"rande_url", config_.callback_url}, {"rande_tls_verify", config_.verify_tls}}}
@@ -87,6 +121,14 @@ bool SmithproxyClient::renew_webhook() {
     }
 }
 
+void SmithproxyClient::release_webhook() {
+    if (legacy_webhook_api_ || lease_id_.empty() || auth_token_.empty() || csrf_token_.empty()) return;
+    const auto response = post_json(config_.api_url + "/api/v2/webhook/lease/release",
+        {{"auth_token", auth_token_}, {"csrf_token", csrf_token_},
+         {"params", {{"lease_id", lease_id_}}}}, config_.verify_tls);
+    if (response.error.empty() && response.status == 200) lease_id_.clear();
+}
+
 void SmithproxyClient::run(std::atomic_bool& stop) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     publish_status("connecting");
@@ -102,6 +144,7 @@ void SmithproxyClient::run(std::atomic_bool& stop) {
         const auto ticks = std::max<std::int64_t>(1, config_.renew_interval.count()*10);
         for (std::int64_t i=0; i<ticks && !stop.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    release_webhook();
     publish_status("stopped");
     curl_global_cleanup();
 }

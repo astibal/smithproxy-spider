@@ -6,6 +6,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 API_KEY = "integration-key"
+lease_id = "fake-owned-lease"
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
@@ -34,6 +35,26 @@ class Handler(BaseHTTPRequestHandler):
             callback = body["params"]["rande_url"]
             self.reply(200, {"status": "accepted"})
             threading.Thread(target=send_ping, args=(callback,), daemon=True).start()
+            return
+        if self.path == "/api/v2/webhook/lease":
+            if body.get("auth_token") != "auth" or body.get("csrf_token") != "csrf":
+                self.reply(401, {"error": "access denied"})
+                return
+            params = body["params"]
+            presented = params.get("lease_id")
+            if presented not in (None, lease_id):
+                self.reply(409, {"status": "conflict"})
+                return
+            self.reply(200 if presented else 201,
+                       {"status": "renewed" if presented else "acquired",
+                        "lease_id": lease_id, "expires_at": int(time.time()) + 60})
+            threading.Thread(target=send_ping, args=(params["url"],), daemon=True).start()
+            return
+        if self.path == "/api/v2/webhook/lease/release":
+            if body.get("params", {}).get("lease_id") != lease_id:
+                self.reply(409, {"status": "conflict"})
+                return
+            self.reply(200, {"status": "released"})
             return
         self.reply(404, {"error": "not found"})
 

@@ -22,10 +22,13 @@ public:
 private:
     bool authorize();
     bool renew_webhook();
+    void release_webhook();
     void publish_status(std::string state, std::string detail = {});
     SmithproxyConfig config_;
     SessionStore& store_;
     std::string auth_token_;
     std::string csrf_token_;
+    std::string lease_id_;
+    bool legacy_webhook_api_{};
 };
 } // namespace spider
