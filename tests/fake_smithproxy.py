@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -42,11 +43,14 @@ def send_ping(callback):
         "type": "proxy", "instance": "integration", "proxies": []
     }).encode()
     request = urllib.request.Request(callback, data=payload, headers={"Content-Type": "application/json"})
-    try:
-        urllib.request.urlopen(request, timeout=3).read()
-        print(f"callback delivered: {callback}", flush=True)
-    except OSError as error:
-        print(f"callback failed: {callback}: {error}", flush=True)
+    for _ in range(30):
+        try:
+            urllib.request.urlopen(request, timeout=1).read()
+            print(f"callback delivered: {callback}", flush=True)
+            return
+        except OSError:
+            time.sleep(0.1)
+    print(f"callback failed: {callback}", flush=True)
 
 if __name__ == "__main__":
     ThreadingHTTPServer(("127.0.0.1", 15555), Handler).serve_forever()
