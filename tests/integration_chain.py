@@ -6,12 +6,15 @@ import sys
 import threading
 import time
 import urllib.request
+import urllib.error
 from http.server import ThreadingHTTPServer
 
 from fake_smithproxy import Handler
 
-def get_json(url):
-    with urllib.request.urlopen(url, timeout=1) as response:
+def get_json(url, token=None):
+    headers = {"X-Spider-Token": token} if token else {}
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=1) as response:
         return json.load(response)
 
 def main():
@@ -26,6 +29,7 @@ def main():
     probe.server_close()
     env = os.environ.copy()
     env["SPIDER_SMITHPROXY_KEY"] = "integration-key"
+    env["SPIDER_TOKEN"] = "frontend-key"
     process = subprocess.Popen([
         binary, "--port", str(spider_port),
         "--smithproxy-url", f"http://127.0.0.1:{api_port}",
@@ -35,15 +39,21 @@ def main():
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             try:
-                events = get_json(f"http://127.0.0.1:{spider_port}/api/events")["events"]
+                events_url = f"http://127.0.0.1:{spider_port}/api/events"
+                events = get_json(events_url, "frontend-key")["events"]
                 actions = [entry["event"].get("action") for entry in events]
                 states = [entry["event"].get("state") for entry in events]
                 if "ping" in actions and "connected" in states:
-                    status = get_json(f"http://127.0.0.1:{spider_port}/api/status")
-                    ready = get_json(f"http://127.0.0.1:{spider_port}/api/ready")
+                    status = get_json(f"http://127.0.0.1:{spider_port}/api/status", "frontend-key")
+                    ready = get_json(f"http://127.0.0.1:{spider_port}/api/ready", "frontend-key")
                     assert status["callbacks_received"] >= 1
                     assert status["active_sessions"] == 0
                     assert ready["ready"] is True
+                    try:
+                        get_json(events_url)
+                        raise AssertionError("browser API accepted a missing token")
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 401
                     return 0
             except OSError:
                 pass

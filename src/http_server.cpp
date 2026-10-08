@@ -98,6 +98,16 @@ private:
         if (method == "GET" && url == "/api/health") {
             return json_response(200, {{"status", "ok"}, {"revision", store_.revision()}});
         }
+        // The unguessable callback path is a separate Smithproxy -> Spider
+        // credential. Smithproxy cannot attach the browser API header.
+        if (method == "POST" && url == callback_path()) {
+            try {
+                const auto reply = process_webhook(store_, nlohmann::json::parse(body));
+                return json_response(reply.status, reply.body);
+            } catch (const nlohmann::json::exception&) {
+                return json_response(400, {{"error", "invalid JSON"}});
+            }
+        }
         if (!authenticated(connection)) return json_response(401, {{"error", "unauthorized"}});
         if (method == "GET" && url == "/api/status") return json_response(200, store_.status());
         if (method == "GET" && url == "/api/ready") {
@@ -111,14 +121,6 @@ private:
                 std::from_chars(value, value + std::strlen(value), after);
             }
             return json_response(200, store_.events_after(after));
-        }
-        if (method == "POST" && url == callback_path()) {
-            try {
-                const auto reply = process_webhook(store_, nlohmann::json::parse(body));
-                return json_response(reply.status, reply.body);
-            } catch (const nlohmann::json::exception&) {
-                return json_response(400, {{"error", "invalid JSON"}});
-            }
         }
         return json_response(404, {{"error", "not found"}});
     }
