@@ -1,0 +1,3 @@
+[submodule "external/lmhpp"]
+	path = external/lmhpp
+	url = https://github.com/astibal/lmhpp.git
