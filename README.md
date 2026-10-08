@@ -1,8 +1,8 @@
 # Smithproxy Spider
 
-Small, fast C++ webhook observer/controller for Smithproxy. It uses `lmhpp` and
-`libmicrohttpd`, keeps bounded in-memory state, and serves its browser UI from
-the same binary.
+Small, fast C++ webhook observer/controller for Smithproxy. The C++ backend uses
+`lmhpp` and `libmicrohttpd`; the frontend is a separate static application and
+can run on another machine.
 
 ## Build
 
@@ -13,23 +13,37 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Dependencies: C++20 compiler, CMake, `libmicrohttpd`, `pkg-config`, and
-`nlohmann-json`.
+Dependencies: C++20 compiler, CMake, `libmicrohttpd`, `libcurl`, `pkg-config`,
+and `nlohmann-json`.
 
 ## Run
 
 ```sh
-./build/smithproxy-spider --bind 127.0.0.1 --port 8080
+SPIDER_SMITHPROXY_KEY='configured-api-key' ./build/smithproxy-spider \
+  --bind 0.0.0.0 --port 8080 \
+  --smithproxy-url https://127.0.0.1:55555 \
+  --smithproxy-insecure
 ```
 
-Open <http://127.0.0.1:8080/> and configure Smithproxy to POST webhooks to
-`http://127.0.0.1:8080/webhook`.
+Smithproxy must have `settings.webhook.enabled=true` and
+`settings.webhook.api_override=true`. Spider exchanges the configured API key
+for session tokens, renews the 60-second webhook lease every 20 seconds, and
+adds a process-local random token to its callback URL.
 
-Keep this initial version bound to loopback. `SPIDER_TOKEN` enables an
-`X-Spider-Token` check, but current Smithproxy webhook requests cannot attach
-that header. Remote deployment therefore needs either a trusted tunnel/reverse
-proxy or the planned authenticated registration protocol; secrets are
-deliberately not accepted in URL paths.
+Serve `frontend/` on the workstation, for example:
+
+```sh
+python3 -m http.server 5173 --directory frontend
+```
+
+Open <http://127.0.0.1:5173/> and enter the Helmut backend URL, for example
+`http://192.0.2.10:8080`.
+
+The initial Helmut deployment may bind to `0.0.0.0` on the isolated test link.
+Do not use that setup on an untrusted network. `SPIDER_TOKEN` can protect the
+browser API; the Smithproxy callback is protected separately by a random URL
+suffix because the current webhook sender cannot attach an authorization
+header.
 
 The first milestone intentionally returns immediately: content is unchanged and
 access requests are accepted. No request waits for a UI action.
@@ -37,9 +51,31 @@ access requests are accepted. No request waits for a UI action.
 ## API
 
 ```text
-GET  /                     embedded UI
+GET  /                     service identity
 GET  /api/health           unprotected liveness endpoint
 GET  /api/sessions         current sessions
 GET  /api/events?after=N   bounded event history
-POST /webhook              Smithproxy webhook receiver
+POST /webhook/<token>      Smithproxy webhook receiver
 ```
+
+The actual callback path includes a random suffix and is registered
+automatically. The frontend never receives the Smithproxy API key.
+
+## Local chain test
+
+Terminal 1:
+
+```sh
+python3 tests/fake_smithproxy.py
+```
+
+Terminal 2:
+
+```sh
+SPIDER_SMITHPROXY_KEY=integration-key ./build/smithproxy-spider \
+  --port 18080 --smithproxy-url http://127.0.0.1:15555 \
+  --callback-url http://127.0.0.1:18080/webhook
+```
+
+Then `curl http://127.0.0.1:18080/api/events` shows authorization, webhook
+lease renewal, and a callback `ping` from `fake-smithproxy`.

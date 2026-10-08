@@ -1,7 +1,6 @@
 #include "http_server.hpp"
 
 #include "session_store.hpp"
-#include "ui.hpp"
 #include "webhook.hpp"
 
 #include <lmhttpd.hpp>
@@ -40,7 +39,8 @@ public:
         const std::string_view p(path);
         const std::string_view m(method);
         return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/sessions" || p == "/api/events")) ||
-               (m == "POST" && p == "/webhook");
+               (m == "OPTIONS" && p.starts_with("/api/")) ||
+               (m == "POST" && p == callback_path());
     }
 
     lmh::ConnectionState* create_state() override { return new RequestState(*this); }
@@ -92,9 +92,8 @@ private:
 
     Response route(MHD_Connection* connection, const std::string_view url,
                    const std::string_view method, const std::string& body) {
-        if (method == "GET" && url == "/") {
-            return {200, "text/html; charset=utf-8", std::string(kIndexHtml)};
-        }
+        if (method == "GET" && url == "/") return json_response(200, {{"service", "smithproxy-spider"}});
+        if (method == "OPTIONS") return {204, "text/plain", {}};
         if (method == "GET" && url == "/api/health") {
             return json_response(200, {{"status", "ok"}, {"revision", store_.revision()}});
         }
@@ -107,7 +106,7 @@ private:
             }
             return json_response(200, store_.events_after(after));
         }
-        if (method == "POST" && url == "/webhook") {
+        if (method == "POST" && url == callback_path()) {
             try {
                 const auto reply = process_webhook(store_, nlohmann::json::parse(body));
                 return json_response(reply.status, reply.body);
@@ -123,6 +122,9 @@ private:
         if (wire == nullptr) return MHD_NO;
         MHD_add_response_header(wire, MHD_HTTP_HEADER_CONTENT_TYPE, response.type.c_str());
         MHD_add_response_header(wire, MHD_HTTP_HEADER_CACHE_CONTROL, "no-store");
+        MHD_add_response_header(wire, "Access-Control-Allow-Origin", "*");
+        MHD_add_response_header(wire, "Access-Control-Allow-Headers", "Content-Type, X-Spider-Token");
+        MHD_add_response_header(wire, "Access-Control-Allow-Methods", "GET, OPTIONS");
         const auto result = MHD_queue_response(connection, response.status, wire);
         MHD_destroy_response(wire);
         state.response_sent = result == MHD_YES;
@@ -131,6 +133,10 @@ private:
 
     const ServerConfig& config_;
     SessionStore& store_;
+
+    [[nodiscard]] std::string callback_path() const {
+        return config_.callback_token.empty() ? "/webhook" : "/webhook/" + config_.callback_token;
+    }
 };
 
 } // namespace
