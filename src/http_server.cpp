@@ -38,7 +38,8 @@ public:
     bool validPath(const char* path, const char* method) override {
         const std::string_view p(path);
         const std::string_view m(method);
-        return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/sessions" || p == "/api/events")) ||
+        return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/ready" ||
+                               p == "/api/status" || p == "/api/sessions" || p == "/api/events")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
                (m == "POST" && p == callback_path());
     }
@@ -98,6 +99,11 @@ private:
             return json_response(200, {{"status", "ok"}, {"revision", store_.revision()}});
         }
         if (!authenticated(connection)) return json_response(401, {{"error", "unauthorized"}});
+        if (method == "GET" && url == "/api/status") return json_response(200, store_.status());
+        if (method == "GET" && url == "/api/ready") {
+            auto status = store_.status();
+            return json_response(status.value("ready", false) ? 200U : 503U, status);
+        }
         if (method == "GET" && url == "/api/sessions") return json_response(200, store_.snapshot());
         if (method == "GET" && url == "/api/events") {
             std::uint64_t after{};

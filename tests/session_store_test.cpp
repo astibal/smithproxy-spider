@@ -13,11 +13,17 @@ int main() {
     assert(reply.status == 200);
     assert(store.snapshot()["sessions"].size() == 1);
     assert(store.snapshot()["sessions"][0]["id"] == "42");
+    assert(store.status()["callbacks_received"] == 1);
+    assert(store.status()["active_sessions"] == 1);
 
     assert(spider::process_webhook(store, {{"action", "connection-info"}, {"id", "42"}}).status == 200);
     assert(spider::process_webhook(store, {{"action", "connection-stop"}, {"id", "42"}}).status == 200);
     assert(store.snapshot()["sessions"].empty());
     assert(store.events_after(0)["events"].size() == 2);
+
+    store.apply({{"action", "spider-smithproxy-status"}, {"state", "connected"}});
+    assert(store.status()["ready"] == true);
+    assert(store.status()["callbacks_received"] == 3);
 
     const auto invalid = spider::process_webhook(store, {{"action", "wat"}});
     assert(invalid.status == 422);

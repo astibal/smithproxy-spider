@@ -1,0 +1,19 @@
+[Unit]
+Description=Smithproxy Spider test backend
+After=network-online.target smithproxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/smithproxy-spider.env
+ExecStart=/usr/local/bin/smithproxy-spider --bind 0.0.0.0 --port 8080 --smithproxy-url https://127.0.0.1:55555 --callback-url http://127.0.0.1:8080/webhook --smithproxy-insecure
+Restart=on-failure
+RestartSec=2
+DynamicUser=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

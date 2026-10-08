@@ -44,3 +44,4 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS smithproxy-spider RUNTIME DESTINATION bin)
+install(FILES deploy/smithproxy-spider.service DESTINATION lib/systemd/system)

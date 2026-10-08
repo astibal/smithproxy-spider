@@ -31,6 +31,13 @@ void SessionStore::apply(const nlohmann::json& event) {
     history_.push_back({rev, event});
     while (history_.size() > history_limit_) history_.pop_front();
 
+    if (action == "spider-smithproxy-status") {
+        smithproxy_status_ = event;
+    } else {
+        ++callback_count_;
+        last_callback_revision_ = rev;
+    }
+
     if (id.empty()) return;
     if (action == "connection-stop") {
         sessions_.erase(id);
@@ -45,6 +52,19 @@ void SessionStore::apply(const nlohmann::json& event) {
     if (session.state.empty()) session.state = "observed";
     session.revision = rev;
     session.last_event = event;
+}
+
+nlohmann::json SessionStore::status() const {
+    std::scoped_lock lock(mutex_);
+    const auto state = smithproxy_status_.value("state", "starting");
+    return {
+        {"revision", revision_},
+        {"ready", state == "connected"},
+        {"smithproxy", smithproxy_status_},
+        {"active_sessions", sessions_.size()},
+        {"callbacks_received", callback_count_},
+        {"last_callback_revision", last_callback_revision_},
+    };
 }
 
 nlohmann::json SessionStore::snapshot() const {
@@ -79,4 +99,3 @@ std::uint64_t SessionStore::revision() const {
 }
 
 } // namespace spider
-

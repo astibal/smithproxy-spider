@@ -28,6 +28,10 @@ std::string random_token() {
     }
     return result;
 }
+
+void trim_trailing_slashes(std::string& value) {
+    while (!value.empty() && value.back() == '/') value.pop_back();
+}
 }
 
 int main(int argc, char** argv) {
@@ -45,6 +49,7 @@ int main(int argc, char** argv) {
                          "  --bind ADDRESS               listen address\n"
                          "  --smithproxy-url URL         Smithproxy API base URL\n"
                          "  --callback-url URL           callback base URL visible to Smithproxy\n"
+                         "  --renew-seconds N            webhook lease refresh period (20)\n"
                          "  --smithproxy-insecure        disable Smithproxy API TLS verification\n"
                          "API key is read from SPIDER_SMITHPROXY_KEY.\n";
             return 0;
@@ -64,6 +69,15 @@ int main(int argc, char** argv) {
             smithproxy.api_url = argv[++i];
         } else if (arg == "--callback-url" && i + 1 < argc) {
             smithproxy.callback_url = argv[++i];
+        } else if (arg == "--renew-seconds" && i + 1 < argc) {
+            unsigned seconds{};
+            const std::string_view value(argv[++i]);
+            const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), seconds);
+            if (error != std::errc{} || end != value.data() + value.size() || seconds == 0 || seconds > 59) {
+                std::cerr << "Invalid webhook renewal period (expected 1..59 seconds)\n";
+                return 2;
+            }
+            smithproxy.renew_interval = std::chrono::seconds(seconds);
         } else if (arg == "--smithproxy-insecure") {
             smithproxy.verify_tls = false;
         } else {
@@ -76,9 +90,11 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, stop_handler);
     spider::SessionStore store;
     config.callback_token = random_token();
+    trim_trailing_slashes(smithproxy.api_url);
     if (smithproxy.callback_url.empty()) {
         smithproxy.callback_url = "http://127.0.0.1:" + std::to_string(config.port) + "/webhook";
     }
+    trim_trailing_slashes(smithproxy.callback_url);
     smithproxy.callback_url += "/" + config.callback_token;
     std::cout << "Spider listening on http://" << config.bind_address << ':' << config.port << '\n';
     std::thread client;

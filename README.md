@@ -45,6 +45,12 @@ browser API; the Smithproxy callback is protected separately by a random URL
 suffix because the current webhook sender cannot attach an authorization
 header.
 
+For a persistent test deployment, install `deploy/smithproxy-spider.service`,
+put the API key in `/etc/smithproxy-spider.env` as
+`SPIDER_SMITHPROXY_KEY=...`, and adjust `ExecStart` if Smithproxy does not use
+its default local API address. The supplied unit exposes Spider on all Helmut
+interfaces, but keeps the Smithproxy API and callback hop on loopback.
+
 The first milestone intentionally returns immediately: content is unchanged and
 access requests are accepted. No request waits for a UI action.
 
@@ -53,6 +59,8 @@ access requests are accepted. No request waits for a UI action.
 ```text
 GET  /                     service identity
 GET  /api/health           unprotected liveness endpoint
+GET  /api/ready            Smithproxy readiness (200/503)
+GET  /api/status           connection and callback counters
 GET  /api/sessions         current sessions
 GET  /api/events?after=N   bounded event history
 POST /webhook/<token>      Smithproxy webhook receiver

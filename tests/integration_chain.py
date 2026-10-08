@@ -39,6 +39,11 @@ def main():
                 actions = [entry["event"].get("action") for entry in events]
                 states = [entry["event"].get("state") for entry in events]
                 if "ping" in actions and "connected" in states:
+                    status = get_json(f"http://127.0.0.1:{spider_port}/api/status")
+                    ready = get_json(f"http://127.0.0.1:{spider_port}/api/ready")
+                    assert status["callbacks_received"] >= 1
+                    assert status["active_sessions"] == 0
+                    assert ready["ready"] is True
                     return 0
             except OSError:
                 pass

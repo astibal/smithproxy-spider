@@ -26,6 +26,7 @@ public:
     void apply(const nlohmann::json& event);
     [[nodiscard]] nlohmann::json snapshot() const;
     [[nodiscard]] nlohmann::json events_after(std::uint64_t revision) const;
+    [[nodiscard]] nlohmann::json status() const;
     [[nodiscard]] std::uint64_t revision() const;
 
 private:
@@ -40,8 +41,10 @@ private:
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Session> sessions_;
     std::deque<EventRecord> history_;
+    nlohmann::json smithproxy_status_{{"state", "starting"}};
+    std::uint64_t callback_count_{};
+    std::uint64_t last_callback_revision_{};
     std::uint64_t revision_{};
 };
 
 } // namespace spider
-
