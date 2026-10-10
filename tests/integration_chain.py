@@ -68,6 +68,10 @@ def main():
                     ready = get_json(f"http://127.0.0.1:{spider_port}/api/ready", "frontend-key")
                     assert status["callbacks_received"] >= 1
                     assert status["active_sessions"] == 0
+                    assert status["smithproxy"]["webhook_api"] == "v2-owned"
+                    assert status["smithproxy"]["lease_expires_at"] > 0
+                    assert status["last_callback"]["action"] == "ping"
+                    assert status["last_callback"]["received_at_ms"] > 0
                     assert ready["ready"] is True
                     try:
                         get_json(events_url)

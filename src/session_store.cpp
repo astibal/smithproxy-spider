@@ -1,8 +1,15 @@
 #include "session_store.hpp"
 
 #include <algorithm>
+#include <chrono>
 
 namespace spider {
+namespace {
+std::int64_t unix_time_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+} // namespace
 
 SessionStore::SessionStore(const std::size_t history_limit)
     : history_limit_(std::max<std::size_t>(history_limit, 1)) {}
@@ -25,17 +32,23 @@ std::string SessionStore::session_label(const nlohmann::json& event) {
 void SessionStore::apply(const nlohmann::json& event) {
     const auto action = event.value("action", "");
     const auto id = event.value("id", "");
+    auto stored_event = event;
+    const auto received_at_ms = unix_time_ms();
+    stored_event["spider_received_at_ms"] = received_at_ms;
 
     std::scoped_lock lock(mutex_);
     const auto rev = ++revision_;
-    history_.push_back({rev, event});
+    history_.push_back({rev, stored_event});
     while (history_.size() > history_limit_) history_.pop_front();
 
     if (action == "spider-smithproxy-status") {
-        smithproxy_status_ = event;
+        smithproxy_status_ = stored_event;
     } else {
         ++callback_count_;
         last_callback_revision_ = rev;
+        last_callback_at_ms_ = received_at_ms;
+        last_callback_action_ = action;
+        last_callback_source_ = event.value("source", "");
     }
 
     if (id.empty()) return;
@@ -51,7 +64,7 @@ void SessionStore::apply(const nlohmann::json& event) {
     session.state = action == "connection-start" ? "active" : session.state;
     if (session.state.empty()) session.state = "observed";
     session.revision = rev;
-    session.last_event = event;
+    session.last_event = std::move(stored_event);
 }
 
 nlohmann::json SessionStore::status() const {
@@ -64,6 +77,11 @@ nlohmann::json SessionStore::status() const {
         {"active_sessions", sessions_.size()},
         {"callbacks_received", callback_count_},
         {"last_callback_revision", last_callback_revision_},
+        {"last_callback", {
+            {"received_at_ms", last_callback_at_ms_},
+            {"action", last_callback_action_},
+            {"source", last_callback_source_},
+        }},
     };
 }
 

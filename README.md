@@ -106,8 +106,8 @@ The first runner owns a marked checkout in
 `/root/src/smithproxy-test-master`, creates network namespace `sxp-test`, and
 adds outbound NAT only for `10.254.77.2`. It generates fresh API and frontend
 keys under `/root/.local/state/smithproxy-spider-test/` on each start. The
-test veth uses MTU 1400 to avoid the SAS uplink's PMTU blackhole for full-size
-TLS ClientHello segments.
+test veth keeps the normal Ethernet MTU. Any upstream PMTU or MSS handling
+belongs on the network gateway, outside the test runner.
 
 Default test endpoints:
 

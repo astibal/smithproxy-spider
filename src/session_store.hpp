@@ -44,6 +44,9 @@ private:
     nlohmann::json smithproxy_status_{{"state", "starting"}};
     std::uint64_t callback_count_{};
     std::uint64_t last_callback_revision_{};
+    std::int64_t last_callback_at_ms_{};
+    std::string last_callback_action_;
+    std::string last_callback_source_;
     std::uint64_t revision_{};
 };
 

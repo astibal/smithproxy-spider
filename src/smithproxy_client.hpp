@@ -4,6 +4,8 @@
 #include <chrono>
 #include <string>
 
+#include <nlohmann/json.hpp>
+
 namespace spider {
 class SessionStore;
 
@@ -23,7 +25,8 @@ private:
     bool authorize();
     bool renew_webhook();
     void release_webhook();
-    void publish_status(std::string state, std::string detail = {});
+    void publish_status(std::string state, std::string detail = {},
+                        nlohmann::json metadata = nlohmann::json{});
     SmithproxyConfig config_;
     SessionStore& store_;
     std::string auth_token_;

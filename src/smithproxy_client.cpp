@@ -45,9 +45,14 @@ HttpResult post_json(const std::string& url, const nlohmann::json& body, bool ve
 SmithproxyClient::SmithproxyClient(SmithproxyConfig config, SessionStore& store)
     : config_(std::move(config)), store_(store) {}
 
-void SmithproxyClient::publish_status(std::string state, std::string detail) {
-    store_.apply({{"action", "spider-smithproxy-status"}, {"state", std::move(state)},
-                  {"detail", std::move(detail)}, {"api_url", config_.api_url}});
+void SmithproxyClient::publish_status(std::string state, std::string detail,
+                                      nlohmann::json metadata) {
+    auto event = nlohmann::json{{"action", "spider-smithproxy-status"},
+                                {"state", std::move(state)},
+                                {"detail", std::move(detail)},
+                                {"api_url", config_.api_url}};
+    if (metadata.is_object()) event.update(metadata);
+    store_.apply(event);
 }
 
 bool SmithproxyClient::authorize() {
@@ -91,7 +96,9 @@ bool SmithproxyClient::renew_webhook() {
                 if ((response.status == 200 || response.status == 201) && json.contains("lease_id")) {
                     lease_id_ = json.at("lease_id").get<std::string>();
                     publish_status("connected", response.status == 201
-                        ? "owned webhook lease acquired" : "owned webhook lease renewed");
+                        ? "owned webhook lease acquired" : "owned webhook lease renewed",
+                        {{"webhook_api", "v2-owned"},
+                         {"lease_expires_at", json.value("expires_at", std::int64_t{})}});
                     return true;
                 }
                 publish_status("error", "v2 webhook lease rejected (HTTP " +
@@ -114,7 +121,8 @@ bool SmithproxyClient::renew_webhook() {
         const auto json = nlohmann::json::parse(response.body);
         const bool accepted = response.status == 200 && json.value("status", "") == "accepted";
         publish_status(accepted ? "connected" : "error",
-                       accepted ? "webhook lease renewed" : "webhook registration rejected");
+                       accepted ? "webhook lease renewed" : "webhook registration rejected",
+                       {{"webhook_api", "legacy"}});
         return accepted;
     } catch (const nlohmann::json::exception&) {
         publish_status("error", "register returned invalid JSON"); return false;
