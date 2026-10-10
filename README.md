@@ -38,7 +38,9 @@ python3 -m http.server 5173 --directory frontend
 ```
 
 Open <http://127.0.0.1:5173/> and enter the Helmut backend URL, for example
-`http://192.0.2.10:8080`.
+`http://192.0.2.10:8080`. Smithproxy API URL, API key and TLS verification can
+then be configured directly in the page. The key is sent to Spider once and is
+not stored by the frontend.
 
 The initial Helmut deployment may bind to `0.0.0.0` on the isolated test link.
 Do not use that setup on an untrusted network. `SPIDER_TOKEN` can protect the
@@ -62,6 +64,7 @@ GET  /                     service identity
 GET  /api/health           unprotected liveness endpoint
 GET  /api/ready            Smithproxy readiness (200/503)
 GET  /api/status           connection and callback counters
+POST /api/config/smithproxy runtime Smithproxy URL and credentials
 GET  /api/sessions         current sessions
 GET  /api/events?after=N   bounded event history
 POST /webhook/<token>      Smithproxy webhook receiver

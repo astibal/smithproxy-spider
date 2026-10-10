@@ -1,6 +1,7 @@
 #include "http_server.hpp"
 #include "session_store.hpp"
 #include "smithproxy_client.hpp"
+#include "smithproxy_manager.hpp"
 
 #include <openssl/rand.h>
 
@@ -97,15 +98,16 @@ int main(int argc, char** argv) {
     trim_trailing_slashes(smithproxy.callback_url);
     smithproxy.callback_url += "/" + config.callback_token;
     std::cout << "Spider listening on http://" << config.bind_address << ':' << config.port << '\n';
-    std::thread client;
+    config.callback_url = smithproxy.callback_url;
+    spider::SmithproxyManager manager(store);
     if (!smithproxy.api_key.empty()) {
-        client = std::thread([&] { spider::SmithproxyClient(smithproxy, store).run(stop_requested); });
+        manager.configure(smithproxy);
     } else {
         store.apply({{"action", "spider-smithproxy-status"}, {"state", "disabled"},
                      {"detail", "SPIDER_SMITHPROXY_KEY is not set"}});
     }
-    const auto result = spider::run_http_server(config, store, stop_requested);
+    const auto result = spider::run_http_server(config, store, manager, stop_requested);
     stop_requested.store(true);
-    if (client.joinable()) client.join();
+    manager.stop();
     return result;
 }

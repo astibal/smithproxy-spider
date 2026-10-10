@@ -3,5 +3,11 @@
 <title>Smithproxy Spider</title><link rel="stylesheet" href="style.css"></head>
 <body><header><h1>Smithproxy Spider</h1><label>Backend <input id="backend" value="http://127.0.0.1:8080"></label><label>Token <input id="token" type="password"></label>
 <button id="connect">Connect</button><span id="status">idle</span></header>
-<main><section><h2>Chain</h2><pre id="chain">waiting for Spider</pre></section><section><h2>Events</h2><pre id="events"></pre></section></main>
+<main><div><section><h2>Smithproxy connection</h2>
+<label>API URL <input id="smithproxy-url" value="https://127.0.0.1:55555"></label>
+<label>API key <input id="smithproxy-key" type="password" autocomplete="off"></label>
+<label class="check"><input id="smithproxy-verify" type="checkbox" checked> Verify TLS certificate</label>
+<button id="configure">Connect Smithproxy</button><span id="configure-status"></span>
+</section><section><h2>Chain</h2><pre id="chain">waiting for Spider</pre></section></div>
+<section><h2>Events</h2><pre id="events"></pre></section></main>
 <script src="app.js"></script></body></html>

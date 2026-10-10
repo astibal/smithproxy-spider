@@ -17,6 +17,14 @@ def get_json(url, token=None):
     with urllib.request.urlopen(request, timeout=1) as response:
         return json.load(response)
 
+def post_json(url, body, token=None):
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-Spider-Token"] = token
+    request = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
+    with urllib.request.urlopen(request, timeout=2) as response:
+        return response.status, json.load(response)
+
 def main():
     binary = os.path.abspath(sys.argv[1])
     api = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -28,7 +36,6 @@ def main():
     spider_port = probe.server_address[1]
     probe.server_close()
     env = os.environ.copy()
-    env["SPIDER_SMITHPROXY_KEY"] = "integration-key"
     env["SPIDER_TOKEN"] = "frontend-key"
     process = subprocess.Popen([
         binary, "--port", str(spider_port),
@@ -37,6 +44,19 @@ def main():
     ], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                get_json(f"http://127.0.0.1:{spider_port}/api/health")
+                break
+            except OSError:
+                time.sleep(0.05)
+        status_code, configured = post_json(
+            f"http://127.0.0.1:{spider_port}/api/config/smithproxy",
+            {"url": f"http://127.0.0.1:{api_port}", "api_key": "integration-key",
+             "verify_tls": False}, "frontend-key")
+        assert status_code == 202
+        assert configured["status"] == "connecting"
+
         while time.monotonic() < deadline:
             try:
                 events_url = f"http://127.0.0.1:{spider_port}/api/events"

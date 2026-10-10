@@ -1,6 +1,7 @@
 #include "http_server.hpp"
 
 #include "session_store.hpp"
+#include "smithproxy_manager.hpp"
 #include "webhook.hpp"
 
 #include <lmhttpd.hpp>
@@ -33,7 +34,8 @@ bool constant_time_equal(const std::string_view lhs, const std::string_view rhs)
 
 class SpiderController final : public lmh::Controller {
 public:
-    SpiderController(const ServerConfig& config, SessionStore& store) : config_(config), store_(store) {}
+    SpiderController(const ServerConfig& config, SessionStore& store, SmithproxyManager& smithproxy)
+        : config_(config), store_(store), smithproxy_(smithproxy) {}
 
     bool validPath(const char* path, const char* method) override {
         const std::string_view p(path);
@@ -41,6 +43,7 @@ public:
         return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/ready" ||
                                p == "/api/status" || p == "/api/sessions" || p == "/api/events")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
+               (m == "POST" && p == "/api/config/smithproxy") ||
                (m == "POST" && p == callback_path());
     }
 
@@ -122,6 +125,26 @@ private:
             }
             return json_response(200, store_.events_after(after));
         }
+        if (method == "POST" && url == "/api/config/smithproxy") {
+            try {
+                const auto request = nlohmann::json::parse(body);
+                SmithproxyConfig client_config;
+                client_config.api_url = request.value("url", "");
+                client_config.api_key = request.value("api_key", "");
+                client_config.callback_url = request.value("callback_url", config_.callback_url);
+                client_config.verify_tls = request.value("verify_tls", true);
+                if (client_config.api_url.empty() || client_config.api_key.empty()) {
+                    return json_response(400, {{"error", "url and api_key are required"}});
+                }
+                while (client_config.api_url.size() > 1 && client_config.api_url.back() == '/') {
+                    client_config.api_url.pop_back();
+                }
+                smithproxy_.configure(std::move(client_config));
+                return json_response(202, {{"status", "connecting"}});
+            } catch (const nlohmann::json::exception&) {
+                return json_response(400, {{"error", "invalid configuration JSON"}});
+            }
+        }
         return json_response(404, {{"error", "not found"}});
     }
 
@@ -132,7 +155,7 @@ private:
         MHD_add_response_header(wire, MHD_HTTP_HEADER_CACHE_CONTROL, "no-store");
         MHD_add_response_header(wire, "Access-Control-Allow-Origin", "*");
         MHD_add_response_header(wire, "Access-Control-Allow-Headers", "Content-Type, X-Spider-Token");
-        MHD_add_response_header(wire, "Access-Control-Allow-Methods", "GET, OPTIONS");
+        MHD_add_response_header(wire, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         const auto result = MHD_queue_response(connection, response.status, wire);
         MHD_destroy_response(wire);
         state.response_sent = result == MHD_YES;
@@ -141,6 +164,7 @@ private:
 
     const ServerConfig& config_;
     SessionStore& store_;
+    SmithproxyManager& smithproxy_;
 
     [[nodiscard]] std::string callback_path() const {
         return config_.callback_token.empty() ? "/webhook" : "/webhook/" + config_.callback_token;
@@ -149,11 +173,12 @@ private:
 
 } // namespace
 
-int run_http_server(const ServerConfig& config, SessionStore& store, std::atomic_bool& stop) {
+int run_http_server(const ServerConfig& config, SessionStore& store,
+                    SmithproxyManager& smithproxy, std::atomic_bool& stop) {
     lmh::WebServer server(config.port);
     server.options().bind_address = config.bind_address;
     server.options().handler_should_terminate = [&stop] { return stop.load(); };
-    server.addController(std::make_shared<SpiderController>(config, store));
+    server.addController(std::make_shared<SpiderController>(config, store, smithproxy));
     return server.start() ? 0 : 1;
 }
 

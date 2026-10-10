@@ -14,6 +14,7 @@ find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 add_library(spider_core
     src/session_store.cpp
     src/smithproxy_client.cpp
+    src/smithproxy_manager.cpp
     src/webhook.cpp
 )
 target_include_directories(spider_core PUBLIC src)
