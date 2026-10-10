@@ -155,3 +155,11 @@ Smithproxy namespace:
 tools/run-test-spider.sh stop
 tools/run-test-smithproxy.sh stop
 ```
+
+`start` preserves the generated CA, API/frontend tokens and `smithproxy.cfg`,
+including configuration persisted with `save config`. Use the explicit reset
+command only when a fresh test identity and configuration are wanted:
+
+```sh
+tools/run-test-smithproxy.sh reset
+```

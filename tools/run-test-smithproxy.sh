@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ACTION=${1:-start}
+RESET_STATE=false
 TEST_ROOT=${SMITHPROXY_TEST_ROOT:-${HOME}/smithproxy-spider-test}
 STATE_DIR=${SMITHPROXY_TEST_STATE_DIR:-$TEST_ROOT/state}
 SOURCE_DIR=${SMITHPROXY_TEST_SOURCE_DIR:-$TEST_ROOT/src/smithproxy}
@@ -132,8 +133,9 @@ fetch)
     mkdir -p "$STATE_DIR"
     sync_source "$(source_ref "$@")" true
     exit 0 ;;
+reset) RESET_STATE=true ;;
 start) ;;
-*) echo "Usage: $0 {start|stop|status|fetch [ref]}" >&2; exit 2 ;;
+*) echo "Usage: $0 {start|stop|status|fetch [ref]|reset}" >&2; exit 2 ;;
 esac
 
 require_root
@@ -148,12 +150,31 @@ cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 cmake --build "$BUILD_DIR" -j"$(nproc)" --target smithproxy
 
-API_KEY=$(openssl rand -hex 24)
-SPIDER_TOKEN=$(openssl rand -hex 24)
 CONFIG="$STATE_DIR/smithproxy.cfg"
 CERT_DIR="$STATE_DIR/certs/default"
-mkdir -p "$CERT_DIR"
-cp "$SOURCE_DIR/etc/certs/default/sslca.json" "$CERT_DIR/sslca.json"
+STATE_ENV="$STATE_DIR/state.env"
+
+if [[ $RESET_STATE == true ]]; then
+    rm -rf "$STATE_DIR/certs"
+    rm -f "$CONFIG" "$STATE_ENV" "$STATE_DIR/server.csr" "$STATE_DIR/server.ext"
+fi
+
+if [[ -e "$CONFIG" || -e "$STATE_ENV" || -e "$CERT_DIR/ca-cert.pem" ]]; then
+    for required in "$CONFIG" "$STATE_ENV" "$CERT_DIR/ca-cert.pem" "$CERT_DIR/ca-key.pem" \
+                    "$CERT_DIR/srv-cert.pem" "$CERT_DIR/srv-key.pem"; do
+        if [[ ! -r "$required" ]]; then
+            echo "Incomplete persistent test state: missing $required" >&2
+            echo "Run '$0 reset' to generate a new configuration, CA and tokens." >&2
+            exit 1
+        fi
+    done
+    source "$STATE_ENV"
+    API_KEY=$SMITHPROXY_API_KEY
+else
+    API_KEY=$(openssl rand -hex 24)
+    SPIDER_TOKEN=$(openssl rand -hex 24)
+    mkdir -p "$CERT_DIR"
+    cp "$SOURCE_DIR/etc/certs/default/sslca.json" "$CERT_DIR/sslca.json"
 openssl req -x509 -newkey rsa:3072 -sha256 -days 30 -nodes \
     -keyout "$CERT_DIR/ca-key.pem" -out "$CERT_DIR/ca-cert.pem" \
     -subj "/CN=Smithproxy Spider Test CA/O=Smithproxy Test Lab/C=CZ" \
@@ -236,6 +257,18 @@ if "settings = {" not in text:
 destination.write_text(text.replace("settings = {", extra, 1))
 PY
 
+    cat >"$STATE_ENV" <<EOF
+SMITHPROXY_API_KEY=$API_KEY
+SPIDER_TOKEN=$SPIDER_TOKEN
+SMITHPROXY_API_URL=https://$NS_ADDR:$API_PORT
+SMITHPROXY_CONNECT_URL=http://$NS_ADDR:$CONNECT_PORT
+SMITHPROXY_CALLBACK_URL=http://$HOST_ADDR:18080/webhook
+SMITHPROXY_CA_CERT=$CERT_DIR/ca-cert.pem
+SMITHPROXY_CLI=$NS_ADDR:$CLI_PORT
+EOF
+    chmod 600 "$STATE_ENV"
+fi
+
 ip netns add "$NS"
 ip link add "$HOST_IF" type veth peer name eth0 netns "$NS"
 ip addr add "$HOST_ADDR/30" dev "$HOST_IF"
@@ -251,18 +284,6 @@ iptables -t nat -A POSTROUTING -s "$NS_ADDR/32" -j MASQUERADE
 iptables -t nat -A PREROUTING -p tcp --dport "$API_PORT" -j DNAT --to-destination "$NS_ADDR:$API_PORT"
 iptables -t nat -A PREROUTING -p tcp --dport "$CONNECT_PORT" -j DNAT --to-destination "$NS_ADDR:$CONNECT_PORT"
 iptables -t nat -A PREROUTING -p tcp --dport "$CLI_PORT" -j DNAT --to-destination "$NS_ADDR:$CLI_PORT"
-
-cat >"$STATE_DIR/state.env" <<EOF
-SMITHPROXY_API_KEY=$API_KEY
-SPIDER_TOKEN=$SPIDER_TOKEN
-SMITHPROXY_API_URL=https://$NS_ADDR:$API_PORT
-SMITHPROXY_CONNECT_URL=http://$NS_ADDR:$CONNECT_PORT
-SMITHPROXY_CALLBACK_URL=http://$HOST_ADDR:18080/webhook
-SMITHPROXY_CA_CERT=$CERT_DIR/ca-cert.pem
-SMITHPROXY_CLI=$NS_ADDR:$CLI_PORT
-EOF
-chmod 600 "$STATE_DIR/state.env"
-source "$STATE_DIR/state.env"
 
 ip netns exec "$NS" env SMITHPROXY_PID_FILE="$STATE_DIR/service.pid" \
     "$BUILD_DIR/smithproxy" --config-file "$CONFIG" --diagnose \
