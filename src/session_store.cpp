@@ -31,53 +31,69 @@ std::string SessionStore::session_label(const nlohmann::json& event) {
     return {};
 }
 
-void SessionStore::apply(const nlohmann::json& event) {
+std::uint64_t SessionStore::apply(const nlohmann::json& event) {
     const auto action = event.value("action", "");
     const auto id = event.value("id", "");
     auto stored_event = event;
     const auto received_at_ms = unix_time_ms();
     stored_event["spider_received_at_ms"] = received_at_ms;
 
+    std::uint64_t rev{};
+    std::function<void(std::uint64_t, const nlohmann::json&)> sink;
+    {
+        std::scoped_lock lock(mutex_);
+        rev = ++revision_;
+        history_.push_back({rev, stored_event});
+        while (history_.size() > history_limit_) history_.pop_front();
+
+        if (action == "spider-smithproxy-status") {
+            smithproxy_status_ = stored_event;
+        } else {
+            ++callback_count_;
+            last_callback_revision_ = rev;
+            last_callback_at_ms_ = received_at_ms;
+            last_callback_action_ = action;
+            last_callback_source_ = event.value("source", "");
+        }
+
+        if (!id.empty()) {
+            auto [position, inserted] = sessions_.try_emplace(id);
+            auto& session = position->second;
+            if (inserted) {
+                session_order_.push_back(id);
+                session.started_at_ms = received_at_ms;
+            }
+            session.id = id;
+            const auto label = session_label(event);
+            if (!label.empty()) session.label = label;
+            if (action == "connection-start") {
+                session.state = "active";
+                session.ended_at_ms = 0;
+            } else if (action == "connection-stop") {
+                session.state = "completed";
+                session.ended_at_ms = received_at_ms;
+            }
+            if (session.state.empty()) session.state = "observed";
+            session.revision = rev;
+            session.updated_at_ms = received_at_ms;
+            session.last_event = stored_event;
+            session.events.push_back(session.last_event);
+            while (session.events.size() > session_event_limit_) session.events.pop_front();
+            prune_session_history();
+        }
+        sink = event_sink_;
+    }
+    if (sink) sink(rev, stored_event);
+    return rev;
+}
+
+void SessionStore::set_event_sink(std::function<void(std::uint64_t, const nlohmann::json&)> sink,
+                                  const bool replay_existing) {
     std::scoped_lock lock(mutex_);
-    const auto rev = ++revision_;
-    history_.push_back({rev, stored_event});
-    while (history_.size() > history_limit_) history_.pop_front();
-
-    if (action == "spider-smithproxy-status") {
-        smithproxy_status_ = stored_event;
-    } else {
-        ++callback_count_;
-        last_callback_revision_ = rev;
-        last_callback_at_ms_ = received_at_ms;
-        last_callback_action_ = action;
-        last_callback_source_ = event.value("source", "");
+    event_sink_ = std::move(sink);
+    if (event_sink_ && replay_existing) {
+        for (const auto& record : history_) event_sink_(record.revision, record.event);
     }
-
-    if (id.empty()) return;
-
-    auto [position, inserted] = sessions_.try_emplace(id);
-    auto& session = position->second;
-    if (inserted) {
-        session_order_.push_back(id);
-        session.started_at_ms = received_at_ms;
-    }
-    session.id = id;
-    const auto label = session_label(event);
-    if (!label.empty()) session.label = label;
-    if (action == "connection-start") {
-        session.state = "active";
-        session.ended_at_ms = 0;
-    } else if (action == "connection-stop") {
-        session.state = "completed";
-        session.ended_at_ms = received_at_ms;
-    }
-    if (session.state.empty()) session.state = "observed";
-    session.revision = rev;
-    session.updated_at_ms = received_at_ms;
-    session.last_event = std::move(stored_event);
-    session.events.push_back(session.last_event);
-    while (session.events.size() > session_event_limit_) session.events.pop_front();
-    prune_session_history();
 }
 
 nlohmann::json SessionStore::session_json(const Session& session, const bool include_events) {

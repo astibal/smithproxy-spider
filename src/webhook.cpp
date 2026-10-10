@@ -1,5 +1,6 @@
 #include "webhook.hpp"
 
+#include "decision_broker.hpp"
 #include "session_store.hpp"
 
 #include <algorithm>
@@ -8,7 +9,9 @@
 
 namespace spider {
 
-WebhookReply process_webhook(SessionStore& store, const nlohmann::json& event) {
+WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
+                             const nlohmann::json& original_event) {
+    auto event = original_event;
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
@@ -20,9 +23,11 @@ WebhookReply process_webhook(SessionStore& store, const nlohmann::json& event) {
         return {422, {{"error", "unsupported action"}}};
     }
 
+    const auto ticket = decisions.prepare(event);
+    decisions.observe(event);
     store.apply(event);
     if (action == "access-request") return {200, {{"access-response", "accept"}}};
-    if (action == "connection-content") return {200, {{"action", "unchanged"}}};
+    if (action == "connection-content") return decisions.wait(ticket);
     return {200, nlohmann::json::object()};
 }
 

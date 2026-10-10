@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -29,7 +30,9 @@ public:
     explicit SessionStore(std::size_t history_limit = 1000,
                           std::size_t session_history_limit = 1000);
 
-    void apply(const nlohmann::json& event);
+    std::uint64_t apply(const nlohmann::json& event);
+    void set_event_sink(std::function<void(std::uint64_t, const nlohmann::json&)> sink,
+                        bool replay_existing = false);
     [[nodiscard]] nlohmann::json snapshot() const;
     [[nodiscard]] nlohmann::json session_history() const;
     [[nodiscard]] std::optional<nlohmann::json> session_detail(const std::string& id) const;
@@ -62,6 +65,7 @@ private:
     std::string last_callback_action_;
     std::string last_callback_source_;
     std::uint64_t revision_{};
+    std::function<void(std::uint64_t, const nlohmann::json&)> event_sink_;
 };
 
 } // namespace spider

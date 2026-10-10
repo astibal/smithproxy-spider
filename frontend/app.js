@@ -7,6 +7,8 @@ const smithproxyUrl = byId('smithproxy-url'), smithproxyKey = byId('smithproxy-k
 const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('configure-status');
 let revision = 0, timer, eventRecords = [], historyRecords = [], selectedSessionId = null;
 let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array(), scriptSlot = 1;
+let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
+let replacementBase64 = null;
 const eventFilters = {ping: false, sessions: true, status: true, other: true};
 const defaultScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
@@ -95,6 +97,11 @@ function renderPayload() {
     ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${info.session || selectedPayload.event.id}`
     : `${payloadBytes.length} B sample`;
   byId('workbench-source').className = '';
+  const pending = selectedPayload?.event?.decision?.state === 'pending' && !selectedPayload.decided;
+  byId('accept-payload').disabled = !pending;
+  byId('accept-session').disabled = !pending;
+  byId('discard-payload').disabled = !pending;
+  byId('replace-payload').disabled = !pending || replacementBase64 === null;
 }
 
 function setPayloadMode(mode) {
@@ -120,30 +127,62 @@ function setPayloadPane(clientX) {
   localStorage.setItem('spider-payload-pane', percent.toFixed(1));
 }
 
-function refreshPayloadSelect() {
-  const select = byId('payload-select');
-  const previous = select.value;
-  select.replaceChildren(new Option('follow latest payload', ''));
-  for (const record of payloadRecords.slice().reverse()) {
-    const info = record.event.details?.info || {};
-    const size = info.content ? decodeBase64(info.content).length : 0;
-    select.add(new Option(`r${record.revision} · ${info.side || '?'} · ${size} B · ${info.session || record.event.id}`, String(record.revision)));
+function renderPayloadList() {
+  const list = byId('payload-list');
+  byId('payload-count').textContent = payloadRecords.length;
+  list.replaceChildren();
+  if (!payloadRecords.length) {
+    list.textContent = 'none';
+    list.className = 'payload-list empty';
+    return;
   }
-  if ([...select.options].some(option => option.value === previous)) select.value = previous;
+  list.className = 'payload-list';
+  for (const record of payloadRecords) {
+    const info = record.event.details?.info || {};
+    const size = Math.floor((info.content?.length || 0) * 3 / 4);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `payload-row${record === selectedPayload ? ' selected' : ''}` +
+      `${record.event.decision?.state === 'pending' && !record.decided ? ' pending' : ''}` +
+      `${record.decided ? ' decided' : ''}`;
+    row.innerHTML = `<span>r${record.revision}</span><b>${escapeHtml(info.side || '?')}</b>` +
+      `<span>${escapeHtml(formatBytes(size) || `${size} B`)}</span>` +
+      `<span>${escapeHtml(info.session || record.event.id || 'unlabelled')}</span>`;
+    row.onclick = () => selectPayload(record, false);
+    list.append(row);
+  }
+  if (followPayload) list.scrollTop = list.scrollHeight;
 }
 
-function loadSelectedPayload() {
-  const requested = Number(byId('payload-select').value);
-  selectedPayload = requested
-    ? payloadRecords.find(record => record.revision === requested)
-    : payloadRecords[payloadRecords.length - 1];
+function selectPayload(record, follow = false) {
+  selectedPayload = record;
+  followPayload = follow;
+  byId('follow-payload').setAttribute('aria-pressed', String(followPayload));
   if (!selectedPayload) {
     byId('workbench-source').textContent = 'no connection-content captured yet';
     byId('workbench-source').className = 'empty';
     return;
   }
   payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
+  replacementBase64 = null;
+  byId('replacement-text').value = '';
   renderPayload();
+  renderPayloadList();
+}
+
+function ingestEvent(record) {
+  if (!record || !record.event || record.revision <= revision) return;
+  revision = record.revision;
+  eventRecords.push(record);
+  if (eventRecords.length > 2000) eventRecords = eventRecords.slice(-2000);
+  if (record.event.action === 'connection-content' &&
+      typeof record.event.details?.info?.content === 'string') {
+    payloadRecords.push(record);
+    if (payloadRecords.length > 2000) payloadRecords = payloadRecords.slice(-2000);
+    if (followPayload || !selectedPayload) selectPayload(record, true);
+    else renderPayloadList();
+  }
+  renderEvents();
 }
 
 function loadScriptSlot(number) {
@@ -177,18 +216,23 @@ function runScript() {
       scriptStatus.textContent = 'failed';
       scriptStatus.className = 'error';
       byId('replacement-text').value = '';
+      replacementBase64 = null;
+      renderPayload();
       return;
     }
     if (data.replacement === null) {
       scriptStatus.textContent = 'unchanged';
       scriptStatus.className = 'ok';
       byId('replacement-text').value = '';
+      replacementBase64 = null;
     } else {
       const replacement = decodeBase64(data.replacement);
+      replacementBase64 = data.replacement;
       scriptStatus.textContent = `replace · ${replacement.length} B`;
       scriptStatus.className = 'ok';
       byId('replacement-text').value = new TextDecoder().decode(replacement);
     }
+    renderPayload();
   };
   const info = selectedPayload?.event?.details?.info || {};
   worker.postMessage({script: byId('script-editor').value, bytes: Array.from(payloadBytes),
@@ -315,33 +359,76 @@ function selectSession(id) {
   loadSessionDetail();
 }
 
+function socketSend(message) {
+  if (eventSocket?.readyState !== WebSocket.OPEN) return false;
+  eventSocket.send(JSON.stringify(message));
+  return true;
+}
+
+function connectEventSocket() {
+  clearTimeout(reconnectTimer);
+  if (eventSocket) eventSocket.close();
+  const url = new URL(baseUrl());
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.pathname = `${url.pathname.replace(/\/$/, '')}/api/events/ws`;
+  const protocols = tokenValue() ? ['spider', tokenValue()] : ['spider'];
+  const socket = new WebSocket(url, protocols);
+  eventSocket = socket;
+  socket.onopen = () => {
+    socket.send(JSON.stringify({type: 'subscribe', after: revision}));
+    socket.send(JSON.stringify({type: 'live-edit', enabled: liveEdit}));
+  };
+  socket.onmessage = message => {
+    const data = JSON.parse(message.data);
+    if (data.type === 'event') ingestEvent({revision: data.revision, event: data.event});
+    if (data.type === 'gap') {
+      status.textContent = `stream gap · oldest r${data.oldest_available}`;
+      status.className = 'error';
+    }
+  };
+  socket.onerror = () => socket.close();
+  socket.onclose = () => {
+    if (eventSocket !== socket) return;
+    status.textContent = 'reconnecting event stream…';
+    status.className = 'error';
+    reconnectTimer = setTimeout(connectEventSocket, 1000);
+  };
+}
+
+function decideSelected(action) {
+  const decisionId = selectedPayload?.event?.decision?.id;
+  if (!decisionId) return;
+  const message = {type: 'decision', decision_id: decisionId, action};
+  if (action === 'replace') {
+    if (replacementBase64 === null) return;
+    message.content = replacementBase64;
+  }
+  if (!socketSend(message)) return;
+  const sessionId = selectedPayload.event.id;
+  if (action === 'accept-session') {
+    for (const record of payloadRecords) {
+      if (record.event.id === sessionId) record.decided = true;
+    }
+  } else {
+    selectedPayload.decided = true;
+  }
+  renderPayload();
+  renderPayloadList();
+}
+
 async function poll() {
   try {
-    const [eventResponse, statusResponse, sessionResponse, historyResponse] = await Promise.all([
-      fetch(`${baseUrl()}/api/events?after=${revision}`, {headers: headers()}),
+    const [statusResponse, sessionResponse, historyResponse] = await Promise.all([
       fetch(`${baseUrl()}/api/status`, {headers: headers()}),
       fetch(`${baseUrl()}/api/sessions`, {headers: headers()}),
       fetch(`${baseUrl()}/api/session-history`, {headers: headers()}),
     ]);
-    if (!eventResponse.ok) throw new Error(`events HTTP ${eventResponse.status}`);
     if (!statusResponse.ok) throw new Error(`status HTTP ${statusResponse.status}`);
     if (!sessionResponse.ok) throw new Error(`sessions HTTP ${sessionResponse.status}`);
     if (!historyResponse.ok) throw new Error(`history HTTP ${historyResponse.status}`);
-    const [data, current, sessionData, historyData] = await Promise.all([
-      eventResponse.json(), statusResponse.json(), sessionResponse.json(), historyResponse.json(),
+    const [current, sessionData, historyData] = await Promise.all([
+      statusResponse.json(), sessionResponse.json(), historyResponse.json(),
     ]);
-    revision = data.revision;
-    eventRecords.push(...data.events);
-    if (eventRecords.length > 500) eventRecords = eventRecords.slice(-500);
-    const newPayloads = data.events.filter(record => record.event.action === 'connection-content' &&
-      typeof record.event.details?.info?.content === 'string');
-    if (newPayloads.length) {
-      payloadRecords.push(...newPayloads);
-      if (payloadRecords.length > 100) payloadRecords = payloadRecords.slice(-100);
-      refreshPayloadSelect();
-      if (byId('payload-select').value === '') loadSelectedPayload();
-    }
-    renderEvents();
     historyRecords = historyData.sessions;
     renderHistory();
     const proxy = current.smithproxy || {};
@@ -375,7 +462,7 @@ async function poll() {
         sessions.append(row);
       }
     }
-    status.textContent = `live · r${revision}`;
+    status.textContent = `${eventSocket?.readyState === WebSocket.OPEN ? 'live' : 'connecting'} · r${revision}`;
     status.className = 'ok';
   } catch (error) {
     status.textContent = `offline · ${error.message}`;
@@ -398,6 +485,8 @@ function connect() {
     status.textContent = `offline · ${error.message}`;
     status.className = 'error';
     clearInterval(timer);
+    clearTimeout(reconnectTimer);
+    if (eventSocket) eventSocket.close();
     return;
   }
   localStorage.setItem('spider-backend', backend.value);
@@ -409,7 +498,9 @@ function connect() {
   historyRecords = [];
   selectedSessionId = null;
   events.textContent = '';
+  renderPayloadList();
   clearInterval(timer);
+  connectEventSocket();
   poll();
   timer = setInterval(poll, 1000);
 }
@@ -468,12 +559,26 @@ for (const button of document.querySelectorAll('.tabs button')) {
   button.onclick = () => showTab(button.dataset.tab);
 }
 byId('reload-detail').onclick = loadSessionDetail;
-byId('load-payload').onclick = loadSelectedPayload;
+byId('follow-payload').onclick = () => {
+  followPayload = !followPayload;
+  byId('follow-payload').setAttribute('aria-pressed', String(followPayload));
+  if (followPayload && payloadRecords.length) selectPayload(payloadRecords[payloadRecords.length - 1], true);
+};
 byId('sample-payload').onclick = () => {
   selectedPayload = null;
   payloadBytes = new TextEncoder().encode('GET / HTTP/1.1\r\nHost: example.test\r\n\r\n');
   renderPayload();
 };
+byId('live-edit').onclick = () => {
+  liveEdit = !liveEdit;
+  byId('live-edit').setAttribute('aria-pressed', String(liveEdit));
+  byId('live-edit').textContent = `Live edit: ${liveEdit ? 'on' : 'off'}`;
+  socketSend({type: 'live-edit', enabled: liveEdit});
+};
+byId('accept-payload').onclick = () => decideSelected('accept');
+byId('accept-session').onclick = () => decideSelected('accept-session');
+byId('replace-payload').onclick = () => decideSelected('replace');
+byId('discard-payload').onclick = () => decideSelected('discard');
 byId('payload-text').oninput = event => {
   payloadBytes = new TextEncoder().encode(event.target.value);
   byId('payload-hex').textContent = encodeHex(payloadBytes);

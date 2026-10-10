@@ -57,14 +57,21 @@ interfaces, but keeps the Smithproxy API and callback hop on loopback.
 The first milestone intentionally returns immediately: content is unchanged and
 access requests are accepted. No request waits for a UI action.
 
-The browser UI includes a Payload workbench. It retains the latest 100
-`connection-content` callbacks in browser memory, preserves their base64 data as
-bytes, and offers four JavaScript slots stored in local storage. Scripts receive
+The browser UI includes a Payload workbench. A WebSocket carries all events with
+monotonic revisions and replays a bounded in-memory log after short disconnects.
+The UI retains up to 2000 `connection-content` callbacks, displays every chunk
+in an ordered queue, preserves base64 data as bytes, and offers four JavaScript
+slots stored in local storage. Scripts receive
 an `api` object with `bytes`, decoded `text`, direction, and session metadata.
 Returning a string or `Uint8Array` creates a replacement preview; returning
 `undefined` keeps the payload unchanged. Each run uses a fresh Web Worker and is
-terminated after two seconds. This first workbench is deliberately offline: its
-preview is not sent back to an already completed callback.
+terminated after two seconds.
+
+Live edit is opt-in. When enabled, each new content callback waits up to ten
+seconds for `accept`, `accept-session`, `replace`, or `discard`. Accept-session
+passes the current callback and bypasses later callbacks belonging to that
+session. Disabling live edit, losing the last WebSocket client, or reaching the
+deadline resolves pending callbacks unchanged (fail-open).
 
 ## API
 
@@ -79,6 +86,7 @@ GET  /api/session-history  active and recently completed sessions
 GET  /api/session?id=ID    complete retained session detail
 DELETE /api/session-history remove completed sessions (active sessions remain)
 GET  /api/events?after=N   bounded event history
+GET  /api/events/ws        authenticated WebSocket event stream and decisions
 POST /webhook/<token>      Smithproxy webhook receiver
 ```
 

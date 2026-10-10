@@ -1,8 +1,10 @@
 #include "http_server.hpp"
 
+#include "decision_broker.hpp"
 #include "session_store.hpp"
 #include "smithproxy_manager.hpp"
 #include "webhook.hpp"
+#include "websocket_hub.hpp"
 
 #include <lmhttpd.hpp>
 #include <microhttpd.h>
@@ -34,8 +36,9 @@ bool constant_time_equal(const std::string_view lhs, const std::string_view rhs)
 
 class SpiderController final : public lmh::Controller {
 public:
-    SpiderController(const ServerConfig& config, SessionStore& store, SmithproxyManager& smithproxy)
-        : config_(config), store_(store), smithproxy_(smithproxy) {}
+    SpiderController(const ServerConfig& config, SessionStore& store, SmithproxyManager& smithproxy,
+                     DecisionBroker& decisions, WebSocketHub& websocket)
+        : config_(config), store_(store), smithproxy_(smithproxy), decisions_(decisions), websocket_(websocket) {}
 
     bool validPath(const char* path, const char* method) override {
         const std::string_view p(path);
@@ -43,7 +46,7 @@ public:
         return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/ready" ||
                                p == "/api/status" || p == "/api/sessions" ||
                                p == "/api/session-history" || p == "/api/session" ||
-                               p == "/api/events")) ||
+                               p == "/api/events" || p == "/api/events/ws")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
                (m == "DELETE" && p == "/api/session-history") ||
                (m == "POST" && p == "/api/config/smithproxy") ||
@@ -71,6 +74,10 @@ public:
         }
 
         if (state.response_sent) return MHD_YES;
+        if (std::string_view(method) == "GET" && std::string_view(url) == "/api/events/ws") {
+            state.response_sent = true;
+            return websocket_.queue_upgrade(connection);
+        }
         Response response;
         if (state.too_large) {
             response = json_response(413, {{"error", "request body too large"}});
@@ -108,7 +115,7 @@ private:
         // credential. Smithproxy cannot attach the browser API header.
         if (method == "POST" && url == callback_path()) {
             try {
-                const auto reply = process_webhook(store_, nlohmann::json::parse(body));
+                const auto reply = process_webhook(store_, decisions_, nlohmann::json::parse(body));
                 return json_response(reply.status, reply.body);
             } catch (const nlohmann::json::exception&) {
                 return json_response(400, {{"error", "invalid JSON"}});
@@ -181,6 +188,8 @@ private:
     const ServerConfig& config_;
     SessionStore& store_;
     SmithproxyManager& smithproxy_;
+    DecisionBroker& decisions_;
+    WebSocketHub& websocket_;
 
     [[nodiscard]] std::string callback_path() const {
         return config_.callback_token.empty() ? "/webhook" : "/webhook/" + config_.callback_token;
@@ -191,6 +200,15 @@ private:
 
 int run_http_server(const ServerConfig& config, SessionStore& store,
                     SmithproxyManager& smithproxy, std::atomic_bool& stop) {
+    DecisionBroker decisions;
+    WebSocketHub websocket(config.token, [&decisions](const nlohmann::json& message) {
+        decisions.handle_message(message);
+    }, [&decisions] {
+        decisions.handle_message({{"type", "live-edit"}, {"enabled", false}});
+    });
+    store.set_event_sink([&websocket](const std::uint64_t revision, const nlohmann::json& event) {
+        websocket.publish(revision, event);
+    }, true);
     lmh::WebServer server(config.port);
     server.options().bind_address = config.bind_address;
     server.options().configure_listen_socket = [](int socket) {
@@ -198,8 +216,13 @@ int run_http_server(const ServerConfig& config, SessionStore& store,
         return ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled)) == 0;
     };
     server.options().handler_should_terminate = [&stop] { return stop.load(); };
-    server.addController(std::make_shared<SpiderController>(config, store, smithproxy));
-    return server.start() ? 0 : 1;
+    server.options().thread_pool_size = 16;
+    server.options().allow_upgrade = true;
+    server.addController(std::make_shared<SpiderController>(config, store, smithproxy, decisions, websocket));
+    const auto result = server.start() ? 0 : 1;
+    store.set_event_sink({});
+    websocket.stop();
+    return result;
 }
 
 } // namespace spider

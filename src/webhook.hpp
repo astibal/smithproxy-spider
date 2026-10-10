@@ -10,8 +10,9 @@ struct WebhookReply {
 };
 
 class SessionStore;
+class DecisionBroker;
 
-[[nodiscard]] WebhookReply process_webhook(SessionStore& store, const nlohmann::json& event);
+[[nodiscard]] WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
+                                           const nlohmann::json& event);
 
 } // namespace spider
-

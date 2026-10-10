@@ -17,6 +17,7 @@ endif()
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 add_library(spider_core
+    src/decision_broker.cpp
     src/session_store.cpp
     src/smithproxy_client.cpp
     src/smithproxy_manager.cpp
@@ -29,6 +30,7 @@ target_compile_options(spider_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion
 add_executable(smithproxy-spider
     src/main.cpp
     src/http_server.cpp
+    src/websocket_hub.cpp
 )
 target_include_directories(smithproxy-spider PRIVATE
     src
