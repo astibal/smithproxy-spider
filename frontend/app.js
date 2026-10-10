@@ -83,7 +83,7 @@ function renderPayload() {
 function refreshPayloadSelect() {
   const select = byId('payload-select');
   const previous = select.value;
-  select.replaceChildren(new Option('latest captured payload', ''));
+  select.replaceChildren(new Option('follow latest payload', ''));
   for (const record of payloadRecords.slice().reverse()) {
     const info = record.event.details?.info || {};
     const size = info.content ? decodeBase64(info.content).length : 0;
@@ -299,6 +299,7 @@ async function poll() {
       payloadRecords.push(...newPayloads);
       if (payloadRecords.length > 100) payloadRecords = payloadRecords.slice(-100);
       refreshPayloadSelect();
+      if (byId('payload-select').value === '') loadSelectedPayload();
     }
     renderEvents();
     historyRecords = historyData.sessions;
