@@ -23,7 +23,9 @@ source_ref() {
     elif [[ -n ${SMITHPROXY_TEST_REF:-} ]]; then
         printf '%s\n' "$SMITHPROXY_TEST_REF"
     elif [[ -r "$SOURCE_REF_FILE" ]]; then
-        <"$SOURCE_REF_FILE"
+        local remembered_ref
+        IFS= read -r remembered_ref <"$SOURCE_REF_FILE"
+        printf '%s\n' "$remembered_ref"
     else
         printf '%s\n' master
     fi
