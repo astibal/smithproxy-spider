@@ -100,8 +100,19 @@ lease renewal, and a callback `ping` from `fake-smithproxy`.
 
 ## Helmut test runners
 
-As root on Helmut, start an isolated Smithproxy built from the latest
-`origin/master`, then start Spider and its static test UI:
+Initialize a fresh, self-contained workspace as root. The optional second
+argument selects the Smithproxy branch or ref and defaults to `api-ng`:
+
+```sh
+tools/init-test-workspace.sh ~/smithproxy-spider-test api-ng
+```
+
+The initializer refuses to modify a non-empty target directory. It clones the
+Spider repository and its submodules, fetches the selected Smithproxy ref, and
+creates the build and state directories. It does not build or start services.
+
+As root on Helmut, start an isolated Smithproxy built from the selected ref,
+then start Spider and its static test UI:
 
 ```sh
 tools/run-test-smithproxy.sh start
