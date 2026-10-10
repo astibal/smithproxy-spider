@@ -6,7 +6,21 @@ const historyList = byId('history-list'), sessionDetail = byId('session-detail')
 const smithproxyUrl = byId('smithproxy-url'), smithproxyKey = byId('smithproxy-key');
 const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('configure-status');
 let revision = 0, timer, eventRecords = [], historyRecords = [], selectedSessionId = null;
+let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array(), scriptSlot = 1;
 const eventFilters = {ping: false, sessions: true, status: true, other: true};
+const defaultScript = `// api.bytes        Uint8Array with the original payload
+// api.text         UTF-8 decoded view
+// api.side         "L" (client) or "R" (server)
+// api.sessionId    Smithproxy session identifier
+// api.sessionLabel endpoints and detected protocol
+// api.print(...)   append to Script output
+//
+// Return undefined/null to keep the payload unchanged.
+// Return a string, Uint8Array, or ArrayBuffer to replace it.
+
+api.print(api.sessionId, api.side, api.bytes.length + " bytes");
+return undefined;
+`;
 
 const suggestedBackend = `${location.protocol}//${location.hostname}:18080`;
 backend.value = localStorage.getItem('spider-backend') || suggestedBackend;
@@ -38,6 +52,107 @@ function renderEvents() {
     .slice().reverse()
     .map(record => `r${record.revision} ${JSON.stringify(record.event, null, 2)}`)
     .join('\n\n');
+}
+
+function decodeBase64(value) {
+  const binary = atob(value || '');
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+}
+
+function encodeHex(bytes) {
+  const rows = [];
+  for (let offset = 0; offset < bytes.length; offset += 16) {
+    const row = bytes.subarray(offset, offset + 16);
+    const hex = Array.from(row, value => value.toString(16).padStart(2, '0')).join(' ').padEnd(47);
+    const ascii = Array.from(row, value => value >= 32 && value < 127 ? String.fromCharCode(value) : '.').join('');
+    rows.push(`${offset.toString(16).padStart(8, '0')}  ${hex}  |${ascii}|`);
+  }
+  return rows.join('\n');
+}
+
+function renderPayload() {
+  byId('payload-text').value = new TextDecoder().decode(payloadBytes);
+  byId('payload-hex').textContent = encodeHex(payloadBytes);
+  const info = selectedPayload?.event?.details?.info || {};
+  byId('workbench-source').textContent = selectedPayload
+    ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${info.session || selectedPayload.event.id}`
+    : `${payloadBytes.length} B sample`;
+  byId('workbench-source').className = '';
+}
+
+function refreshPayloadSelect() {
+  const select = byId('payload-select');
+  const previous = select.value;
+  select.replaceChildren(new Option('latest captured payload', ''));
+  for (const record of payloadRecords.slice().reverse()) {
+    const info = record.event.details?.info || {};
+    const size = info.content ? decodeBase64(info.content).length : 0;
+    select.add(new Option(`r${record.revision} · ${info.side || '?'} · ${size} B · ${info.session || record.event.id}`, String(record.revision)));
+  }
+  if ([...select.options].some(option => option.value === previous)) select.value = previous;
+}
+
+function loadSelectedPayload() {
+  const requested = Number(byId('payload-select').value);
+  selectedPayload = requested
+    ? payloadRecords.find(record => record.revision === requested)
+    : payloadRecords[payloadRecords.length - 1];
+  if (!selectedPayload) {
+    byId('workbench-source').textContent = 'no connection-content captured yet';
+    byId('workbench-source').className = 'empty';
+    return;
+  }
+  payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
+  renderPayload();
+}
+
+function loadScriptSlot(number) {
+  scriptSlot = number;
+  byId('script-editor').value = localStorage.getItem(`spider-script-${number}`) || defaultScript;
+  for (const button of document.querySelectorAll('#script-slots button')) {
+    button.setAttribute('aria-pressed', String(Number(button.dataset.slot) === number));
+  }
+}
+
+function runScript() {
+  const worker = new Worker('script-worker.js');
+  const scriptStatus = byId('script-status');
+  const scriptOutput = byId('script-output');
+  scriptStatus.textContent = 'running…';
+  scriptStatus.className = '';
+  byId('run-script').disabled = true;
+  const timeout = setTimeout(() => {
+    worker.terminate();
+    scriptStatus.textContent = 'stopped after 2 s';
+    scriptStatus.className = 'error';
+    scriptOutput.textContent = 'Script exceeded the execution limit.';
+    byId('run-script').disabled = false;
+  }, 2000);
+  worker.onmessage = ({data}) => {
+    clearTimeout(timeout);
+    worker.terminate();
+    byId('run-script').disabled = false;
+    scriptOutput.textContent = [...data.logs, ...(data.error ? [data.error] : [])].join('\n');
+    if (!data.ok) {
+      scriptStatus.textContent = 'failed';
+      scriptStatus.className = 'error';
+      byId('replacement-text').value = '';
+      return;
+    }
+    if (data.replacement === null) {
+      scriptStatus.textContent = 'unchanged';
+      scriptStatus.className = 'ok';
+      byId('replacement-text').value = '';
+    } else {
+      const replacement = decodeBase64(data.replacement);
+      scriptStatus.textContent = `replace · ${replacement.length} B`;
+      scriptStatus.className = 'ok';
+      byId('replacement-text').value = new TextDecoder().decode(replacement);
+    }
+  };
+  const info = selectedPayload?.event?.details?.info || {};
+  worker.postMessage({script: byId('script-editor').value, bytes: Array.from(payloadBytes),
+    side: info.side || '', sessionId: selectedPayload?.event?.id || '', sessionLabel: info.session || ''});
 }
 
 function formatTime(value) {
@@ -178,6 +293,13 @@ async function poll() {
     revision = data.revision;
     eventRecords.push(...data.events);
     if (eventRecords.length > 500) eventRecords = eventRecords.slice(-500);
+    const newPayloads = data.events.filter(record => record.event.action === 'connection-content' &&
+      typeof record.event.details?.info?.content === 'string');
+    if (newPayloads.length) {
+      payloadRecords.push(...newPayloads);
+      if (payloadRecords.length > 100) payloadRecords = payloadRecords.slice(-100);
+      refreshPayloadSelect();
+    }
     renderEvents();
     historyRecords = historyData.sessions;
     renderHistory();
@@ -241,6 +363,8 @@ function connect() {
   sessionStorage.setItem('spider-token', tokenValue());
   revision = 0;
   eventRecords = [];
+  payloadRecords = [];
+  selectedPayload = null;
   historyRecords = [];
   selectedSessionId = null;
   events.textContent = '';
@@ -303,6 +427,25 @@ for (const button of document.querySelectorAll('.tabs button')) {
   button.onclick = () => showTab(button.dataset.tab);
 }
 byId('reload-detail').onclick = loadSessionDetail;
+byId('load-payload').onclick = loadSelectedPayload;
+byId('sample-payload').onclick = () => {
+  selectedPayload = null;
+  payloadBytes = new TextEncoder().encode('GET / HTTP/1.1\r\nHost: example.test\r\n\r\n');
+  renderPayload();
+};
+byId('payload-text').oninput = event => {
+  payloadBytes = new TextEncoder().encode(event.target.value);
+  byId('payload-hex').textContent = encodeHex(payloadBytes);
+};
+for (const button of document.querySelectorAll('#script-slots button')) {
+  button.onclick = () => loadScriptSlot(Number(button.dataset.slot));
+}
+byId('script-editor').oninput = event => localStorage.setItem(`spider-script-${scriptSlot}`, event.target.value);
+byId('run-script').onclick = runScript;
+byId('reset-script').onclick = () => {
+  localStorage.removeItem(`spider-script-${scriptSlot}`);
+  loadScriptSlot(scriptSlot);
+};
 byId('clear-history').onclick = async () => {
   try {
     const response = await fetch(`${baseUrl()}/api/session-history`, {
@@ -324,4 +467,5 @@ byId('clear-history').onclick = async () => {
     sessionDetail.className = 'error';
   }
 };
+loadScriptSlot(1);
 connect();

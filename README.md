@@ -57,6 +57,15 @@ interfaces, but keeps the Smithproxy API and callback hop on loopback.
 The first milestone intentionally returns immediately: content is unchanged and
 access requests are accepted. No request waits for a UI action.
 
+The browser UI includes a Payload workbench. It retains the latest 100
+`connection-content` callbacks in browser memory, preserves their base64 data as
+bytes, and offers four JavaScript slots stored in local storage. Scripts receive
+an `api` object with `bytes`, decoded `text`, direction, and session metadata.
+Returning a string or `Uint8Array` creates a replacement preview; returning
+`undefined` keeps the payload unchanged. Each run uses a fresh Web Worker and is
+terminated after two seconds. This first workbench is deliberately offline: its
+preview is not sent back to an already completed callback.
+
 ## API
 
 ```text
