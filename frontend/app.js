@@ -15,6 +15,13 @@ let pollInFlight = false;
 let payloadMemoryLimit = Number(localStorage.getItem('spider-payload-memory-mib')) || 64;
 let payloadRecordLimit = Number(localStorage.getItem('spider-payload-record-limit')) || 200;
 let eventRecordLimit = Number(localStorage.getItem('spider-event-record-limit')) || 2000;
+let pinnedSession = null;
+let autoAcceptRules = [];
+try {
+  const savedRules = JSON.parse(localStorage.getItem('spider-auto-accept-rules') || '[]');
+  if (Array.isArray(savedRules)) autoAcceptRules = savedRules.filter(rule =>
+    rule && typeof rule.id === 'string' && typeof rule.filter === 'string');
+} catch (_) {}
 const eventFilters = {ping: false, sessions: true, status: true, other: true};
 const defaultScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
@@ -62,6 +69,80 @@ function tokenValue() {
   return value;
 }
 const headers = () => ({'X-Spider-Token': tokenValue()});
+
+function syncAutoAcceptRules() {
+  for (const rule of autoAcceptRules) delete rule.error;
+  localStorage.setItem('spider-auto-accept-rules', JSON.stringify(autoAcceptRules));
+  socketSend({type: 'auto-accept-rules', rules: autoAcceptRules});
+}
+
+function renderAutoAcceptRules() {
+  const target = byId('auto-accept-rules');
+  const invalid = autoAcceptRules.filter(rule => rule.error).length;
+  byId('rule-count').textContent = autoAcceptRules.length
+    ? `${autoAcceptRules.length}${invalid ? ` · ${invalid} invalid` : ''}` : 'none';
+  target.replaceChildren();
+  if (!autoAcceptRules.length) {
+    target.textContent = 'none';
+    target.className = 'auto-accept-rules empty';
+    return;
+  }
+  target.className = 'auto-accept-rules';
+  for (const rule of autoAcceptRules) {
+    const row = document.createElement('div');
+    row.className = `auto-rule${rule.enabled === false ? ' disabled' : ''}${rule.error ? ' error' : ''}`;
+    if (rule.error) row.title = rule.error;
+    const enabled = document.createElement('input');
+    enabled.type = 'checkbox';
+    enabled.checked = rule.enabled !== false;
+    enabled.title = 'Enable auto-accept filter';
+    enabled.onchange = () => {
+      rule.enabled = enabled.checked;
+      renderAutoAcceptRules();
+      syncAutoAcceptRules();
+    };
+    const expression = document.createElement('code');
+    expression.textContent = rule.filter;
+    expression.title = rule.filter;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'danger-subtle';
+    remove.textContent = '×';
+    remove.title = 'Remove auto-accept filter';
+    remove.onclick = () => {
+      autoAcceptRules = autoAcceptRules.filter(item => item !== rule);
+      renderAutoAcceptRules();
+      syncAutoAcceptRules();
+    };
+    row.append(enabled, expression, remove);
+    target.append(row);
+  }
+}
+
+function parseSessionLabel(label) {
+  const match = String(label || '').match(/^([^_]+)_(.+):(\d+)\+([^_]+)_(.+):(\d+)$/);
+  if (!match) return null;
+  return {sourceProtocol: match[1].toLowerCase(), sourceHost: match[2], sourcePort: Number(match[3]),
+          destinationProtocol: match[4].toLowerCase(), destinationHost: match[5], destinationPort: Number(match[6])};
+}
+
+function suggestedFilter(item) {
+  const connection = parseSessionLabel(item.label || item.last_event?.details?.info?.session);
+  if (!connection) return '';
+  const protocol = ['udp', 'quic'].includes(connection.sourceProtocol) ? 'udp' : 'tcp';
+  return `${protocol} and src host ${connection.sourceHost} and dst host ${connection.destinationHost} and dst port ${connection.destinationPort}`;
+}
+
+function pinSession(item) {
+  pinnedSession = item;
+  const label = item.label || item.last_event?.details?.info?.session || item.id;
+  byId('pinned-session').textContent = `${item.id} · ${label}`;
+  byId('pinned-session').className = 'pinned-session';
+  byId('rule-filter').value = suggestedFilter(item);
+  byId('rule-compose').hidden = false;
+  showTab('workbench-tab');
+  byId('rule-filter').focus();
+}
 
 function eventCategory(event) {
   if (event.action === 'ping') return 'ping';
@@ -256,7 +337,8 @@ function renderPayloadList() {
     return;
   }
   list.className = 'payload-list';
-  for (const record of payloadRecords) {
+  for (let index = payloadRecords.length - 1; index >= 0; --index) {
+    const record = payloadRecords[index];
     const info = record.event.details?.info || {};
     const size = Math.floor((info.content?.length || 0) * 3 / 4);
     const row = document.createElement('button');
@@ -270,7 +352,7 @@ function renderPayloadList() {
     row.onclick = () => selectPayload(record, false);
     list.append(row);
   }
-  if (followPayload) list.scrollTop = list.scrollHeight;
+  if (followPayload) list.scrollTop = 0;
 }
 
 function selectPayload(record, follow = false) {
@@ -503,11 +585,17 @@ function connectEventSocket() {
       ? {type: 'subscribe', tail: true}
       : {type: 'subscribe', after: revision}));
     socket.send(JSON.stringify({type: 'live-edit', enabled: liveEdit}));
+    socket.send(JSON.stringify({type: 'auto-accept-rules', rules: autoAcceptRules}));
   };
   socket.onmessage = message => {
     const data = JSON.parse(message.data);
     if (data.type === 'event') ingestEvent({revision: data.revision, event: data.event});
     if (data.type === 'subscribed') revision = Math.max(revision, Number(data.revision) || 0);
+    if (data.type === 'auto-accept-rules-status') {
+      const errors = new Map((data.errors || []).map(item => [item.id, item.error]));
+      for (const rule of autoAcceptRules) rule.error = errors.get(rule.id) || null;
+      renderAutoAcceptRules();
+    }
     if (data.type === 'gap') {
       status.textContent = `stream gap · oldest r${data.oldest_available}`;
       status.className = 'error';
@@ -589,7 +677,7 @@ async function poll() {
         row.type = 'button';
         row.className = 'session';
         row.innerHTML = `<b>${escapeHtml(item.id)}</b> ${escapeHtml(item.state)}<br><span>${escapeHtml(item.label || 'unlabelled')}</span>`;
-        row.onclick = () => selectSession(item.id);
+        row.onclick = () => pinSession(item);
         sessions.append(row);
       }
     }
@@ -752,6 +840,21 @@ byId('reset-script').onclick = () => {
   localStorage.removeItem(`spider-script-${scriptSlot}`);
   loadScriptSlot(scriptSlot);
 };
+function addAutoAcceptRule() {
+  const expression = byId('rule-filter').value.trim();
+  if (!pinnedSession || !expression) return;
+  autoAcceptRules.push({id: `rule-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                        filter: expression, enabled: true});
+  renderAutoAcceptRules();
+  syncAutoAcceptRules();
+  byId('rule-filter').select();
+}
+byId('add-rule').onclick = addAutoAcceptRule;
+byId('rule-filter').onkeydown = event => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  addAutoAcceptRule();
+};
 byId('payload-memory-limit').value = payloadMemoryLimit;
 byId('payload-record-limit').value = payloadRecordLimit;
 byId('event-record-limit').value = eventRecordLimit;
@@ -806,6 +909,7 @@ byId('clear-history').onclick = async () => {
   }
 };
 loadScriptSlot(1);
+renderAutoAcceptRules();
 updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
 connect();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "session_filter.hpp"
 #include "webhook.hpp"
 
 #include <chrono>
@@ -11,6 +12,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -24,6 +26,7 @@ public:
     [[nodiscard]] std::shared_ptr<Ticket> prepare(nlohmann::json& event);
     [[nodiscard]] WebhookReply wait(const std::shared_ptr<Ticket>& ticket);
     void handle_message(const nlohmann::json& message);
+    [[nodiscard]] nlohmann::json set_auto_accept_rules(const nlohmann::json& message);
     void observe(const nlohmann::json& event);
     [[nodiscard]] bool enabled() const;
 
@@ -38,6 +41,11 @@ public:
         Result result;
     };
 private:
+    struct AutoAcceptRule {
+        std::string id;
+        std::string expression;
+        SessionFilter filter;
+    };
     void resolve_locked(const std::shared_ptr<Ticket>& ticket, Result result);
     void resolve_all_locked();
 
@@ -47,6 +55,7 @@ private:
     std::uint64_t next_id_{};
     std::unordered_map<std::string, std::shared_ptr<Ticket>> pending_;
     std::unordered_set<std::string> accepted_sessions_;
+    std::vector<AutoAcceptRule> auto_accept_rules_;
 };
 
 } // namespace spider

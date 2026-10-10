@@ -59,9 +59,9 @@ access requests are accepted. No request waits for a UI action.
 
 The browser UI includes a Payload workbench. A WebSocket carries all events with
 monotonic revisions and replays a bounded in-memory log after short disconnects.
-The UI retains up to 2000 `connection-content` callbacks, displays every chunk
-in an ordered queue, preserves base64 data as bytes, and offers four JavaScript
-slots stored in local storage. Scripts receive
+The UI retains `connection-content` callbacks within configurable payload-count
+and memory budgets, displays the newest chunk first, preserves base64 data as
+bytes, and offers four JavaScript slots stored in local storage. Scripts receive
 an `api` object with `bytes`, decoded `text`, direction, and session metadata.
 Returning a string or `Uint8Array` creates a replacement preview; returning
 `undefined` keeps the payload unchanged. Each run uses a fresh Web Worker and is
@@ -72,6 +72,14 @@ seconds for `accept`, `accept-session`, `replace`, or `discard`. Accept-session
 passes the current callback and bypasses later callbacks belonging to that
 session. Disabling live edit, losing the last WebSocket client, or reaching the
 deadline resolves pending callbacks unchanged (fail-open).
+
+An active session can be pinned into the workbench to create an auto-accept
+rule. Rules use a tcpdump-like expression language with `and`, `or`, `not`,
+parentheses, `tcp`, `udp`, `ssl`, `ssli`, `quic`, `host`, `port`, `src host`,
+`dst host`, `src port`, `dst port`, and `side L|R`. Enabled rules are validated
+by the backend and accept matching callbacks before a decision ticket is
+created. They are stored by the browser and restored over the authenticated
+WebSocket whenever Spider reconnects.
 
 ## API
 

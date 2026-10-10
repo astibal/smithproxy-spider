@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,7 +20,7 @@ namespace spider {
 
 class WebSocketHub {
 public:
-    using MessageHandler = std::function<void(const nlohmann::json&)>;
+    using MessageHandler = std::function<std::optional<nlohmann::json>(const nlohmann::json&)>;
     using EmptyHandler = std::function<void()>;
 
     explicit WebSocketHub(std::string token, MessageHandler handler = {}, EmptyHandler empty_handler = {});

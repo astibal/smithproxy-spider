@@ -201,8 +201,13 @@ private:
 int run_http_server(const ServerConfig& config, SessionStore& store,
                     SmithproxyManager& smithproxy, std::atomic_bool& stop) {
     DecisionBroker decisions;
-    WebSocketHub websocket(config.token, [&decisions](const nlohmann::json& message) {
+    WebSocketHub websocket(config.token, [&decisions](const nlohmann::json& message)
+                           -> std::optional<nlohmann::json> {
+        if (message.value("type", "") == "auto-accept-rules") {
+            return std::optional<nlohmann::json>{decisions.set_auto_accept_rules(message)};
+        }
         decisions.handle_message(message);
+        return std::nullopt;
     }, [&decisions] {
         decisions.handle_message({{"type", "live-edit"}, {"enabled", false}});
     });

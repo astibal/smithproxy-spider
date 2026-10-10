@@ -1,4 +1,5 @@
 #include "decision_broker.hpp"
+#include "session_filter.hpp"
 #include "session_store.hpp"
 #include "webhook.hpp"
 
@@ -6,6 +7,20 @@
 #include <future>
 
 int main() {
+    const nlohmann::json filter_event = {
+        {"action", "connection-content"}, {"id", "filter-session"},
+        {"details", {{"info", {{"session", "ssli_192.168.99.1:45678+ssli_142.251.154.4:443"},
+                                  {"side", "L"}}}}},
+    };
+    std::string filter_error;
+    auto filter = spider::SessionFilter::compile(
+        "tcp and src host 192.168.99.1 and dst port 443 and not side r", filter_error);
+    assert(filter && filter->matches(filter_event));
+    auto other = spider::SessionFilter::compile("udp or dst host 1.1.1.1", filter_error);
+    assert(other && !other->matches(filter_event));
+    assert(!spider::SessionFilter::compile("dst banana 443", filter_error));
+    assert(!filter_error.empty());
+
     spider::SessionStore store(2);
     spider::DecisionBroker decisions(std::chrono::milliseconds(100));
     const nlohmann::json start = {
@@ -67,4 +82,20 @@ int main() {
     assert(waiting.get().body["action"] == "unchanged");
     nlohmann::json next_content{{"action", "connection-content"}, {"id", "live-1"}};
     assert(!live.prepare(next_content));
+
+    spider::DecisionBroker refined(std::chrono::seconds(1));
+    refined.handle_message({{"type", "live-edit"}, {"enabled", true}});
+    const nlohmann::json rules_message{{"type", "auto-accept-rules"},
+                                      {"rules", nlohmann::json::array({
+        {{"id", "google-https"},
+         {"filter", "src host 192.168.99.1 and dst host 142.251.154.4 and dst port 443"},
+         {"enabled", true}},
+    })}};
+    const auto rule_status = refined.set_auto_accept_rules(rules_message);
+    assert(rule_status["accepted"].size() == 1);
+    assert(rule_status["errors"].empty());
+    auto accepted_event = filter_event;
+    assert(!refined.prepare(accepted_event));
+    assert(accepted_event["decision"]["state"] == "auto-accepted");
+    assert(accepted_event["decision"]["rule_id"] == "google-https");
 }

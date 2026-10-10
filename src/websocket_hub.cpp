@@ -189,7 +189,7 @@ void WebSocketHub::handle_message(const std::shared_ptr<Client>& client, const s
     if (json.value("type", "") == "subscribe") {
         subscribe(client, json.value("after", std::uint64_t{}), json.value("tail", false));
     } else if (client->active.load() && handler_) {
-        handler_(json);
+        if (auto response = handler_(json)) client->send_text(response->dump());
     }
 }
 

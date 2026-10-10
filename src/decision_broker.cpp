@@ -11,6 +11,13 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
     const auto session = event.value("id", "");
     std::scoped_lock lock(mutex_);
     if (!enabled_ || session.empty() || accepted_sessions_.contains(session)) return {};
+    for (const auto& rule : auto_accept_rules_) {
+        if (rule.filter.matches(event)) {
+            event["decision"] = {{"state", "auto-accepted"}, {"rule_id", rule.id},
+                                 {"filter", rule.expression}};
+            return {};
+        }
+    }
     auto ticket = std::make_shared<Ticket>();
     ticket->id = "decision-" + std::to_string(++next_id_);
     ticket->session_id = session;
@@ -78,6 +85,35 @@ void DecisionBroker::handle_message(const nlohmann::json& message) {
     } else {
         resolve_locked(position->second, {});
     }
+}
+
+nlohmann::json DecisionBroker::set_auto_accept_rules(const nlohmann::json& message) {
+    std::vector<AutoAcceptRule> next;
+    auto accepted = nlohmann::json::array();
+    auto errors = nlohmann::json::array();
+    if (const auto rules = message.find("rules"); rules != message.end() && rules->is_array()) {
+        for (const auto& rule : *rules) {
+            if (!rule.is_object() || !rule.value("enabled", true)) continue;
+            const auto id = rule.value("id", "");
+            const auto expression = rule.value("filter", "");
+            std::string error;
+            auto compiled = SessionFilter::compile(expression, error);
+            if (id.empty()) {
+                errors.push_back({{"id", id}, {"error", "rule id is empty"}});
+            } else if (!compiled) {
+                errors.push_back({{"id", id}, {"error", error}});
+            } else {
+                accepted.push_back(id);
+                next.push_back({id, expression, std::move(*compiled)});
+            }
+        }
+    }
+    {
+        std::scoped_lock lock(mutex_);
+        auto_accept_rules_ = std::move(next);
+    }
+    return {{"type", "auto-accept-rules-status"}, {"accepted", std::move(accepted)},
+            {"errors", std::move(errors)}};
 }
 
 void DecisionBroker::observe(const nlohmann::json& event) {
