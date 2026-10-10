@@ -148,11 +148,19 @@ replacements = {
     'log_file = "/var/log/smithproxy/messages.%s.log";': f'log_file = "{state}/messages.%s.log";',
     'sslkeylog_file = "/var/log/smithproxy/sslkeylog.%s.log";': f'sslkeylog_file = "{state}/sslkeylog.%s.log";',
     'dir = "/var/smithproxy/data"': f'dir = "{state}"',
-    "enabled = true": "enabled = false",
+    "  local =\n  {\n    enabled = true": "  local =\n  {\n    enabled = false",
 }
 for old, new in replacements.items():
     if old not in text:
         raise SystemExit(f"master config no longer contains expected value: {old!r}")
+    text = text.replace(old, new, 1)
+tls_profile_anchors = (
+    ("tls_profiles = {\n    default = {", "tls_profiles = {\n    default = {\n        ct_enable = FALSE;"),
+    ("    bypass = {\n        inspect = FALSE;", "    bypass = {\n        inspect = FALSE;\n        ct_enable = FALSE;"),
+)
+for old, new in tls_profile_anchors:
+    if old not in text:
+        raise SystemExit(f"master config no longer contains TLS profile anchor: {old!r}")
     text = text.replace(old, new, 1)
 extra = f'''settings = {{
     accept_api = TRUE;
