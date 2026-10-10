@@ -17,10 +17,18 @@ require_root() {
 }
 
 print_howto() {
-    echo "API:          $SMITHPROXY_API_URL"
-    echo "HTTP CONNECT: $SMITHPROXY_CONNECT_URL"
-    echo "CLI:          $SMITHPROXY_CLI"
-    echo "CA:           $SMITHPROXY_CA_CERT"
+    local host_ip
+    host_ip=${SPIDER_TEST_HOST_IP:-$(hostname -I | awk '{print $1}')}
+    echo "From Helmut (namespace route):"
+    echo "  API:          $SMITHPROXY_API_URL"
+    echo "  HTTP CONNECT: $SMITHPROXY_CONNECT_URL"
+    echo "  CLI:          $SMITHPROXY_CLI"
+    echo "  CA:           $SMITHPROXY_CA_CERT"
+    echo
+    echo "From another test-LAN machine (Helmut DNAT):"
+    echo "  API:          https://$host_ip:$API_PORT"
+    echo "  HTTP CONNECT: http://$host_ip:$CONNECT_PORT"
+    echo "  CLI:          $host_ip:$CLI_PORT"
     echo "State:        $STATE_DIR/state.env"
     echo
 }

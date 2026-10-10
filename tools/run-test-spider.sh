@@ -19,15 +19,19 @@ stop_process() {
 print_howto() {
     local host_ip
     host_ip=${SPIDER_TEST_HOST_IP:-$(hostname -I | awk '{print $1}')}
-    echo "UI:      http://$host_ip:$UI_PORT/"
-    echo "Backend: http://$host_ip:$SPIDER_PORT"
-    echo "Token:   $SPIDER_TOKEN"
-    echo "CA:      http://$host_ip:$UI_PORT/test-ca.pem"
-    echo "Proxy:   http://$host_ip:33128"
-    echo "CLI:     telnet $host_ip 55000"
+    echo "Spider:"
+    echo "  UI:      http://$host_ip:$UI_PORT/"
+    echo "  Backend: http://$host_ip:$SPIDER_PORT"
+    echo "  Token:   $SPIDER_TOKEN"
     echo
+    echo "Test from Helmut:"
+    echo "  curl --proxy $SMITHPROXY_CONNECT_URL --cacert $SMITHPROXY_CA_CERT https://root.cz/"
+    echo "  telnet $SMITHPROXY_CLI"
+    echo
+    echo "Test from another test-LAN machine:"
     echo "curl -o test-ca.pem http://$host_ip:$UI_PORT/test-ca.pem"
     echo "curl --proxy http://$host_ip:33128 --cacert test-ca.pem https://root.cz/"
+    echo "telnet $host_ip 55000"
     echo "Logs:    $STATE_DIR/{smithproxy,spider,frontend}.log"
     echo
 }
