@@ -133,15 +133,19 @@ function suggestedFilter(item) {
   return `${protocol} and src host ${connection.sourceHost} and dst host ${connection.destinationHost} and dst port ${connection.destinationPort}`;
 }
 
-function pinSession(item) {
-  pinnedSession = item;
-  const label = item.label || item.last_event?.details?.info?.session || item.id;
-  byId('pinned-session').textContent = `${item.id} · ${label}`;
+function pinSession(item, focus = true) {
+  const event = item.event || item.last_event || {};
+  const session = {
+    id: item.id || event.id || 'unknown',
+    label: item.label || event.details?.info?.session || item.id || event.id || 'unlabelled',
+  };
+  pinnedSession = session;
+  byId('pinned-session').textContent = `${session.id} · ${session.label}`;
   byId('pinned-session').className = 'pinned-session';
-  byId('rule-filter').value = suggestedFilter(item);
+  byId('rule-filter').value = suggestedFilter(session);
   byId('rule-compose').hidden = false;
   showTab('workbench-tab');
-  byId('rule-filter').focus();
+  if (focus) byId('rule-filter').focus();
 }
 
 function eventCategory(event) {
@@ -349,7 +353,10 @@ function renderPayloadList() {
     row.innerHTML = `<span>r${record.revision}</span><b>${escapeHtml(info.side || '?')}</b>` +
       `<span>${escapeHtml(formatBytes(size) || `${size} B`)}</span>` +
       `<span>${escapeHtml(info.session || record.event.id || 'unlabelled')}</span>`;
-    row.onclick = () => selectPayload(record, false);
+    row.onclick = () => {
+      selectPayload(record, false);
+      pinSession(record, false);
+    };
     list.append(row);
   }
   if (followPayload) list.scrollTop = 0;
