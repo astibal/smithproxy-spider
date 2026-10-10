@@ -13,7 +13,14 @@ smithproxyUrl.value = localStorage.getItem('smithproxy-url') || smithproxyUrl.va
 smithproxyVerify.checked = localStorage.getItem('smithproxy-verify') !== 'false';
 
 const baseUrl = () => backend.value.replace(/\/$/, '');
-const headers = () => ({'X-Spider-Token': token.value});
+function tokenValue() {
+  const value = token.value.trim();
+  if (/[^\x20-\x7e]/.test(value)) {
+    throw new Error('Token contains masked bullets or other non-ASCII characters; paste the actual token from the runner status');
+  }
+  return value;
+}
+const headers = () => ({'X-Spider-Token': tokenValue()});
 
 async function poll() {
   try {
@@ -74,8 +81,18 @@ function escapeHtml(value) {
 }
 
 function connect() {
+  try {
+    tokenValue();
+  } catch (error) {
+    sessionStorage.removeItem('spider-token');
+    token.value = '';
+    status.textContent = `offline · ${error.message}`;
+    status.className = 'error';
+    clearInterval(timer);
+    return;
+  }
   localStorage.setItem('spider-backend', backend.value);
-  sessionStorage.setItem('spider-token', token.value);
+  sessionStorage.setItem('spider-token', tokenValue());
   revision = 0;
   events.textContent = '';
   clearInterval(timer);
