@@ -16,6 +16,21 @@ stop_process() {
     fi
 }
 
+print_howto() {
+    local host_ip
+    host_ip=${SPIDER_TEST_HOST_IP:-$(hostname -I | awk '{print $1}')}
+    echo "UI:      http://$host_ip:$UI_PORT/"
+    echo "Backend: http://$host_ip:$SPIDER_PORT"
+    echo "Token:   $SPIDER_TOKEN"
+    echo "CA:      http://$host_ip:$UI_PORT/test-ca.pem"
+    echo "Proxy:   http://$host_ip:33128"
+    echo "CLI:     telnet $host_ip 55000"
+    echo
+    echo "curl -o test-ca.pem http://$host_ip:$UI_PORT/test-ca.pem"
+    echo "curl --proxy http://$host_ip:33128 --cacert test-ca.pem https://root.cz/"
+    echo "Logs:    $STATE_DIR/{smithproxy,spider,frontend}.log"
+}
+
 case "$ACTION" in
 stop)
     stop_process "$STATE_DIR/spider.pid"
@@ -24,7 +39,13 @@ stop)
     exit 0 ;;
 status)
     if [[ -f "$STATE_DIR/spider.pid" ]] && kill -0 "$(<"$STATE_DIR/spider.pid")" 2>/dev/null; then
-        echo "running pid=$(<"$STATE_DIR/spider.pid")"; exit 0
+        if [[ ! -r "$STATE_DIR/state.env" ]]; then
+            echo "running pid=$(<"$STATE_DIR/spider.pid") (state.env missing)"; exit 1
+        fi
+        source "$STATE_DIR/state.env"
+        echo "running pid=$(<"$STATE_DIR/spider.pid")"
+        print_howto
+        exit 0
     fi
     echo "stopped"; exit 1 ;;
 start) ;;
@@ -65,14 +86,5 @@ if ! curl -fsS "http://127.0.0.1:$SPIDER_PORT/api/health" >/dev/null; then
     exit 1
 fi
 
-HOST_IP=${SPIDER_TEST_HOST_IP:-$(hostname -I | awk '{print $1}')}
 echo "Spider test server is ready."
-echo "UI:      http://$HOST_IP:$UI_PORT/"
-echo "Backend: http://$HOST_IP:$SPIDER_PORT"
-echo "Token:   $SPIDER_TOKEN"
-echo "CA:      http://$HOST_IP:$UI_PORT/test-ca.pem"
-echo "Proxy:   http://$HOST_IP:33128"
-echo "CLI:     telnet $HOST_IP 55000"
-echo
-echo "curl --proxy http://$HOST_IP:33128 --cacert test-ca.pem https://root.cz/"
-echo "Logs:    $STATE_DIR/{smithproxy,spider,frontend}.log"
+print_howto

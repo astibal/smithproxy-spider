@@ -16,6 +16,14 @@ require_root() {
     if [[ ${EUID} -ne 0 ]]; then echo "Run as root." >&2; exit 1; fi
 }
 
+print_howto() {
+    echo "API:          $SMITHPROXY_API_URL"
+    echo "HTTP CONNECT: $SMITHPROXY_CONNECT_URL"
+    echo "CLI:          $SMITHPROXY_CLI"
+    echo "CA:           $SMITHPROXY_CA_CERT"
+    echo "State:        $STATE_DIR/state.env"
+}
+
 stop_instance() {
     if [[ -f "$STATE_DIR/cli-forward.pid" ]]; then
         forward_pid=$(<"$STATE_DIR/cli-forward.pid")
@@ -45,8 +53,7 @@ status)
     if [[ -f "$STATE_DIR/smithproxy.pid" ]] && kill -0 "$(<"$STATE_DIR/smithproxy.pid")" 2>/dev/null; then
         source "$STATE_DIR/state.env"
         echo "running pid=$(<"$STATE_DIR/smithproxy.pid")"
-        echo "API:          $SMITHPROXY_API_URL"
-        echo "HTTP CONNECT: $SMITHPROXY_CONNECT_URL"
+        print_howto
         exit 0
     fi
     echo "stopped"; exit 1 ;;
@@ -204,11 +211,7 @@ echo $! >"$STATE_DIR/cli-forward.pid"
 for _ in {1..100}; do
     if curl -ksS -H "X-API-Key: $API_KEY" "$SMITHPROXY_API_URL/api/status/ping" >/dev/null 2>&1; then
         echo "Test Smithproxy is ready."
-        echo "API:          $SMITHPROXY_API_URL"
-        echo "HTTP CONNECT: $SMITHPROXY_CONNECT_URL"
-        echo "CLI:          $SMITHPROXY_CLI"
-        echo "CA:           $SMITHPROXY_CA_CERT"
-        echo "State:        $STATE_DIR/state.env"
+        print_howto
         exit 0
     fi
     if ! kill -0 "$(<"$STATE_DIR/smithproxy.pid")" 2>/dev/null; then
