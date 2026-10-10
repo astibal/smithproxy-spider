@@ -4,7 +4,8 @@ const chain = byId('chain'), events = byId('events');
 const sessions = byId('sessions');
 const smithproxyUrl = byId('smithproxy-url'), smithproxyKey = byId('smithproxy-key');
 const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('configure-status');
-let revision = 0, timer;
+let revision = 0, timer, eventRecords = [];
+const eventFilters = {ping: false, sessions: true, status: true, other: true};
 
 const suggestedBackend = `${location.protocol}//${location.hostname}:18080`;
 backend.value = localStorage.getItem('spider-backend') || suggestedBackend;
@@ -22,6 +23,22 @@ function tokenValue() {
 }
 const headers = () => ({'X-Spider-Token': tokenValue()});
 
+function eventCategory(event) {
+  if (event.action === 'ping') return 'ping';
+  if (event.action === 'spider-smithproxy-status') return 'status';
+  if (['access-request', 'connection-content', 'connection-start',
+       'connection-stop', 'connection-info', 'neighbor'].includes(event.action)) return 'sessions';
+  return 'other';
+}
+
+function renderEvents() {
+  events.textContent = eventRecords
+    .filter(record => eventFilters[eventCategory(record.event)])
+    .slice().reverse()
+    .map(record => `r${record.revision} ${JSON.stringify(record.event, null, 2)}`)
+    .join('\n\n');
+}
+
 async function poll() {
   try {
     const [eventResponse, statusResponse, sessionResponse] = await Promise.all([
@@ -36,10 +53,9 @@ async function poll() {
       eventResponse.json(), statusResponse.json(), sessionResponse.json(),
     ]);
     revision = data.revision;
-    for (const record of data.events) {
-      const event = record.event;
-      events.textContent = `r${record.revision} ${JSON.stringify(event, null, 2)}\n\n${events.textContent}`;
-    }
+    eventRecords.push(...data.events);
+    if (eventRecords.length > 500) eventRecords = eventRecords.slice(-500);
+    renderEvents();
     const proxy = current.smithproxy || {};
     const callback = current.last_callback || {};
     const callbackAge = callback.received_at_ms
@@ -54,7 +70,7 @@ async function poll() {
       `Smithproxy API    ${proxy.state || 'unknown'}\n` +
       `Webhook API       ${proxy.webhook_api || 'n/a'}\n` +
       `Lease expires     ${leaseExpiry}\n` +
-      `Callbacks         ${current.callbacks_received} · last ${callbackAge}` +
+      `Callbacks         ${current.callbacks_received} · last ${callback.action || 'n/a'} ${callbackAge}` +
       `${proxy.detail ? `\n${proxy.detail}` : ''}`;
     if (sessionData.sessions.length === 0) {
       sessions.textContent = 'none';
@@ -94,6 +110,7 @@ function connect() {
   localStorage.setItem('spider-backend', backend.value);
   sessionStorage.setItem('spider-token', tokenValue());
   revision = 0;
+  eventRecords = [];
   events.textContent = '';
   clearInterval(timer);
   poll();
@@ -137,4 +154,12 @@ byId('clear-token').onclick = () => {
   sessionStorage.removeItem('spider-token');
   token.focus();
 };
+for (const button of document.querySelectorAll('#event-filters button')) {
+  button.onclick = () => {
+    const category = button.dataset.filter;
+    eventFilters[category] = !eventFilters[category];
+    button.setAttribute('aria-pressed', String(eventFilters[category]));
+    renderEvents();
+  };
+}
 connect();
