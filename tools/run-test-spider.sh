@@ -53,6 +53,10 @@ status)
             echo "running pid=$(<"$STATE_DIR/spider.pid") (state.env missing)"; exit 1
         fi
         source "$STATE_DIR/state.env"
+        if ! curl -fsS "http://127.0.0.1:$SPIDER_PORT/api/health" >/dev/null 2>&1; then
+            echo "process alive but backend unhealthy pid=$(<"$STATE_DIR/spider.pid")" >&2
+            exit 1
+        fi
         echo "running pid=$(<"$STATE_DIR/spider.pid")"
         print_howto
         exit 0
