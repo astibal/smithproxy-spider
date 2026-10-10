@@ -193,6 +193,10 @@ int run_http_server(const ServerConfig& config, SessionStore& store,
                     SmithproxyManager& smithproxy, std::atomic_bool& stop) {
     lmh::WebServer server(config.port);
     server.options().bind_address = config.bind_address;
+    server.options().configure_listen_socket = [](int socket) {
+        int enabled = 1;
+        return ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled)) == 0;
+    };
     server.options().handler_should_terminate = [&stop] { return stop.load(); };
     server.addController(std::make_shared<SpiderController>(config, store, smithproxy));
     return server.start() ? 0 : 1;
