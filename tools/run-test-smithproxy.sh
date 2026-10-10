@@ -62,7 +62,7 @@ sync_source() {
     fi
 
     git -C "$SOURCE_DIR" fetch origin "$ref"
-    git -C "$SOURCE_DIR" reset --hard FETCH_HEAD
+    git -C "$SOURCE_DIR" checkout -B "$ref" FETCH_HEAD
     git -C "$SOURCE_DIR" config submodule.socle.url https://github.com/astibal/socle.git
     git -C "$SOURCE_DIR" config submodule.src/ext/lmhpp.url https://github.com/astibal/lmhpp.git
     git -C "$SOURCE_DIR" submodule update --init --recursive
