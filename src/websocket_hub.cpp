@@ -167,8 +167,10 @@ void WebSocketHub::publish(const std::uint64_t revision, const nlohmann::json& e
     });
 }
 
-void WebSocketHub::subscribe(const std::shared_ptr<Client>& client, const std::uint64_t after) {
+void WebSocketHub::subscribe(const std::shared_ptr<Client>& client, std::uint64_t after,
+                             const bool tail) {
     std::scoped_lock lock(mutex_);
+    if (tail && !replay_.empty()) after = replay_.back().revision;
     if (!replay_.empty() && after + 1 < replay_.front().revision) {
         client->send_text(nlohmann::json{{"type", "gap"}, {"requested_after", after},
                           {"oldest_available", replay_.front().revision}}.dump());
@@ -185,7 +187,7 @@ void WebSocketHub::handle_message(const std::shared_ptr<Client>& client, const s
     const auto json = nlohmann::json::parse(message, nullptr, false);
     if (json.is_discarded() || !json.is_object()) return;
     if (json.value("type", "") == "subscribe") {
-        subscribe(client, json.value("after", std::uint64_t{}));
+        subscribe(client, json.value("after", std::uint64_t{}), json.value("tail", false));
     } else if (client->active.load() && handler_) {
         handler_(json);
     }

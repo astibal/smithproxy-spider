@@ -486,12 +486,15 @@ function connectEventSocket() {
   const socket = new WebSocket(url, protocols);
   eventSocket = socket;
   socket.onopen = () => {
-    socket.send(JSON.stringify({type: 'subscribe', after: revision}));
+    socket.send(JSON.stringify(revision === 0
+      ? {type: 'subscribe', tail: true}
+      : {type: 'subscribe', after: revision}));
     socket.send(JSON.stringify({type: 'live-edit', enabled: liveEdit}));
   };
   socket.onmessage = message => {
     const data = JSON.parse(message.data);
     if (data.type === 'event') ingestEvent({revision: data.revision, event: data.event});
+    if (data.type === 'subscribed') revision = Math.max(revision, Number(data.revision) || 0);
     if (data.type === 'gap') {
       status.textContent = `stream gap · oldest r${data.oldest_available}`;
       status.className = 'error';

@@ -40,7 +40,7 @@ private:
                         std::size_t extra_in_size, MHD_socket socket,
                         MHD_UpgradeResponseHandle* handle);
     void run_client(const std::shared_ptr<Client>& client, std::string initial);
-    void subscribe(const std::shared_ptr<Client>& client, std::uint64_t after);
+    void subscribe(const std::shared_ptr<Client>& client, std::uint64_t after, bool tail);
     void remove_client(const std::shared_ptr<Client>& client);
     void handle_message(const std::shared_ptr<Client>& client, std::string_view message);
 
