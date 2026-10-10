@@ -26,12 +26,15 @@ print_howto() {
     echo
     echo "Test from Helmut:"
     echo "  curl --proxy $SMITHPROXY_CONNECT_URL --cacert $SMITHPROXY_CA_CERT https://root.cz/"
+    echo "  HTTP_CONNECT_PROXY=$SMITHPROXY_CONNECT_URL socksify curl --cacert $SMITHPROXY_CA_CERT https://root.cz/"
     echo "  telnet $SMITHPROXY_CLI"
     echo
     echo "Test from another test-LAN machine:"
     echo "curl -o test-ca.pem http://$host_ip:$UI_PORT/test-ca.pem"
     echo "curl --proxy http://$host_ip:33128 --cacert test-ca.pem https://root.cz/"
+    echo "HTTP_CONNECT_PROXY=http://$host_ip:33128 socksify curl --cacert test-ca.pem https://root.cz/"
     echo "telnet $host_ip 55000"
+    echo "socksify is provided by the dante-client package."
     echo "Logs:    $STATE_DIR/{smithproxy,spider,frontend}.log"
     echo
 }
