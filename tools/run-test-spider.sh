@@ -49,13 +49,16 @@ SPIDER_SMITHPROXY_KEY="$SMITHPROXY_API_KEY" SPIDER_TOKEN="$SPIDER_TOKEN" \
     --smithproxy-insecure >"$STATE_DIR/spider.log" 2>&1 &
 echo $! >"$STATE_DIR/spider.pid"
 
-python3 -m http.server "$UI_PORT" --bind 0.0.0.0 --directory "$ROOT/frontend" \
+mkdir -p "$STATE_DIR/frontend"
+cp -a "$ROOT/frontend/." "$STATE_DIR/frontend/"
+cp "$SMITHPROXY_CA_CERT" "$STATE_DIR/frontend/test-ca.pem"
+python3 -m http.server "$UI_PORT" --bind 0.0.0.0 --directory "$STATE_DIR/frontend" \
     >"$STATE_DIR/frontend.log" 2>&1 &
 echo $! >"$STATE_DIR/frontend.pid"
 
-for _ in {1..60}; do
+for _ in {1..90}; do
     if curl -fsS "http://127.0.0.1:$SPIDER_PORT/api/health" >/dev/null 2>&1; then break; fi
-    sleep 0.1
+    sleep 1
 done
 if ! curl -fsS "http://127.0.0.1:$SPIDER_PORT/api/health" >/dev/null; then
     tail -80 "$STATE_DIR/spider.log" >&2
@@ -67,5 +70,9 @@ echo "Spider test server is ready."
 echo "UI:      http://$HOST_IP:$UI_PORT/"
 echo "Backend: http://$HOST_IP:$SPIDER_PORT"
 echo "Token:   $SPIDER_TOKEN"
-echo "Proxy:   $SMITHPROXY_CONNECT_URL"
+echo "CA:      http://$HOST_IP:$UI_PORT/test-ca.pem"
+echo "Proxy:   http://$HOST_IP:33128"
+echo "CLI:     telnet $HOST_IP 55000"
+echo
+echo "curl --proxy http://$HOST_IP:33128 --cacert test-ca.pem https://root.cz/"
 echo "Logs:    $STATE_DIR/{smithproxy,spider,frontend}.log"

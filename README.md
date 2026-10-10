@@ -115,6 +115,7 @@ HTTP CONNECT    http://10.254.77.2:33128
 Smithproxy CLI  10.254.77.2:55000
 Spider backend  http://<helmut>:18080
 Spider UI       http://<helmut>:15173
+Test CA          http://<helmut>:15173/test-ca.pem
 ```
 
 Both scripts also accept `status` and `stop`. Stop Spider before removing its

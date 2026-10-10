@@ -17,12 +17,20 @@ require_root() {
 }
 
 stop_instance() {
+    if [[ -f "$STATE_DIR/cli-forward.pid" ]]; then
+        forward_pid=$(<"$STATE_DIR/cli-forward.pid")
+        if [[ "$forward_pid" =~ ^[0-9]+$ ]]; then kill "$forward_pid" 2>/dev/null || true; fi
+        rm -f "$STATE_DIR/cli-forward.pid"
+    fi
     if [[ -f "$STATE_DIR/smithproxy.pid" ]]; then
         pid=$(<"$STATE_DIR/smithproxy.pid")
         if [[ "$pid" =~ ^[0-9]+$ ]]; then kill "$pid" 2>/dev/null || true; fi
         for _ in {1..30}; do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
     fi
     iptables -t nat -D POSTROUTING -s "$NS_ADDR/32" -j MASQUERADE 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport "$API_PORT" -j DNAT --to-destination "$NS_ADDR:$API_PORT" 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport "$CONNECT_PORT" -j DNAT --to-destination "$NS_ADDR:$CONNECT_PORT" 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport "$CLI_PORT" -j DNAT --to-destination "$NS_ADDR:$CLI_PORT" 2>/dev/null || true
     iptables -D FORWARD -i "$HOST_IF" -j ACCEPT 2>/dev/null || true
     iptables -D FORWARD -o "$HOST_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
     ip netns del "$NS" 2>/dev/null || true
@@ -47,7 +55,7 @@ start) ;;
 esac
 
 require_root
-for command in git cmake ip iptables openssl python3 curl; do
+for command in git cmake ip iptables openssl python3 curl socat; do
     command -v "$command" >/dev/null || { echo "Missing command: $command" >&2; exit 1; }
 done
 mkdir -p "$STATE_DIR"
@@ -78,11 +86,36 @@ cmake --build "$SOURCE_DIR/build-spider-test" -j"$(nproc)" --target smithproxy
 API_KEY=$(openssl rand -hex 24)
 SPIDER_TOKEN=$(openssl rand -hex 24)
 CONFIG="$STATE_DIR/smithproxy.cfg"
-python3 - "$SOURCE_DIR/etc/smithproxy.cfg" "$CONFIG" "$SOURCE_DIR" "$STATE_DIR" \
+CERT_DIR="$STATE_DIR/certs/default"
+mkdir -p "$CERT_DIR"
+cp "$SOURCE_DIR/etc/certs/default/sslca.json" "$CERT_DIR/sslca.json"
+openssl req -x509 -newkey rsa:3072 -sha256 -days 30 -nodes \
+    -keyout "$CERT_DIR/ca-key.pem" -out "$CERT_DIR/ca-cert.pem" \
+    -subj "/CN=Smithproxy Spider Test CA/O=Smithproxy Test Lab/C=CZ" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes -keyout "$CERT_DIR/srv-key.pem" \
+    -out "$STATE_DIR/server.csr" -subj "/CN=smithproxy-test" >/dev/null 2>&1
+cat >"$STATE_DIR/server.ext" <<EOF
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:smithproxy-test,IP:$NS_ADDR,IP:$HOST_ADDR
+EOF
+openssl x509 -req -in "$STATE_DIR/server.csr" -CA "$CERT_DIR/ca-cert.pem" \
+    -CAkey "$CERT_DIR/ca-key.pem" -CAcreateserial -out "$CERT_DIR/srv-cert.pem" \
+    -days 30 -sha256 -extfile "$STATE_DIR/server.ext" >/dev/null 2>&1
+cp "$CERT_DIR/srv-key.pem" "$CERT_DIR/portal-key.pem"
+cp "$CERT_DIR/srv-cert.pem" "$CERT_DIR/portal-cert.pem"
+cp "$CERT_DIR/srv-key.pem" "$CERT_DIR/cl-key.pem"
+cp "$CERT_DIR/srv-cert.pem" "$CERT_DIR/cl-cert.pem"
+chmod 600 "$CERT_DIR"/*-key.pem
+
+python3 - "$SOURCE_DIR/etc/smithproxy.cfg" "$CONFIG" "$SOURCE_DIR" "$STATE_DIR" "$CERT_DIR" \
     "$API_KEY" "$API_PORT" "$CONNECT_PORT" "$CLI_PORT" <<'PY'
 import pathlib, sys
-source, destination, tree, state = map(pathlib.Path, sys.argv[1:5])
-api_key, api_port, connect_port, cli_port = sys.argv[5:]
+source, destination, tree, state, cert_dir = map(pathlib.Path, sys.argv[1:6])
+api_key, api_port, connect_port, cli_port = sys.argv[6:]
 text = source.read_text()
 replacements = {
     "accept_tproxy = TRUE;": "accept_tproxy = FALSE;",
@@ -92,7 +125,8 @@ replacements = {
     'nameservers = [ "8.8.8.8", "8.8.4.4" ];': 'nameservers = [ "1.1.1.1" ];',
     'http_connect_port = "3128";': f'http_connect_port = "{connect_port}";',
     "http_connect_workers = 0;": "http_connect_workers = 1;",
-    'certs_path = "/etc/smithproxy/certs/default/";': f'certs_path = "{tree / "etc/certs/default"}/";',
+    'certs_path = "/etc/smithproxy/certs/default/";': f'certs_path = "{cert_dir}/";',
+    'certs_ca_key_password = "smithproxy";': 'certs_ca_key_password = "";',
     'messages_dir = "/etc/smithproxy/msg/en/";': f'messages_dir = "{tree / "etc/msg/en"}/";',
     "port = 50000;": f"port = {cli_port};",
     'log_file = "/var/log/smithproxy/messages.%s.log";': f'log_file = "{state}/messages.%s.log";',
@@ -141,6 +175,9 @@ sysctl -q -w net.ipv4.ip_forward=1
 iptables -I FORWARD -i "$HOST_IF" -j ACCEPT
 iptables -I FORWARD -o "$HOST_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 iptables -t nat -A POSTROUTING -s "$NS_ADDR/32" -j MASQUERADE
+iptables -t nat -A PREROUTING -p tcp --dport "$API_PORT" -j DNAT --to-destination "$NS_ADDR:$API_PORT"
+iptables -t nat -A PREROUTING -p tcp --dport "$CONNECT_PORT" -j DNAT --to-destination "$NS_ADDR:$CONNECT_PORT"
+iptables -t nat -A PREROUTING -p tcp --dport "$CLI_PORT" -j DNAT --to-destination "$NS_ADDR:$CLI_PORT"
 
 cat >"$STATE_DIR/state.env" <<EOF
 SMITHPROXY_API_KEY=$API_KEY
@@ -148,6 +185,8 @@ SPIDER_TOKEN=$SPIDER_TOKEN
 SMITHPROXY_API_URL=https://$NS_ADDR:$API_PORT
 SMITHPROXY_CONNECT_URL=http://$NS_ADDR:$CONNECT_PORT
 SMITHPROXY_CALLBACK_URL=http://$HOST_ADDR:18080/webhook
+SMITHPROXY_CA_CERT=$CERT_DIR/ca-cert.pem
+SMITHPROXY_CLI=$NS_ADDR:$CLI_PORT
 EOF
 chmod 600 "$STATE_DIR/state.env"
 source "$STATE_DIR/state.env"
@@ -157,11 +196,18 @@ ip netns exec "$NS" env SMITHPROXY_PID_FILE="$STATE_DIR/service.pid" \
     >"$STATE_DIR/smithproxy.log" 2>&1 &
 echo $! >"$STATE_DIR/smithproxy.pid"
 
+ip netns exec "$NS" socat \
+    "TCP4-LISTEN:$CLI_PORT,bind=$NS_ADDR,reuseaddr,fork" "TCP4:127.0.0.1:$CLI_PORT" \
+    >"$STATE_DIR/cli-forward.log" 2>&1 &
+echo $! >"$STATE_DIR/cli-forward.pid"
+
 for _ in {1..100}; do
     if curl -ksS -H "X-API-Key: $API_KEY" "$SMITHPROXY_API_URL/api/status/ping" >/dev/null 2>&1; then
         echo "Test Smithproxy is ready."
         echo "API:          $SMITHPROXY_API_URL"
         echo "HTTP CONNECT: $SMITHPROXY_CONNECT_URL"
+        echo "CLI:          $SMITHPROXY_CLI"
+        echo "CA:           $SMITHPROXY_CA_CERT"
         echo "State:        $STATE_DIR/state.env"
         exit 0
     fi
