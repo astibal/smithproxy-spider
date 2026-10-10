@@ -91,3 +91,36 @@ SPIDER_SMITHPROXY_KEY=integration-key ./build/smithproxy-spider \
 
 Then `curl http://127.0.0.1:18080/api/events` shows authorization, webhook
 lease renewal, and a callback `ping` from `fake-smithproxy`.
+
+## Helmut test runners
+
+As root on Helmut, start an isolated Smithproxy built from the latest
+`origin/master`, then start Spider and its static test UI:
+
+```sh
+tools/run-test-smithproxy.sh start
+tools/run-test-spider.sh start
+```
+
+The first runner owns a marked checkout in
+`/root/src/smithproxy-test-master`, creates network namespace `sxp-test`, and
+adds outbound NAT only for `10.254.77.2`. It generates fresh API and frontend
+keys under `/root/.local/state/smithproxy-spider-test/` on each start.
+
+Default test endpoints:
+
+```text
+Smithproxy API  https://10.254.77.2:55580
+HTTP CONNECT    http://10.254.77.2:33128
+Smithproxy CLI  10.254.77.2:55000
+Spider backend  http://<helmut>:18080
+Spider UI       http://<helmut>:15173
+```
+
+Both scripts also accept `status` and `stop`. Stop Spider before removing its
+Smithproxy namespace:
+
+```sh
+tools/run-test-spider.sh stop
+tools/run-test-smithproxy.sh stop
+```

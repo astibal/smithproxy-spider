@@ -5,7 +5,8 @@ const smithproxyUrl = byId('smithproxy-url'), smithproxyKey = byId('smithproxy-k
 const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('configure-status');
 let revision = 0, timer;
 
-backend.value = localStorage.getItem('spider-backend') || backend.value;
+const suggestedBackend = `${location.protocol}//${location.hostname}:18080`;
+backend.value = localStorage.getItem('spider-backend') || suggestedBackend;
 token.value = sessionStorage.getItem('spider-token') || '';
 smithproxyUrl.value = localStorage.getItem('smithproxy-url') || smithproxyUrl.value;
 smithproxyVerify.checked = localStorage.getItem('smithproxy-verify') !== 'false';
