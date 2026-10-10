@@ -44,6 +44,61 @@ function formatTime(value) {
   return value ? new Date(value).toLocaleString() : '—';
 }
 
+function formatDuration(start, end) {
+  if (!start) return '—';
+  const milliseconds = Math.max(0, (end || Date.now()) - start);
+  if (milliseconds < 1000) return `${milliseconds} ms`;
+  if (milliseconds < 60000) return `${(milliseconds / 1000).toFixed(1)} s`;
+  return `${Math.floor(milliseconds / 60000)}m ${Math.floor((milliseconds % 60000) / 1000)}s`;
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(value)) return null;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function detailRow(label, value, extraClass = '') {
+  if (value === undefined || value === null || value === '') return '';
+  return `<div class="detail-row ${extraClass}"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
+}
+
+function renderSessionDetail(detail) {
+  const info = detail.last_event?.details?.info || {};
+  const tls = info.tls || {};
+  const l7 = info.l7 || {};
+  const urls = Array.isArray(l7.details) ? l7.details : [];
+  const signatures = Array.isArray(l7.signatures) ? l7.signatures : [];
+  const ja4h = Array.isArray(l7.ja4h) ? l7.ja4h : [];
+  const eventTimeline = (detail.events || []).map(event => {
+    const timestamp = formatTime(event.spider_received_at_ms);
+    return `<details class="timeline-event"><summary><b>${escapeHtml(event.action || 'event')}</b><time>${escapeHtml(timestamp)}</time></summary><pre>${escapeHtml(JSON.stringify(event, null, 2))}</pre></details>`;
+  }).join('');
+  sessionDetail.innerHTML =
+    `<div class="detail-hero"><span class="state ${escapeHtml(detail.state)}">${escapeHtml(detail.state)}</span><strong>${escapeHtml(tls.sni || l7.app || detail.label || detail.id)}</strong><small>${escapeHtml(detail.id)}</small></div>` +
+    `<dl class="detail-grid">` +
+      detailRow('Started', formatTime(detail.started_at_ms)) +
+      detailRow('Ended', detail.ended_at_ms ? formatTime(detail.ended_at_ms) : 'active') +
+      detailRow('Duration', formatDuration(detail.started_at_ms, detail.ended_at_ms)) +
+      detailRow('Events', detail.event_count) +
+      detailRow('Connection', info.session || detail.label, 'wide') +
+      detailRow('SNI', tls.sni) +
+      detailRow('Application', l7.app) +
+      detailRow('Policy', info.policy) +
+      detailRow('Uploaded', formatBytes(info.bytes_up)) +
+      detailRow('Downloaded', formatBytes(info.bytes_down)) +
+      detailRow('JA4 client', info.ja4_ch, 'wide') +
+      detailRow('JA4 server', info.ja4_sh, 'wide') +
+    `</dl>` +
+    (urls.length ? `<div class="detail-block"><h3>Requests</h3>${urls.map(url => `<code>${escapeHtml(url)}</code>`).join('')}</div>` : '') +
+    (signatures.length ? `<div class="detail-block"><h3>Signatures</h3><div class="chips">${signatures.map(value => `<span>${escapeHtml(value)}</span>`).join('')}</div></div>` : '') +
+    (ja4h.length ? `<div class="detail-block"><h3>JA4H</h3>${ja4h.map(value => `<code>${escapeHtml(value)}</code>`).join('')}</div>` : '') +
+    `<div class="detail-block"><h3>Event timeline</h3>${eventTimeline || '<span class="empty">none</span>'}</div>` +
+    `<details class="raw-detail"><summary>Raw JSON</summary><pre>${escapeHtml(JSON.stringify(detail, null, 2))}</pre></details>`;
+  sessionDetail.className = 'session-detail-content';
+}
+
 function sessionSubtitle(item) {
   const info = item.last_event?.details?.info || {};
   const sni = info.tls?.sni;
@@ -81,8 +136,7 @@ async function loadSessionDetail() {
       {headers: headers()});
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-    sessionDetail.textContent = JSON.stringify(body, null, 2);
-    sessionDetail.className = '';
+    renderSessionDetail(body);
     byId('detail-title').textContent = `Session detail · ${selectedSessionId}`;
   } catch (error) {
     sessionDetail.textContent = error.message;
