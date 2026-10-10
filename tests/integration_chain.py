@@ -25,6 +25,12 @@ def post_json(url, body, token=None):
     with urllib.request.urlopen(request, timeout=2) as response:
         return response.status, json.load(response)
 
+def delete_json(url, token=None):
+    headers = {"X-Spider-Token": token} if token else {}
+    request = urllib.request.Request(url, headers=headers, method="DELETE")
+    with urllib.request.urlopen(request, timeout=2) as response:
+        return response.status, json.load(response)
+
 def main():
     binary = os.path.abspath(sys.argv[1])
     api = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -73,6 +79,13 @@ def main():
                     assert status["last_callback"]["action"] == "ping"
                     assert status["last_callback"]["received_at_ms"] > 0
                     assert ready["ready"] is True
+                    history = get_json(
+                        f"http://127.0.0.1:{spider_port}/api/session-history", "frontend-key")
+                    assert history["sessions"] == []
+                    delete_status, deleted = delete_json(
+                        f"http://127.0.0.1:{spider_port}/api/session-history", "frontend-key")
+                    assert delete_status == 200
+                    assert deleted["removed"] == 0
                     try:
                         get_json(events_url)
                         raise AssertionError("browser API accepted a missing token")

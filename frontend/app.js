@@ -2,9 +2,10 @@ const byId = id => document.getElementById(id);
 const backend = byId('backend'), token = byId('token'), status = byId('status');
 const chain = byId('chain'), events = byId('events');
 const sessions = byId('sessions');
+const historyList = byId('history-list'), sessionDetail = byId('session-detail');
 const smithproxyUrl = byId('smithproxy-url'), smithproxyKey = byId('smithproxy-key');
 const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('configure-status');
-let revision = 0, timer, eventRecords = [];
+let revision = 0, timer, eventRecords = [], historyRecords = [], selectedSessionId = null;
 const eventFilters = {ping: false, sessions: true, status: true, other: true};
 
 const suggestedBackend = `${location.protocol}//${location.hostname}:18080`;
@@ -39,23 +40,93 @@ function renderEvents() {
     .join('\n\n');
 }
 
+function formatTime(value) {
+  return value ? new Date(value).toLocaleString() : '—';
+}
+
+function sessionSubtitle(item) {
+  const info = item.last_event?.details?.info || {};
+  const sni = info.tls?.sni;
+  const app = info.l7?.app;
+  return [item.label || 'unlabelled', sni, app].filter(Boolean).join(' · ');
+}
+
+function renderHistory() {
+  byId('history-count').textContent = `${historyRecords.length}`;
+  historyList.replaceChildren();
+  if (historyRecords.length === 0) {
+    historyList.textContent = 'none';
+    historyList.className = 'history-list empty';
+    return;
+  }
+  historyList.className = 'history-list';
+  for (const item of historyRecords) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `history-row ${item.state === 'completed' ? 'completed' : 'active'}${item.id === selectedSessionId ? ' selected' : ''}`;
+    row.innerHTML = `<span><b>${escapeHtml(item.id)}</b><i>${escapeHtml(item.state)}</i></span>` +
+      `<small>${escapeHtml(sessionSubtitle(item))}</small>` +
+      `<time>${escapeHtml(formatTime(item.updated_at_ms))} · ${item.event_count} events</time>`;
+    row.onclick = () => selectSession(item.id);
+    historyList.append(row);
+  }
+}
+
+async function loadSessionDetail() {
+  if (!selectedSessionId) return;
+  const reload = byId('reload-detail');
+  reload.disabled = true;
+  try {
+    const response = await fetch(`${baseUrl()}/api/session?id=${encodeURIComponent(selectedSessionId)}`,
+      {headers: headers()});
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    sessionDetail.textContent = JSON.stringify(body, null, 2);
+    sessionDetail.className = '';
+    byId('detail-title').textContent = `Session detail · ${selectedSessionId}`;
+  } catch (error) {
+    sessionDetail.textContent = error.message;
+    sessionDetail.className = 'error';
+  } finally {
+    reload.disabled = false;
+  }
+}
+
+function showTab(tabId) {
+  for (const panel of document.querySelectorAll('.tab-panel')) panel.hidden = panel.id !== tabId;
+  for (const button of document.querySelectorAll('.tabs button')) {
+    button.setAttribute('aria-selected', String(button.dataset.tab === tabId));
+  }
+}
+
+function selectSession(id) {
+  selectedSessionId = id;
+  showTab('history-tab');
+  renderHistory();
+  loadSessionDetail();
+}
+
 async function poll() {
   try {
-    const [eventResponse, statusResponse, sessionResponse] = await Promise.all([
+    const [eventResponse, statusResponse, sessionResponse, historyResponse] = await Promise.all([
       fetch(`${baseUrl()}/api/events?after=${revision}`, {headers: headers()}),
       fetch(`${baseUrl()}/api/status`, {headers: headers()}),
       fetch(`${baseUrl()}/api/sessions`, {headers: headers()}),
+      fetch(`${baseUrl()}/api/session-history`, {headers: headers()}),
     ]);
     if (!eventResponse.ok) throw new Error(`events HTTP ${eventResponse.status}`);
     if (!statusResponse.ok) throw new Error(`status HTTP ${statusResponse.status}`);
     if (!sessionResponse.ok) throw new Error(`sessions HTTP ${sessionResponse.status}`);
-    const [data, current, sessionData] = await Promise.all([
-      eventResponse.json(), statusResponse.json(), sessionResponse.json(),
+    if (!historyResponse.ok) throw new Error(`history HTTP ${historyResponse.status}`);
+    const [data, current, sessionData, historyData] = await Promise.all([
+      eventResponse.json(), statusResponse.json(), sessionResponse.json(), historyResponse.json(),
     ]);
     revision = data.revision;
     eventRecords.push(...data.events);
     if (eventRecords.length > 500) eventRecords = eventRecords.slice(-500);
     renderEvents();
+    historyRecords = historyData.sessions;
+    renderHistory();
     const proxy = current.smithproxy || {};
     const callback = current.last_callback || {};
     const callbackAge = callback.received_at_ms
@@ -77,10 +148,15 @@ async function poll() {
       sessions.className = 'empty';
     } else {
       sessions.className = '';
-      sessions.innerHTML = sessionData.sessions
-        .sort((a, b) => b.revision - a.revision)
-        .map(item => `<div class="session"><b>${escapeHtml(item.id)}</b> ${escapeHtml(item.state)}<br><span>${escapeHtml(item.label || 'unlabelled')}</span></div>`)
-        .join('');
+      sessions.replaceChildren();
+      for (const item of sessionData.sessions.sort((a, b) => b.revision - a.revision)) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'session';
+        row.innerHTML = `<b>${escapeHtml(item.id)}</b> ${escapeHtml(item.state)}<br><span>${escapeHtml(item.label || 'unlabelled')}</span>`;
+        row.onclick = () => selectSession(item.id);
+        sessions.append(row);
+      }
     }
     status.textContent = `live · r${revision}`;
     status.className = 'ok';
@@ -111,6 +187,8 @@ function connect() {
   sessionStorage.setItem('spider-token', tokenValue());
   revision = 0;
   eventRecords = [];
+  historyRecords = [];
+  selectedSessionId = null;
   events.textContent = '';
   clearInterval(timer);
   poll();
@@ -166,5 +244,30 @@ for (const button of document.querySelectorAll('#event-filters button')) {
 byId('clear-events').onclick = () => {
   eventRecords = [];
   renderEvents();
+};
+for (const button of document.querySelectorAll('.tabs button')) {
+  button.onclick = () => showTab(button.dataset.tab);
+}
+byId('reload-detail').onclick = loadSessionDetail;
+byId('clear-history').onclick = async () => {
+  try {
+    const response = await fetch(`${baseUrl()}/api/session-history`, {
+      method: 'DELETE', headers: headers(),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    historyRecords = historyRecords.filter(item => item.state !== 'completed');
+    if (!historyRecords.some(item => item.id === selectedSessionId)) {
+      selectedSessionId = null;
+      byId('detail-title').textContent = 'Session detail';
+      sessionDetail.textContent = 'select a session';
+      sessionDetail.className = 'empty';
+      byId('reload-detail').disabled = true;
+    }
+    renderHistory();
+  } catch (error) {
+    sessionDetail.textContent = error.message;
+    sessionDetail.className = 'error';
+  }
 };
 connect();

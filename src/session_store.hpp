@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -16,15 +17,23 @@ struct Session {
     std::string label;
     std::string state;
     std::uint64_t revision{};
+    std::int64_t started_at_ms{};
+    std::int64_t updated_at_ms{};
+    std::int64_t ended_at_ms{};
     nlohmann::json last_event;
+    std::deque<nlohmann::json> events;
 };
 
 class SessionStore {
 public:
-    explicit SessionStore(std::size_t history_limit = 1000);
+    explicit SessionStore(std::size_t history_limit = 1000,
+                          std::size_t session_history_limit = 1000);
 
     void apply(const nlohmann::json& event);
     [[nodiscard]] nlohmann::json snapshot() const;
+    [[nodiscard]] nlohmann::json session_history() const;
+    [[nodiscard]] std::optional<nlohmann::json> session_detail(const std::string& id) const;
+    std::size_t clear_completed_sessions();
     [[nodiscard]] nlohmann::json events_after(std::uint64_t revision) const;
     [[nodiscard]] nlohmann::json status() const;
     [[nodiscard]] std::uint64_t revision() const;
@@ -36,10 +45,15 @@ private:
     };
 
     static std::string session_label(const nlohmann::json& event);
+    static nlohmann::json session_json(const Session& session, bool include_events);
+    void prune_session_history();
 
     const std::size_t history_limit_;
+    const std::size_t session_history_limit_;
+    static constexpr std::size_t session_event_limit_{200};
     mutable std::mutex mutex_;
     std::unordered_map<std::string, Session> sessions_;
+    std::deque<std::string> session_order_;
     std::deque<EventRecord> history_;
     nlohmann::json smithproxy_status_{{"state", "starting"}};
     std::uint64_t callback_count_{};

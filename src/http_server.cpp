@@ -41,8 +41,11 @@ public:
         const std::string_view p(path);
         const std::string_view m(method);
         return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/ready" ||
-                               p == "/api/status" || p == "/api/sessions" || p == "/api/events")) ||
+                               p == "/api/status" || p == "/api/sessions" ||
+                               p == "/api/session-history" || p == "/api/session" ||
+                               p == "/api/events")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
+               (m == "DELETE" && p == "/api/session-history") ||
                (m == "POST" && p == "/api/config/smithproxy") ||
                (m == "POST" && p == callback_path());
     }
@@ -118,6 +121,19 @@ private:
             return json_response(status.value("ready", false) ? 200U : 503U, status);
         }
         if (method == "GET" && url == "/api/sessions") return json_response(200, store_.snapshot());
+        if (method == "GET" && url == "/api/session-history") {
+            return json_response(200, store_.session_history());
+        }
+        if (method == "GET" && url == "/api/session") {
+            const char* id = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "id");
+            if (id == nullptr || *id == '\0') return json_response(400, {{"error", "id is required"}});
+            const auto detail = store_.session_detail(id);
+            return detail ? json_response(200, *detail)
+                          : json_response(404, {{"error", "session not found"}});
+        }
+        if (method == "DELETE" && url == "/api/session-history") {
+            return json_response(200, {{"removed", store_.clear_completed_sessions()}});
+        }
         if (method == "GET" && url == "/api/events") {
             std::uint64_t after{};
             if (const char* value = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "after")) {
@@ -155,7 +171,7 @@ private:
         MHD_add_response_header(wire, MHD_HTTP_HEADER_CACHE_CONTROL, "no-store");
         MHD_add_response_header(wire, "Access-Control-Allow-Origin", "*");
         MHD_add_response_header(wire, "Access-Control-Allow-Headers", "Content-Type, X-Spider-Token");
-        MHD_add_response_header(wire, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        MHD_add_response_header(wire, "Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
         const auto result = MHD_queue_response(connection, response.status, wire);
         MHD_destroy_response(wire);
         state.response_sent = result == MHD_YES;

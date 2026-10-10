@@ -65,13 +65,19 @@ GET  /api/health           unprotected liveness endpoint
 GET  /api/ready            Smithproxy readiness (200/503)
 GET  /api/status           connection and callback counters
 POST /api/config/smithproxy runtime Smithproxy URL and credentials
-GET  /api/sessions         current sessions
+GET  /api/sessions         active sessions
+GET  /api/session-history  active and recently completed sessions
+GET  /api/session?id=ID    complete retained session detail
+DELETE /api/session-history remove completed sessions (active sessions remain)
 GET  /api/events?after=N   bounded event history
 POST /webhook/<token>      Smithproxy webhook receiver
 ```
 
 The actual callback path includes a random suffix and is registered
 automatically. The frontend never receives the Smithproxy API key.
+
+Session history retains up to 1000 completed sessions plus all active sessions.
+Each retained session keeps its latest summary and up to 200 session events.
 
 ## Local chain test
 
