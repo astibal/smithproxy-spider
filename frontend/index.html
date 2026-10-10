@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Smithproxy Spider</title><link rel="stylesheet" href="style.css"></head>
-<body><header><h1>Smithproxy Spider</h1><label>Backend <input id="backend" value="http://127.0.0.1:8080"></label><label>Token <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="paste actual token"></label>
+<body><header><h1>Smithproxy Spider</h1><label>Backend <input id="backend" value="http://127.0.0.1:8080"></label><label class="token-label">Token <span class="token-field"><input id="token" type="password" name="spider-api-token" autocomplete="new-password" spellcheck="false" placeholder="paste actual token" data-protonpass-ignore="true" data-1p-ignore data-lpignore="true"><button id="toggle-token" type="button" class="field-button" title="Show token" aria-label="Show token">👁</button><button id="clear-token" type="button" class="field-button" title="Clear token" aria-label="Clear token">×</button></span></label>
 <button id="connect">Connect</button><span id="status">idle</span></header>
 <main><div><section><h2>Smithproxy connection</h2>
 <label>API URL <input id="smithproxy-url" value="https://127.0.0.1:55555"></label>

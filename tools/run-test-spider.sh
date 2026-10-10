@@ -29,6 +29,7 @@ print_howto() {
     echo "curl -o test-ca.pem http://$host_ip:$UI_PORT/test-ca.pem"
     echo "curl --proxy http://$host_ip:33128 --cacert test-ca.pem https://root.cz/"
     echo "Logs:    $STATE_DIR/{smithproxy,spider,frontend}.log"
+    echo
 }
 
 case "$ACTION" in

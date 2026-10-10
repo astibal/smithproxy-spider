@@ -22,6 +22,7 @@ print_howto() {
     echo "CLI:          $SMITHPROXY_CLI"
     echo "CA:           $SMITHPROXY_CA_CERT"
     echo "State:        $STATE_DIR/state.env"
+    echo
 }
 
 stop_instance() {

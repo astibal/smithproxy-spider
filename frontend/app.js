@@ -125,4 +125,16 @@ async function configureSmithproxy() {
 
 byId('connect').onclick = connect;
 byId('configure').onclick = configureSmithproxy;
+byId('toggle-token').onclick = () => {
+  const visible = token.type === 'text';
+  token.type = visible ? 'password' : 'text';
+  byId('toggle-token').title = visible ? 'Show token' : 'Hide token';
+  byId('toggle-token').setAttribute('aria-label', visible ? 'Show token' : 'Hide token');
+  token.focus();
+};
+byId('clear-token').onclick = () => {
+  token.value = '';
+  sessionStorage.removeItem('spider-token');
+  token.focus();
+};
 connect();
