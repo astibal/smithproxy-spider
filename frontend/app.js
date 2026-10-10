@@ -27,6 +27,15 @@ backend.value = localStorage.getItem('spider-backend') || suggestedBackend;
 token.value = sessionStorage.getItem('spider-token') || '';
 smithproxyUrl.value = localStorage.getItem('smithproxy-url') || smithproxyUrl.value;
 smithproxyVerify.checked = localStorage.getItem('smithproxy-verify') !== 'false';
+const savedSidebarWidth = Number(localStorage.getItem('spider-sidebar-width'));
+if (savedSidebarWidth >= 280) byId('sidebar').style.width = `${savedSidebarWidth}px`;
+if ('ResizeObserver' in window) {
+  new ResizeObserver(entries => {
+    if (window.innerWidth > 800) {
+      localStorage.setItem('spider-sidebar-width', String(Math.round(entries[0].contentRect.width)));
+    }
+  }).observe(byId('sidebar'));
+}
 
 const baseUrl = () => backend.value.replace(/\/$/, '');
 function tokenValue() {
