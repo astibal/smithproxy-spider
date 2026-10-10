@@ -9,6 +9,12 @@ let revision = 0, timer, eventRecords = [], historyRecords = [], selectedSession
 let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array(), scriptSlot = 1;
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let replacementBase64 = null;
+let activeTab = 'events-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
+let payloadCacheBytes = 0, payloadsDropped = 0, payloadBytesDropped = 0, evictionTimes = [];
+let pollInFlight = false;
+let payloadMemoryLimit = Number(localStorage.getItem('spider-payload-memory-mib')) || 64;
+let payloadRecordLimit = Number(localStorage.getItem('spider-payload-record-limit')) || 200;
+let eventRecordLimit = Number(localStorage.getItem('spider-event-record-limit')) || 2000;
 const eventFilters = {ping: false, sessions: true, status: true, other: true};
 const defaultScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
@@ -73,6 +79,103 @@ function renderEvents() {
     .join('\n\n');
 }
 
+function clampInteger(value, minimum, maximum, fallback) {
+  const parsed = Math.floor(Number(value));
+  return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : fallback;
+}
+
+payloadMemoryLimit = clampInteger(payloadMemoryLimit, 8, 2048, 64);
+payloadRecordLimit = clampInteger(payloadRecordLimit, 10, 10000, 200);
+eventRecordLimit = clampInteger(eventRecordLimit, 100, 20000, 2000);
+
+function payloadSize(record) {
+  const content = record.event.details?.info?.content;
+  if (typeof content !== 'string') return 0;
+  // A JS string may occupy two bytes per character. Include a small object overhead.
+  return content.length * 2 + 1024;
+}
+
+function decodedPayloadSize(content) {
+  if (typeof content !== 'string' || content.length === 0) return 0;
+  const padding = content.endsWith('==') ? 2 : content.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor(content.length * 3 / 4) - padding);
+}
+
+function summarizeEvent(record) {
+  const event = {...record.event};
+  const details = event.details;
+  const info = details?.info;
+  if (typeof info?.content === 'string') {
+    event.details = {...details, info: {...info,
+      content: `<payload ${decodedPayloadSize(info.content)} B; retained in workbench cache>`,
+    }};
+  }
+  return {revision: record.revision, event};
+}
+
+function trimPayloadCache() {
+  const byteLimit = payloadMemoryLimit * 1024 * 1024;
+  while (payloadRecords.length > payloadRecordLimit || payloadCacheBytes > byteLimit) {
+    const removed = payloadRecords.shift();
+    if (!removed) break;
+    const bytes = removed.cacheBytes || payloadSize(removed);
+    payloadCacheBytes = Math.max(0, payloadCacheBytes - bytes);
+    payloadsDropped += 1;
+    payloadBytesDropped += bytes;
+    evictionTimes.push(Date.now());
+    if (selectedPayload === removed) selectedPayload = null;
+  }
+  const cutoff = Date.now() - 60000;
+  evictionTimes = evictionTimes.filter(time => time >= cutoff);
+  if (!selectedPayload && payloadRecords.length && followPayload) {
+    selectedPayload = payloadRecords[payloadRecords.length - 1];
+  }
+  updateCacheStats();
+}
+
+function updateCacheStats() {
+  const cutoff = Date.now() - 60000;
+  evictionTimes = evictionTimes.filter(time => time >= cutoff);
+  const limitBytes = payloadMemoryLimit * 1024 * 1024;
+  const ratio = limitBytes ? payloadCacheBytes / limitBytes : 0;
+  const recent = evictionTimes.length;
+  const summary = `${formatBytes(payloadCacheBytes)} / ${payloadMemoryLimit} MiB · ${payloadRecords.length} payloads`;
+  byId('cache-summary').textContent = summary;
+  const stats = byId('cache-stats');
+  if (recent > 0) {
+    stats.textContent = `${payloadsDropped} evicted (${recent} in the last minute, ${formatBytes(payloadBytesDropped)} total). Increase the limit if older payloads are needed.`;
+    stats.className = 'cache-stats pressure';
+  } else if (ratio >= 0.8 || payloadRecords.length >= payloadRecordLimit * 0.8) {
+    stats.textContent = 'Cache is near its limit. Increase it only if older payloads disappear too soon.';
+    stats.className = 'cache-stats warn';
+  } else {
+    stats.textContent = `${Math.round(ratio * 100)}% memory pressure. Current limit is healthy.`;
+    stats.className = 'cache-stats';
+  }
+}
+
+function scheduleRender(eventsChanged = false, payloadsChanged = false) {
+  eventsDirty ||= eventsChanged;
+  payloadsDirty ||= payloadsChanged;
+  if (renderFrame !== null) return;
+  renderFrame = requestAnimationFrame(() => {
+    renderFrame = null;
+    if (eventsDirty && activeTab === 'events-tab') {
+      renderEvents();
+      eventsDirty = false;
+    }
+    if (payloadsDirty && activeTab === 'workbench-tab') {
+      if (selectedPayload) {
+        payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
+        replacementBase64 = null;
+        renderPayload();
+      }
+      renderPayloadList();
+      payloadsDirty = false;
+    }
+  });
+}
+
 function decodeBase64(value) {
   const binary = atob(value || '');
   return Uint8Array.from(binary, char => char.charCodeAt(0));
@@ -90,8 +193,8 @@ function encodeHex(bytes) {
 }
 
 function renderPayload() {
-  byId('payload-text').value = new TextDecoder().decode(payloadBytes);
-  byId('payload-hex').textContent = encodeHex(payloadBytes);
+  if (payloadMode === 'hex') byId('payload-hex').textContent = encodeHex(payloadBytes);
+  else byId('payload-text').value = new TextDecoder().decode(payloadBytes);
   const info = selectedPayload?.event?.details?.info || {};
   byId('workbench-source').textContent = selectedPayload
     ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${info.session || selectedPayload.event.id}`
@@ -104,14 +207,17 @@ function renderPayload() {
   byId('replace-payload').disabled = !pending || replacementBase64 === null;
 }
 
+let payloadMode = 'ascii';
 function setPayloadMode(mode) {
-  const hex = mode === 'hex';
+  payloadMode = mode === 'hex' ? 'hex' : 'ascii';
+  const hex = payloadMode === 'hex';
   byId('payload-text').hidden = hex;
   byId('payload-hex').hidden = !hex;
   for (const button of document.querySelectorAll('#payload-modes button')) {
-    button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+    button.setAttribute('aria-pressed', String(button.dataset.mode === payloadMode));
   }
-  localStorage.setItem('spider-payload-mode', mode);
+  localStorage.setItem('spider-payload-mode', payloadMode);
+  renderPayload();
 }
 
 function setCodeSize(next) {
@@ -173,16 +279,17 @@ function selectPayload(record, follow = false) {
 function ingestEvent(record) {
   if (!record || !record.event || record.revision <= revision) return;
   revision = record.revision;
-  eventRecords.push(record);
-  if (eventRecords.length > 2000) eventRecords = eventRecords.slice(-2000);
+  eventRecords.push(summarizeEvent(record));
+  if (eventRecords.length > eventRecordLimit) eventRecords.splice(0, eventRecords.length - eventRecordLimit);
   if (record.event.action === 'connection-content' &&
       typeof record.event.details?.info?.content === 'string') {
+    record.cacheBytes = payloadSize(record);
     payloadRecords.push(record);
-    if (payloadRecords.length > 2000) payloadRecords = payloadRecords.slice(-2000);
-    if (followPayload || !selectedPayload) selectPayload(record, true);
-    else renderPayloadList();
+    payloadCacheBytes += record.cacheBytes;
+    if (followPayload || !selectedPayload) selectedPayload = record;
+    trimPayloadCache();
   }
-  renderEvents();
+  scheduleRender(true, record.event.action === 'connection-content');
 }
 
 function loadScriptSlot(number) {
@@ -346,10 +453,14 @@ async function loadSessionDetail() {
 }
 
 function showTab(tabId) {
+  activeTab = tabId;
   for (const panel of document.querySelectorAll('.tab-panel')) panel.hidden = panel.id !== tabId;
   for (const button of document.querySelectorAll('.tabs button')) {
     button.setAttribute('aria-selected', String(button.dataset.tab === tabId));
   }
+  if (tabId === 'events-tab') scheduleRender(true, false);
+  if (tabId === 'history-tab') renderHistory();
+  if (tabId === 'workbench-tab') scheduleRender(false, true);
 }
 
 function selectSession(id) {
@@ -417,6 +528,8 @@ function decideSelected(action) {
 }
 
 async function poll() {
+  if (pollInFlight) return;
+  pollInFlight = true;
   try {
     const [statusResponse, sessionResponse, historyResponse] = await Promise.all([
       fetch(`${baseUrl()}/api/status`, {headers: headers()}),
@@ -429,8 +542,10 @@ async function poll() {
     const [current, sessionData, historyData] = await Promise.all([
       statusResponse.json(), sessionResponse.json(), historyResponse.json(),
     ]);
-    historyRecords = historyData.sessions;
-    renderHistory();
+    historyRecords = historyData.sessions.map(item => ({...item,
+      last_event: item.last_event ? summarizeEvent({revision: 0, event: item.last_event}).event : item.last_event,
+    }));
+    if (activeTab === 'history-tab') renderHistory();
     const proxy = current.smithproxy || {};
     const callback = current.last_callback || {};
     const callbackAge = callback.received_at_ms
@@ -464,9 +579,12 @@ async function poll() {
     }
     status.textContent = `${eventSocket?.readyState === WebSocket.OPEN ? 'live' : 'connecting'} · r${revision}`;
     status.className = 'ok';
+    updateCacheStats();
   } catch (error) {
     status.textContent = `offline · ${error.message}`;
     status.className = 'error';
+  } finally {
+    pollInFlight = false;
   }
 }
 
@@ -494,11 +612,16 @@ function connect() {
   revision = 0;
   eventRecords = [];
   payloadRecords = [];
+  payloadCacheBytes = 0;
+  payloadsDropped = 0;
+  payloadBytesDropped = 0;
+  evictionTimes = [];
   selectedPayload = null;
   historyRecords = [];
   selectedSessionId = null;
   events.textContent = '';
   renderPayloadList();
+  updateCacheStats();
   clearInterval(timer);
   connectEventSocket();
   poll();
@@ -553,7 +676,7 @@ for (const button of document.querySelectorAll('#event-filters button')) {
 }
 byId('clear-events').onclick = () => {
   eventRecords = [];
-  renderEvents();
+  scheduleRender(true, false);
 };
 for (const button of document.querySelectorAll('.tabs button')) {
   button.onclick = () => showTab(button.dataset.tab);
@@ -581,7 +704,7 @@ byId('replace-payload').onclick = () => decideSelected('replace');
 byId('discard-payload').onclick = () => decideSelected('discard');
 byId('payload-text').oninput = event => {
   payloadBytes = new TextEncoder().encode(event.target.value);
-  byId('payload-hex').textContent = encodeHex(payloadBytes);
+  if (payloadMode === 'hex') byId('payload-hex').textContent = encodeHex(payloadBytes);
 };
 for (const button of document.querySelectorAll('#payload-modes button')) {
   button.onclick = () => setPayloadMode(button.dataset.mode);
@@ -613,6 +736,38 @@ byId('reset-script').onclick = () => {
   localStorage.removeItem(`spider-script-${scriptSlot}`);
   loadScriptSlot(scriptSlot);
 };
+byId('payload-memory-limit').value = payloadMemoryLimit;
+byId('payload-record-limit').value = payloadRecordLimit;
+byId('event-record-limit').value = eventRecordLimit;
+byId('apply-cache-limits').onclick = () => {
+  payloadMemoryLimit = clampInteger(byId('payload-memory-limit').value, 8, 2048, 64);
+  payloadRecordLimit = clampInteger(byId('payload-record-limit').value, 10, 10000, 200);
+  eventRecordLimit = clampInteger(byId('event-record-limit').value, 100, 20000, 2000);
+  byId('payload-memory-limit').value = payloadMemoryLimit;
+  byId('payload-record-limit').value = payloadRecordLimit;
+  byId('event-record-limit').value = eventRecordLimit;
+  localStorage.setItem('spider-payload-memory-mib', String(payloadMemoryLimit));
+  localStorage.setItem('spider-payload-record-limit', String(payloadRecordLimit));
+  localStorage.setItem('spider-event-record-limit', String(eventRecordLimit));
+  if (eventRecords.length > eventRecordLimit) {
+    eventRecords.splice(0, eventRecords.length - eventRecordLimit);
+  }
+  trimPayloadCache();
+  scheduleRender(true, true);
+};
+byId('clear-payloads').onclick = () => {
+  payloadRecords = [];
+  selectedPayload = null;
+  payloadBytes = new Uint8Array();
+  payloadCacheBytes = 0;
+  replacementBase64 = null;
+  byId('payload-text').value = '';
+  byId('payload-hex').textContent = '';
+  byId('workbench-source').textContent = 'no connection-content captured yet';
+  byId('workbench-source').className = 'empty';
+  updateCacheStats();
+  scheduleRender(false, true);
+};
 byId('clear-history').onclick = async () => {
   try {
     const response = await fetch(`${baseUrl()}/api/session-history`, {
@@ -635,5 +790,6 @@ byId('clear-history').onclick = async () => {
   }
 };
 loadScriptSlot(1);
+updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
 connect();
