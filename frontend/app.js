@@ -148,21 +148,21 @@ function updateCacheStats() {
     stats.className = 'cache-stats pressure';
     alert.hidden = false;
     alert.className = 'cache-alert pressure';
-    alert.textContent = '!!';
+    alert.textContent = '=!!=';
     alert.title = `${recent} payloads evicted in the last minute`;
   } else if (ratio >= 0.8 || payloadRecords.length >= payloadRecordLimit * 0.8) {
     stats.textContent = 'Cache is near its limit. Increase it only if older payloads disappear too soon.';
     stats.className = 'cache-stats warn';
     alert.hidden = false;
     alert.className = 'cache-alert warn';
-    alert.textContent = '!';
+    alert.textContent = '=!=';
     alert.title = 'Browser cache is near its configured limit';
   } else {
     stats.textContent = `${Math.round(ratio * 100)}% memory pressure. Current limit is healthy.`;
     stats.className = 'cache-stats';
     alert.hidden = true;
     alert.className = 'cache-alert';
-    alert.textContent = '!';
+    alert.textContent = '=!=';
     alert.title = '';
   }
 }
