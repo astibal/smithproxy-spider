@@ -36,6 +36,14 @@ if ('ResizeObserver' in window) {
     }
   }).observe(byId('sidebar'));
 }
+const workbenchLayout = byId('workbench-layout');
+const savedPayloadPane = Number(localStorage.getItem('spider-payload-pane'));
+const savedCodeSize = Number(localStorage.getItem('spider-code-size'));
+let codeSize = savedCodeSize >= 11 && savedCodeSize <= 22 ? savedCodeSize : 13;
+if (savedPayloadPane >= 20 && savedPayloadPane <= 75) {
+  workbenchLayout.style.setProperty('--payload-pane', `${savedPayloadPane}%`);
+}
+workbenchLayout.style.setProperty('--code-size', `${codeSize}px`);
 
 const baseUrl = () => backend.value.replace(/\/$/, '');
 function tokenValue() {
@@ -87,6 +95,29 @@ function renderPayload() {
     ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${info.session || selectedPayload.event.id}`
     : `${payloadBytes.length} B sample`;
   byId('workbench-source').className = '';
+}
+
+function setPayloadMode(mode) {
+  const hex = mode === 'hex';
+  byId('payload-text').hidden = hex;
+  byId('payload-hex').hidden = !hex;
+  for (const button of document.querySelectorAll('#payload-modes button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+  }
+  localStorage.setItem('spider-payload-mode', mode);
+}
+
+function setCodeSize(next) {
+  codeSize = Math.max(11, Math.min(22, next));
+  workbenchLayout.style.setProperty('--code-size', `${codeSize}px`);
+  localStorage.setItem('spider-code-size', String(codeSize));
+}
+
+function setPayloadPane(clientX) {
+  const bounds = workbenchLayout.getBoundingClientRect();
+  const percent = Math.max(20, Math.min(75, (clientX - bounds.left) / bounds.width * 100));
+  workbenchLayout.style.setProperty('--payload-pane', `${percent}%`);
+  localStorage.setItem('spider-payload-pane', percent.toFixed(1));
 }
 
 function refreshPayloadSelect() {
@@ -447,6 +478,27 @@ byId('payload-text').oninput = event => {
   payloadBytes = new TextEncoder().encode(event.target.value);
   byId('payload-hex').textContent = encodeHex(payloadBytes);
 };
+for (const button of document.querySelectorAll('#payload-modes button')) {
+  button.onclick = () => setPayloadMode(button.dataset.mode);
+}
+byId('font-smaller').onclick = () => setCodeSize(codeSize - 1);
+byId('font-larger').onclick = () => setCodeSize(codeSize + 1);
+const workbenchDivider = byId('workbench-divider');
+workbenchDivider.onpointerdown = event => {
+  workbenchDivider.setPointerCapture(event.pointerId);
+  setPayloadPane(event.clientX);
+};
+workbenchDivider.onpointermove = event => {
+  if (workbenchDivider.hasPointerCapture(event.pointerId)) setPayloadPane(event.clientX);
+};
+workbenchDivider.onkeydown = event => {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  const current = parseFloat(getComputedStyle(workbenchLayout).getPropertyValue('--payload-pane')) || 42;
+  const next = Math.max(20, Math.min(75, current + (event.key === 'ArrowLeft' ? -2 : 2)));
+  workbenchLayout.style.setProperty('--payload-pane', `${next}%`);
+  localStorage.setItem('spider-payload-pane', String(next));
+};
 for (const button of document.querySelectorAll('#script-slots button')) {
   button.onclick = () => loadScriptSlot(Number(button.dataset.slot));
 }
@@ -478,4 +530,5 @@ byId('clear-history').onclick = async () => {
   }
 };
 loadScriptSlot(1);
+setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
 connect();
