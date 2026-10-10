@@ -66,24 +66,25 @@ struct WebSocketHub::Client {
     std::atomic_bool active{};
 
     bool send_frame(const unsigned char opcode, const std::string_view payload) {
-        std::vector<unsigned char> frame;
-        frame.reserve(payload.size() + 10);
-        frame.push_back(static_cast<unsigned char>(0x80U | opcode));
+        std::array<unsigned char, 10> header{};
+        std::size_t header_size{};
+        header[header_size++] = static_cast<unsigned char>(0x80U | opcode);
         if (payload.size() <= 125) {
-            frame.push_back(static_cast<unsigned char>(payload.size()));
+            header[header_size++] = static_cast<unsigned char>(payload.size());
         } else if (payload.size() <= std::numeric_limits<std::uint16_t>::max()) {
-            frame.push_back(126);
-            frame.push_back(static_cast<unsigned char>((payload.size() >> 8U) & 0xffU));
-            frame.push_back(static_cast<unsigned char>(payload.size() & 0xffU));
+            header[header_size++] = 126;
+            header[header_size++] = static_cast<unsigned char>((payload.size() >> 8U) & 0xffU);
+            header[header_size++] = static_cast<unsigned char>(payload.size() & 0xffU);
         } else {
-            frame.push_back(127);
+            header[header_size++] = 127;
             for (int shift = 56; shift >= 0; shift -= 8) {
-                frame.push_back(static_cast<unsigned char>((payload.size() >> static_cast<unsigned>(shift)) & 0xffU));
+                header[header_size++] = static_cast<unsigned char>(
+                    (payload.size() >> static_cast<unsigned>(shift)) & 0xffU);
             }
         }
-        frame.insert(frame.end(), payload.begin(), payload.end());
         std::scoped_lock lock(write_mutex);
-        return send_all(socket, frame.data(), frame.size());
+        return send_all(socket, header.data(), header_size) &&
+               send_all(socket, reinterpret_cast<const unsigned char*>(payload.data()), payload.size());
     }
 
     bool send_text(const std::string_view payload) { return send_frame(0x1U, payload); }
