@@ -155,6 +155,7 @@ byId('clear-token').onclick = () => {
   token.focus();
 };
 for (const button of document.querySelectorAll('#event-filters button')) {
+  if (!button.dataset.filter) continue;
   button.onclick = () => {
     const category = button.dataset.filter;
     eventFilters[category] = !eventFilters[category];
@@ -162,4 +163,8 @@ for (const button of document.querySelectorAll('#event-filters button')) {
     renderEvents();
   };
 }
+byId('clear-events').onclick = () => {
+  eventRecords = [];
+  renderEvents();
+};
 connect();
