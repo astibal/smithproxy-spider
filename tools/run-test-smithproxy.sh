@@ -49,16 +49,22 @@ sync_source() {
         exit 1
     fi
 
-    if [[ $protect_changes == true ]] &&
-       [[ -n $(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no) ]]; then
+    local tracked_changes
+    tracked_changes=$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)
+    if [[ $tracked_changes == " M .gitmodules" ]]; then
+        # Older runner versions wrote HTTPS overrides into the tracked file.
+        git -C "$SOURCE_DIR" restore -- .gitmodules
+        tracked_changes=
+    fi
+    if [[ $protect_changes == true && -n $tracked_changes ]]; then
         echo "Refusing to replace local changes in $SOURCE_DIR" >&2
         exit 1
     fi
 
     git -C "$SOURCE_DIR" fetch origin "$ref"
     git -C "$SOURCE_DIR" reset --hard FETCH_HEAD
-    git -C "$SOURCE_DIR" submodule set-url socle https://github.com/astibal/socle.git
-    git -C "$SOURCE_DIR" submodule set-url src/ext/lmhpp https://github.com/astibal/lmhpp.git
+    git -C "$SOURCE_DIR" config submodule.socle.url https://github.com/astibal/socle.git
+    git -C "$SOURCE_DIR" config submodule.src/ext/lmhpp.url https://github.com/astibal/lmhpp.git
     git -C "$SOURCE_DIR" submodule update --init --recursive
     printf '%s\n' "$ref" >"$SOURCE_REF_FILE"
     echo "Smithproxy source: $ref @ $(git -C "$SOURCE_DIR" rev-parse --short HEAD)"
