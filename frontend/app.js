@@ -855,6 +855,12 @@ function addAutoAcceptRule() {
   renderAutoAcceptRules();
   syncAutoAcceptRules();
   byId('rule-filter').select();
+  if (payloadRecords.length) {
+    selectPayload(payloadRecords[payloadRecords.length - 1], true);
+  } else {
+    followPayload = true;
+    byId('follow-payload').setAttribute('aria-pressed', 'true');
+  }
 }
 byId('add-rule').onclick = addAutoAcceptRule;
 byId('rule-filter').onkeydown = event => {
