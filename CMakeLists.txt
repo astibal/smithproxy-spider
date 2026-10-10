@@ -8,7 +8,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MICROHTTPD REQUIRED IMPORTED_TARGET libmicrohttpd)
 pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
-find_package(nlohmann_json 3.10 REQUIRED)
+find_package(nlohmann_json 3.10 QUIET)
+if(NOT nlohmann_json_FOUND)
+    add_library(spider_nlohmann_json INTERFACE)
+    target_include_directories(spider_nlohmann_json INTERFACE external/nlohmann/include)
+    add_library(nlohmann_json::nlohmann_json ALIAS spider_nlohmann_json)
+endif()
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 add_library(spider_core
