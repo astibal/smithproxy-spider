@@ -4,6 +4,7 @@ set -euo pipefail
 ACTION=${1:-start}
 STATE_DIR=${SMITHPROXY_TEST_STATE_DIR:-/root/.local/state/smithproxy-spider-test}
 SOURCE_DIR=${SMITHPROXY_TEST_SOURCE_DIR:-/root/src/smithproxy-test-master}
+SOURCE_REF_FILE=$STATE_DIR/source-ref
 NS=sxp-test
 HOST_IF=sxp-test0
 NS_ADDR=10.254.77.2
@@ -14,6 +15,53 @@ CLI_PORT=55000
 
 require_root() {
     if [[ ${EUID} -ne 0 ]]; then echo "Run as root." >&2; exit 1; fi
+}
+
+source_ref() {
+    if [[ -n ${2:-} ]]; then
+        printf '%s\n' "$2"
+    elif [[ -n ${SMITHPROXY_TEST_REF:-} ]]; then
+        printf '%s\n' "$SMITHPROXY_TEST_REF"
+    elif [[ -r "$SOURCE_REF_FILE" ]]; then
+        <"$SOURCE_REF_FILE"
+    else
+        printf '%s\n' master
+    fi
+}
+
+sync_source() {
+    local ref=$1
+    local protect_changes=${2:-false}
+    if [[ ! $ref =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ || $ref == *..* ]]; then
+        echo "Invalid Smithproxy source ref: $ref" >&2
+        exit 2
+    fi
+
+    if [[ ! -d "$SOURCE_DIR/.git" ]]; then
+        if [[ -e "$SOURCE_DIR" ]]; then
+            echo "Refusing to replace unmanaged path: $SOURCE_DIR" >&2
+            exit 1
+        fi
+        git clone https://github.com/astibal/smithproxy.git "$SOURCE_DIR"
+        touch "$SOURCE_DIR/.spider-test-managed"
+    elif [[ ! -f "$SOURCE_DIR/.spider-test-managed" ]]; then
+        echo "Refusing to reset checkout without .spider-test-managed: $SOURCE_DIR" >&2
+        exit 1
+    fi
+
+    if [[ $protect_changes == true ]] &&
+       [[ -n $(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no) ]]; then
+        echo "Refusing to replace local changes in $SOURCE_DIR" >&2
+        exit 1
+    fi
+
+    git -C "$SOURCE_DIR" fetch origin "$ref"
+    git -C "$SOURCE_DIR" reset --hard FETCH_HEAD
+    git -C "$SOURCE_DIR" submodule set-url socle https://github.com/astibal/socle.git
+    git -C "$SOURCE_DIR" submodule set-url src/ext/lmhpp https://github.com/astibal/lmhpp.git
+    git -C "$SOURCE_DIR" submodule update --init --recursive
+    printf '%s\n' "$ref" >"$SOURCE_REF_FILE"
+    echo "Smithproxy source: $ref @ $(git -C "$SOURCE_DIR" rev-parse --short HEAD)"
 }
 
 print_howto() {
@@ -66,8 +114,16 @@ status)
         exit 0
     fi
     echo "stopped"; exit 1 ;;
+fetch)
+    require_root
+    for command in git; do
+        command -v "$command" >/dev/null || { echo "Missing command: $command" >&2; exit 1; }
+    done
+    mkdir -p "$STATE_DIR"
+    sync_source "$(source_ref "$@")" true
+    exit 0 ;;
 start) ;;
-*) echo "Usage: $0 {start|stop|status}" >&2; exit 2 ;;
+*) echo "Usage: $0 {start|stop|status|fetch [ref]}" >&2; exit 2 ;;
 esac
 
 require_root
@@ -76,24 +132,7 @@ for command in git cmake ip iptables openssl python3 curl socat; do
 done
 mkdir -p "$STATE_DIR"
 stop_instance
-
-if [[ ! -d "$SOURCE_DIR/.git" ]]; then
-    if [[ -e "$SOURCE_DIR" ]]; then
-        echo "Refusing to replace unmanaged path: $SOURCE_DIR" >&2
-        exit 1
-    fi
-    git clone https://github.com/astibal/smithproxy.git "$SOURCE_DIR"
-    touch "$SOURCE_DIR/.spider-test-managed"
-elif [[ ! -f "$SOURCE_DIR/.spider-test-managed" ]]; then
-    echo "Refusing to reset checkout without .spider-test-managed: $SOURCE_DIR" >&2
-    exit 1
-fi
-
-git -C "$SOURCE_DIR" fetch origin master
-git -C "$SOURCE_DIR" reset --hard origin/master
-git -C "$SOURCE_DIR" submodule set-url socle https://github.com/astibal/socle.git
-git -C "$SOURCE_DIR" submodule set-url src/ext/lmhpp https://github.com/astibal/lmhpp.git
-git -C "$SOURCE_DIR" submodule update --init --recursive
+sync_source "$(source_ref "$@")"
 
 cmake -S "$SOURCE_DIR" -B "$SOURCE_DIR/build-spider-test" \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF

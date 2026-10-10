@@ -126,7 +126,17 @@ Spider UI       http://<helmut>:15173
 Test CA          http://<helmut>:15173/test-ca.pem
 ```
 
-Both scripts also accept `status` and `stop`. Stop Spider before removing its
+The Smithproxy runner can update its managed checkout without building or
+restarting it. The selected ref is remembered for later `start` commands:
+
+```sh
+tools/run-test-smithproxy.sh fetch api-ng
+tools/run-test-smithproxy.sh start
+```
+
+Run `fetch` without a ref to update the previously selected ref; a fresh state
+defaults to `master`. It refuses to overwrite tracked local changes. Both
+scripts also accept `status` and `stop`. Stop Spider before removing its
 Smithproxy namespace:
 
 ```sh
