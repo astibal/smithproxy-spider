@@ -105,7 +105,9 @@ tools/run-test-spider.sh start
 The first runner owns a marked checkout in
 `/root/src/smithproxy-test-master`, creates network namespace `sxp-test`, and
 adds outbound NAT only for `10.254.77.2`. It generates fresh API and frontend
-keys under `/root/.local/state/smithproxy-spider-test/` on each start.
+keys under `/root/.local/state/smithproxy-spider-test/` on each start. The
+test veth uses MTU 1400 to avoid the SAS uplink's PMTU blackhole for full-size
+TLS ClientHello segments.
 
 Default test endpoints:
 

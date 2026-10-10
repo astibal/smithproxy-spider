@@ -11,6 +11,7 @@ HOST_ADDR=10.254.77.1
 API_PORT=55580
 CONNECT_PORT=33128
 CLI_PORT=55000
+TEST_MTU=1400
 
 require_root() {
     if [[ ${EUID} -ne 0 ]]; then echo "Run as root." >&2; exit 1; fi
@@ -165,9 +166,11 @@ PY
 
 ip netns add "$NS"
 ip link add "$HOST_IF" type veth peer name eth0 netns "$NS"
+ip link set "$HOST_IF" mtu "$TEST_MTU"
 ip addr add "$HOST_ADDR/30" dev "$HOST_IF"
 ip link set "$HOST_IF" up
 ip netns exec "$NS" ip link set lo up
+ip netns exec "$NS" ip link set eth0 mtu "$TEST_MTU"
 ip netns exec "$NS" ip addr add "$NS_ADDR/30" dev eth0
 ip netns exec "$NS" ip link set eth0 up
 ip netns exec "$NS" ip route add default via "$HOST_ADDR"
