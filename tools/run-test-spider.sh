@@ -3,7 +3,9 @@ set -euo pipefail
 
 ACTION=${1:-start}
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-STATE_DIR=${SMITHPROXY_TEST_STATE_DIR:-/root/.local/state/smithproxy-spider-test}
+TEST_ROOT=${SMITHPROXY_TEST_ROOT:-${HOME}/smithproxy-spider-test}
+STATE_DIR=${SMITHPROXY_TEST_STATE_DIR:-$TEST_ROOT/state}
+BUILD_DIR=${SPIDER_TEST_BUILD_DIR:-$TEST_ROOT/build/spider}
 SPIDER_PORT=${SPIDER_TEST_PORT:-18080}
 UI_PORT=${SPIDER_TEST_UI_PORT:-15173}
 
@@ -69,11 +71,11 @@ mkdir -p "$STATE_DIR"
 stop_process "$STATE_DIR/spider.pid"
 stop_process "$STATE_DIR/frontend.pid"
 
-cmake -S "$ROOT" -B "$ROOT/build" -DCMAKE_BUILD_TYPE=Release
-cmake --build "$ROOT/build" -j"$(nproc)"
+cmake -S "$ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+cmake --build "$BUILD_DIR" -j"$(nproc)"
 
 SPIDER_SMITHPROXY_KEY="$SMITHPROXY_API_KEY" SPIDER_TOKEN="$SPIDER_TOKEN" \
-    "$ROOT/build/smithproxy-spider" --bind 0.0.0.0 --port "$SPIDER_PORT" \
+    "$BUILD_DIR/smithproxy-spider" --bind 0.0.0.0 --port "$SPIDER_PORT" \
     --smithproxy-url "$SMITHPROXY_API_URL" --callback-url "$SMITHPROXY_CALLBACK_URL" \
     --smithproxy-insecure >"$STATE_DIR/spider.log" 2>&1 &
 echo $! >"$STATE_DIR/spider.pid"

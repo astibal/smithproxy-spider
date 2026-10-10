@@ -2,8 +2,10 @@
 set -euo pipefail
 
 ACTION=${1:-start}
-STATE_DIR=${SMITHPROXY_TEST_STATE_DIR:-/root/.local/state/smithproxy-spider-test}
-SOURCE_DIR=${SMITHPROXY_TEST_SOURCE_DIR:-/root/src/smithproxy-test-master}
+TEST_ROOT=${SMITHPROXY_TEST_ROOT:-${HOME}/smithproxy-spider-test}
+STATE_DIR=${SMITHPROXY_TEST_STATE_DIR:-$TEST_ROOT/state}
+SOURCE_DIR=${SMITHPROXY_TEST_SOURCE_DIR:-$TEST_ROOT/src/smithproxy}
+BUILD_DIR=${SMITHPROXY_TEST_BUILD_DIR:-$TEST_ROOT/build/smithproxy}
 SOURCE_REF_FILE=$STATE_DIR/source-ref
 NS=sxp-test
 HOST_IF=sxp-test0
@@ -142,9 +144,9 @@ mkdir -p "$STATE_DIR"
 stop_instance
 sync_source "$(source_ref "$@")"
 
-cmake -S "$SOURCE_DIR" -B "$SOURCE_DIR/build-spider-test" \
+cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-cmake --build "$SOURCE_DIR/build-spider-test" -j"$(nproc)" --target smithproxy
+cmake --build "$BUILD_DIR" -j"$(nproc)" --target smithproxy
 
 API_KEY=$(openssl rand -hex 24)
 SPIDER_TOKEN=$(openssl rand -hex 24)
@@ -263,7 +265,7 @@ chmod 600 "$STATE_DIR/state.env"
 source "$STATE_DIR/state.env"
 
 ip netns exec "$NS" env SMITHPROXY_PID_FILE="$STATE_DIR/service.pid" \
-    "$SOURCE_DIR/build-spider-test/smithproxy" --config-file "$CONFIG" --diagnose \
+    "$BUILD_DIR/smithproxy" --config-file "$CONFIG" --diagnose \
     >"$STATE_DIR/smithproxy.log" 2>&1 &
 echo $! >"$STATE_DIR/smithproxy.pid"
 

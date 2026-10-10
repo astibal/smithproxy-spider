@@ -108,10 +108,22 @@ tools/run-test-smithproxy.sh start
 tools/run-test-spider.sh start
 ```
 
-The first runner owns a marked checkout in
-`/root/src/smithproxy-test-master`, creates network namespace `sxp-test`, and
-adds outbound NAT only for `10.254.77.2`. It generates fresh API and frontend
-keys under `/root/.local/state/smithproxy-spider-test/` on each start. The
+The first runner keeps all generated test artifacts under one explicit root:
+
+```text
+~/smithproxy-spider-test/
+├── src/
+│   ├── smithproxy-spider/   Spider checkout
+│   └── smithproxy/          managed Smithproxy checkout
+├── build/
+│   ├── spider/              Spider build
+│   └── smithproxy/          Smithproxy build
+└── state/                   configuration, certificates, tokens, PIDs and logs
+```
+
+It creates network namespace `sxp-test` and adds outbound NAT only for
+`10.254.77.2`. It generates fresh API and frontend keys under the `state/`
+directory on each start. The
 test veth keeps the normal Ethernet MTU. Any upstream PMTU or MSS handling
 belongs on the network gateway, outside the test runner.
 
