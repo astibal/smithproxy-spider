@@ -73,8 +73,11 @@ passes the current callback and bypasses later callbacks belonging to that
 session. Disabling live edit, losing the last WebSocket client, or reaching the
 deadline resolves pending callbacks unchanged (fail-open).
 
-An active session can be pinned into the workbench to create an auto-accept
-rule. Rules use a tcpdump-like expression language with `and`, `or`, `not`,
+The sidebar groups active sessions into observed source and destination
+endpoints. Selecting source addresses, destination addresses, and destination
+ports builds an editable auto-accept rule without depending on a session ID.
+Individual sessions and payload rows can still be pinned as a shortcut. Rules
+use a tcpdump-like expression language with `and`, `or`, `not`,
 parentheses, `tcp`, `udp`, `ssl`, `ssli`, `quic`, `host`, `port`, `src host`,
 `dst host`, `src port`, `dst port`, and `side L|R`. Enabled rules are validated
 by the backend and accept matching callbacks before a decision ticket is

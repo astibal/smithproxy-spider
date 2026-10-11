@@ -16,6 +16,8 @@ let payloadMemoryLimit = Number(localStorage.getItem('spider-payload-memory-mib'
 let payloadRecordLimit = Number(localStorage.getItem('spider-payload-record-limit')) || 200;
 let eventRecordLimit = Number(localStorage.getItem('spider-event-record-limit')) || 2000;
 let pinnedSession = null;
+let endpointFilter = {protocol: null, sourceHost: null, destinationHost: null, destinationPort: null};
+let activeSessionRecords = [];
 let autoAcceptRules = [];
 try {
   const savedRules = JSON.parse(localStorage.getItem('spider-auto-accept-rules') || '[]');
@@ -131,6 +133,104 @@ function suggestedFilter(item) {
   if (!connection) return '';
   const protocol = ['udp', 'quic'].includes(connection.sourceProtocol) ? 'udp' : 'tcp';
   return `${protocol} and src host ${connection.sourceHost} and dst host ${connection.destinationHost} and dst port ${connection.destinationPort}`;
+}
+
+function endpointFilterExpression() {
+  const parts = [endpointFilter.protocol || 'tcp'];
+  if (endpointFilter.sourceHost) parts.push(`src host ${endpointFilter.sourceHost}`);
+  if (endpointFilter.destinationHost) parts.push(`dst host ${endpointFilter.destinationHost}`);
+  if (endpointFilter.destinationPort !== null) parts.push(`dst port ${endpointFilter.destinationPort}`);
+  return parts.length > 1 ? parts.join(' and ') : '';
+}
+
+function updateEndpointFilterDraft() {
+  const expression = endpointFilterExpression();
+  const draft = byId('endpoint-filter-draft');
+  draft.textContent = expression || 'select an endpoint';
+  draft.className = `filter-draft${expression ? '' : ' empty'}`;
+  byId('open-filter-draft').disabled = !expression;
+  if (expression) {
+    byId('rule-filter').value = expression;
+    byId('pinned-session').textContent = 'Draft from observed endpoints';
+    byId('pinned-session').className = 'pinned-session';
+  }
+}
+
+function selectEndpoint(part, value, protocol = null) {
+  endpointFilter[part] = endpointFilter[part] === value ? null : value;
+  if (protocol && endpointFilter[part] !== null) endpointFilter.protocol = protocol;
+  if (part === 'destinationHost' && endpointFilter.destinationHost === null) {
+    endpointFilter.destinationPort = null;
+  }
+  updateEndpointFilterDraft();
+}
+
+function renderEndpointBuilder(items) {
+  const sourceCounts = new Map();
+  const destinations = new Map();
+  for (const item of items) {
+    const connection = parseSessionLabel(item.label || item.last_event?.details?.info?.session);
+    if (!connection) continue;
+    const protocol = ['udp', 'quic'].includes(connection.sourceProtocol) ? 'udp' : 'tcp';
+    const source = sourceCounts.get(connection.sourceHost) || {count: 0, protocol};
+    source.count += 1;
+    sourceCounts.set(connection.sourceHost, source);
+    const destination = destinations.get(connection.destinationHost) || {count: 0, protocol, ports: new Map()};
+    destination.count += 1;
+    destination.ports.set(connection.destinationPort,
+      (destination.ports.get(connection.destinationPort) || 0) + 1);
+    destinations.set(connection.destinationHost, destination);
+  }
+
+  const sourceTarget = byId('observed-sources');
+  sourceTarget.replaceChildren();
+  sourceTarget.className = `endpoint-list${sourceCounts.size ? '' : ' empty'}`;
+  if (!sourceCounts.size) sourceTarget.textContent = 'none';
+  for (const [host, data] of [...sourceCounts].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'endpoint-choice';
+    button.setAttribute('aria-pressed', String(endpointFilter.sourceHost === host));
+    const address = document.createElement('span'); address.textContent = host;
+    const count = document.createElement('small'); count.textContent = `${data.protocol} · ${data.count}`;
+    button.append(address, count);
+    button.onclick = () => { selectEndpoint('sourceHost', host, data.protocol); renderEndpointBuilder(items); };
+    sourceTarget.append(button);
+  }
+
+  const destinationTarget = byId('observed-destinations');
+  destinationTarget.replaceChildren();
+  destinationTarget.className = `endpoint-list${destinations.size ? '' : ' empty'}`;
+  if (!destinations.size) destinationTarget.textContent = 'none';
+  for (const [host, data] of [...destinations].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))) {
+    const row = document.createElement('div'); row.className = 'destination-row';
+    const hostButton = document.createElement('button');
+    hostButton.type = 'button'; hostButton.className = 'endpoint-choice';
+    hostButton.setAttribute('aria-pressed', String(endpointFilter.destinationHost === host));
+    const address = document.createElement('span'); address.textContent = host;
+    const count = document.createElement('small'); count.textContent = String(data.count);
+    hostButton.append(address, count);
+    hostButton.onclick = () => { selectEndpoint('destinationHost', host, data.protocol); renderEndpointBuilder(items); };
+    const ports = document.createElement('span'); ports.className = 'destination-ports';
+    for (const [port, portCount] of [...data.ports].sort((a, b) => b[1] - a[1] || a[0] - b[0])) {
+      const portButton = document.createElement('button');
+      portButton.type = 'button'; portButton.className = 'endpoint-port';
+      portButton.setAttribute('aria-pressed', String(endpointFilter.destinationHost === host && endpointFilter.destinationPort === port));
+      portButton.title = `${portCount} active connection${portCount === 1 ? '' : 's'}`;
+      portButton.textContent = String(port);
+      portButton.onclick = () => {
+        const alreadySelected = endpointFilter.destinationHost === host && endpointFilter.destinationPort === port;
+        endpointFilter.destinationHost = alreadySelected ? null : host;
+        endpointFilter.destinationPort = alreadySelected ? null : port;
+        if (!alreadySelected) endpointFilter.protocol = data.protocol;
+        updateEndpointFilterDraft();
+        renderEndpointBuilder(items);
+      };
+      ports.append(portButton);
+    }
+    row.append(hostButton, ports);
+    destinationTarget.append(row);
+  }
 }
 
 function pinSession(item, focus = true) {
@@ -656,6 +756,8 @@ async function poll() {
     historyRecords = historyData.sessions.map(item => ({...item,
       last_event: item.last_event ? summarizeEvent({revision: 0, event: item.last_event}).event : item.last_event,
     }));
+    activeSessionRecords = sessionData.sessions;
+    renderEndpointBuilder(activeSessionRecords);
     if (activeTab === 'history-tab') renderHistory();
     const proxy = current.smithproxy || {};
     const callback = current.last_callback || {};
@@ -849,7 +951,7 @@ byId('reset-script').onclick = () => {
 };
 function addAutoAcceptRule() {
   const expression = byId('rule-filter').value.trim();
-  if (!pinnedSession || !expression) return;
+  if (!expression) return;
   autoAcceptRules.push({id: `rule-${Date.now()}-${Math.random().toString(16).slice(2)}`,
                         filter: expression, enabled: true});
   renderAutoAcceptRules();
@@ -867,6 +969,22 @@ byId('rule-filter').onkeydown = event => {
   if (event.key !== 'Enter') return;
   event.preventDefault();
   addAutoAcceptRule();
+};
+byId('clear-endpoint-filter').onclick = () => {
+  const previous = endpointFilterExpression();
+  endpointFilter = {protocol: null, sourceHost: null, destinationHost: null, destinationPort: null};
+  updateEndpointFilterDraft();
+  if (byId('rule-filter').value === previous) byId('rule-filter').value = '';
+  byId('pinned-session').textContent = 'Build a draft from observed endpoints or enter a filter directly.';
+  byId('pinned-session').className = 'pinned-session empty';
+  renderEndpointBuilder(activeSessionRecords);
+};
+byId('open-filter-draft').onclick = () => {
+  const expression = endpointFilterExpression();
+  if (!expression) return;
+  byId('rule-filter').value = expression;
+  showTab('workbench-tab');
+  byId('rule-filter').focus();
 };
 byId('payload-memory-limit').value = payloadMemoryLimit;
 byId('payload-record-limit').value = payloadRecordLimit;
