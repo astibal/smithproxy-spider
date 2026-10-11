@@ -12,7 +12,7 @@ const flowRecords = new Map();
 let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flows' ? 'flows' : 'payloads';
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let replacementBase64 = null;
-let activeTab = 'events-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
+let activeTab = 'workbench-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
 let payloadCacheBytes = 0, payloadsDropped = 0, payloadBytesDropped = 0, evictionTimes = [];
 let pollInFlight = false;
 let payloadMemoryLimit = Number(localStorage.getItem('spider-payload-memory-mib')) || 64;
@@ -396,6 +396,16 @@ function trafficRuleFor(address) {
   return trafficRules.find(rule => rule.address === address);
 }
 
+function endpointRulePriority(address) {
+  const index = trafficRules.findIndex(rule => rule.address === address);
+  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function compareEndpoints(a, b) {
+  const priority = endpointRulePriority(a[0]) - endpointRulePriority(b[0]);
+  return priority || b[1].count - a[1].count || a[0].localeCompare(b[0]);
+}
+
 function classifyEndpoint(address, mode) {
   trafficRules = trafficRules.filter(rule => rule.address !== address);
   if (mode !== 'clear') trafficRules.push({address, mode, matches: 0});
@@ -609,7 +619,7 @@ function renderEndpointBuilder() {
   sourceTarget.className = `endpoint-list${observedSources.size ? '' : ' empty'}`;
   if (!observedSources.size) sourceTarget.textContent = 'none';
   for (const [host, data] of limitedEndpoints([...observedSources]
-      .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0])))) {
+      .sort(compareEndpoints))) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'endpoint-choice';
@@ -629,7 +639,7 @@ function renderEndpointBuilder() {
   destinationTarget.className = `endpoint-list${observedDestinations.size ? '' : ' empty'}`;
   if (!observedDestinations.size) destinationTarget.textContent = 'none';
   for (const [host, data] of limitedEndpoints([...observedDestinations]
-      .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0])))) {
+      .sort(compareEndpoints))) {
     const hostButton = document.createElement('button');
     hostButton.type = 'button'; hostButton.className = 'endpoint-choice';
     const rule = trafficRuleFor(host);
@@ -1596,4 +1606,5 @@ renderSessionGroupControls();
 renderTrafficRules();
 updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
+showTab('workbench-tab');
 connect();
