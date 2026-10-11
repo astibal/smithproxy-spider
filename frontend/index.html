@@ -8,7 +8,7 @@
 <label>API key <input id="smithproxy-key" type="password" autocomplete="off"></label>
 <label class="check"><input id="smithproxy-verify" type="checkbox" checked> Verify TLS certificate</label>
 <button id="configure">Connect Smithproxy</button><span id="configure-status"></span>
-</section><section><h2>Chain</h2><pre id="chain">waiting for Spider</pre></section>
+</section><section class="chain-panel"><h2>Chain</h2><pre id="chain">waiting for Spider</pre></section>
 <section class="session-panel"><div class="section-head"><h2>Active sessions</h2><div id="session-group-controls" class="filters session-group-controls" aria-label="Session grouping priority"></div></div><div id="sessions" class="empty">none</div></section>
 <section class="endpoint-builder"><div class="section-head"><h2>Traffic filter builder</h2><button id="clear-endpoint-filter" type="button" class="danger-subtle">Clear</button></div><div class="endpoint-columns"><div><h3>Sources</h3><div id="observed-sources" class="endpoint-list empty">none</div></div><div><h3>Destinations</h3><div id="observed-destinations" class="endpoint-list empty">none</div></div></div><code id="endpoint-filter-draft" class="filter-draft empty">select an endpoint</code><button id="open-filter-draft" type="button" class="secondary" disabled>Open in workbench</button></section></div>
 <section class="workspace"><div class="tabs"><button type="button" data-tab="events-tab" aria-selected="true">Events</button><button type="button" data-tab="history-tab" aria-selected="false">Session history</button><button type="button" data-tab="workbench-tab" aria-selected="false">Payload workbench</button></div>
