@@ -21,6 +21,8 @@ let endpointFilter = {protocol: null, sourceHost: null, destinationHost: null, d
 let activeSessionRecords = [];
 let endpointTtlSeconds = Math.max(10, Math.min(3600,
   Number(localStorage.getItem('spider-endpoint-ttl-seconds')) || 600));
+let endpointDisplayLimit = Number(localStorage.getItem('spider-endpoint-display-limit') || 10);
+if (![0, 10, 20].includes(endpointDisplayLimit)) endpointDisplayLimit = 10;
 const observedSources = new Map(), observedDestinations = new Map(), observedPorts = new Map();
 let sessionGroupOrder = ['src', 'dst', 'dport'];
 let sessionGroupsEnabled = new Set(sessionGroupOrder);
@@ -112,6 +114,13 @@ endpointTtl.oninput = () => {
   localStorage.setItem('spider-endpoint-ttl-seconds', String(endpointTtlSeconds));
   byId('endpoint-ttl-value').value = formatEndpointTtl(endpointTtlSeconds);
   updateObservedEndpoints([], Date.now());
+  renderEndpointBuilder();
+};
+const endpointLimit = byId('endpoint-limit');
+endpointLimit.value = String(endpointDisplayLimit);
+endpointLimit.onchange = () => {
+  endpointDisplayLimit = Number(endpointLimit.value);
+  localStorage.setItem('spider-endpoint-display-limit', String(endpointDisplayLimit));
   renderEndpointBuilder();
 };
 const workbenchLayout = byId('workbench-layout');
@@ -424,6 +433,10 @@ function decorateExpiringEndpoint(button, data, now) {
   button.title = `Expires in ${Math.max(0, Math.ceil((data.lastSeen + endpointTtlSeconds * 1000 - now) / 1000))} s`;
 }
 
+function limitedEndpoints(entries) {
+  return endpointDisplayLimit ? entries.slice(0, endpointDisplayLimit) : entries;
+}
+
 function renderEndpointBuilder() {
   const now = Date.now();
 
@@ -443,7 +456,8 @@ function renderEndpointBuilder() {
   portTarget.replaceChildren();
   portTarget.className = `endpoint-list${observedPorts.size ? '' : ' empty'}`;
   if (!observedPorts.size) portTarget.textContent = 'none';
-  for (const [port, data] of [...observedPorts].sort((a, b) => b[1].count - a[1].count || a[0] - b[0])) {
+  for (const [port, data] of limitedEndpoints([...observedPorts]
+      .sort((a, b) => b[1].count - a[1].count || a[0] - b[0]))) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'endpoint-port';
@@ -462,7 +476,8 @@ function renderEndpointBuilder() {
   sourceTarget.replaceChildren();
   sourceTarget.className = `endpoint-list${observedSources.size ? '' : ' empty'}`;
   if (!observedSources.size) sourceTarget.textContent = 'none';
-  for (const [host, data] of [...observedSources].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))) {
+  for (const [host, data] of limitedEndpoints([...observedSources]
+      .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0])))) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'endpoint-choice';
@@ -479,7 +494,8 @@ function renderEndpointBuilder() {
   destinationTarget.replaceChildren();
   destinationTarget.className = `endpoint-list${observedDestinations.size ? '' : ' empty'}`;
   if (!observedDestinations.size) destinationTarget.textContent = 'none';
-  for (const [host, data] of [...observedDestinations].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))) {
+  for (const [host, data] of limitedEndpoints([...observedDestinations]
+      .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0])))) {
     const hostButton = document.createElement('button');
     hostButton.type = 'button'; hostButton.className = 'endpoint-choice';
     hostButton.setAttribute('aria-pressed', String(endpointFilter.destinationHost === host));

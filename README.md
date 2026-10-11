@@ -76,6 +76,7 @@ deadline resolves pending callbacks unchanged (fail-open).
 The sidebar groups active sessions into observed source and destination
 endpoints. Traffic Endpoints retains observations for a configurable TTL from
 10 seconds to one hour (ten minutes by default); addresses fade near expiry.
+Each endpoint column can show its top 10, top 20, or all observed values.
 Selecting source addresses, destination addresses, and destination ports
 builds an editable auto-accept rule without depending on a session ID.
 Individual sessions and payload rows can still be pinned as a shortcut. Rules
