@@ -40,7 +40,7 @@ try {
   if (Array.isArray(savedRules)) autoAcceptRules = savedRules.filter(rule =>
     rule && typeof rule.id === 'string' && typeof rule.filter === 'string');
 } catch (_) {}
-const eventFilters = {ping: false, sessions: true, status: true, other: true};
+const eventFilters = {ping: false, sessions: false, status: true, other: false};
 const defaultScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
 // api.side         "L" (client) or "R" (server)
