@@ -8,6 +8,8 @@ const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('conf
 let revision = 0, timer, eventRecords = [], historyRecords = [], selectedSessionId = null;
 let selectedSessionDetail = null;
 let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array(), scriptSlot = 1;
+let scriptLanguage = localStorage.getItem('spider-script-language') === 'javascript'
+  ? 'javascript' : 'python';
 const flowRecords = new Map();
 let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flows' ? 'flows' : 'payloads';
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
@@ -65,7 +67,7 @@ try {
     rule && typeof rule.address === 'string' && ['pass', 'focus', 'inspect', 'ignore'].includes(rule.mode));
 } catch (_) {}
 const eventFilters = {ping: false, sessions: false, status: true, other: false};
-const defaultScript = `// api.bytes        Uint8Array with the original payload
+const defaultJavascriptScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
 // api.side         "L" (client) or "R" (server)
 // api.sessionId    Smithproxy session identifier
@@ -78,6 +80,29 @@ const defaultScript = `// api.bytes        Uint8Array with the original payload
 api.print(api.sessionId, api.side, api.bytes.length + " bytes");
 return undefined;
 `;
+const defaultPythonScript = `# api.bytes          original payload as bytes
+# api.text           UTF-8 decoded view
+# api.side           "L" (client) or "R" (server)
+# api.session_id     Smithproxy session identifier
+# api.session_label  endpoints and detected protocol
+# api.print(...)     append to Script output
+# api.hexdump(...)   formatted preview of api.bytes
+#
+# Return None to keep the payload unchanged.
+# Return str or bytes to replace it.
+
+api.print(api.session_id, api.side, len(api.bytes), "bytes")
+api.print(api.hexdump(limit=64))
+return None
+`;
+
+function scriptStorageKey(slot = scriptSlot) {
+  return scriptLanguage === 'python' ? `spider-python-script-${slot}` : `spider-script-${slot}`;
+}
+
+function defaultScript() {
+  return scriptLanguage === 'python' ? defaultPythonScript : defaultJavascriptScript;
+}
 
 const suggestedBackend = `${location.protocol}//${location.hostname}:18080`;
 backend.value = localStorage.getItem('spider-backend') || suggestedBackend;
@@ -87,6 +112,7 @@ smithproxyVerify.checked = localStorage.getItem('smithproxy-verify') !== 'false'
 byId('resolve-hostnames').checked = hostnameResolving;
 byId('hide-resolved-ips').checked = hideResolvedIps;
 byId('compact-session-labels').checked = compactSessionLabels;
+byId('script-language').value = scriptLanguage;
 const savedSidebarWidth = Number(localStorage.getItem('spider-sidebar-width'));
 if (savedSidebarWidth >= 280) byId('sidebar').style.width = `${savedSidebarWidth}px`;
 if ('ResizeObserver' in window) {
@@ -1017,13 +1043,13 @@ function ingestEvent(record) {
 
 function loadScriptSlot(number) {
   scriptSlot = number;
-  byId('script-editor').value = localStorage.getItem(`spider-script-${number}`) || defaultScript;
+  byId('script-editor').value = localStorage.getItem(scriptStorageKey(number)) || defaultScript();
   for (const button of document.querySelectorAll('#script-slots button')) {
     button.setAttribute('aria-pressed', String(Number(button.dataset.slot) === number));
   }
 }
 
-function executeScript(record) {
+function executeJavascriptScript(record) {
   return new Promise(resolve => {
     const worker = new Worker('script-worker.js');
     const info = record?.event?.details?.info || {};
@@ -1045,6 +1071,33 @@ function executeScript(record) {
     worker.postMessage({script: byId('script-editor').value, bytes: Array.from(bytes),
       side: info.side || '', sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
   });
+}
+
+async function executePythonScript(record) {
+  const info = record?.event?.details?.info || {};
+  try {
+    const response = await fetch(`${baseUrl()}/api/script/python`, {
+      method: 'POST',
+      headers: {...headers(), 'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        script: byId('script-editor').value,
+        content: info.content || '',
+        side: info.side || '',
+        session_id: record?.event?.id || '',
+        session_label: info.session || '',
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    return result;
+  } catch (error) {
+    return {ok: false, logs: [], error: `Python runner: ${error.message}`};
+  }
+}
+
+function executeScript(record) {
+  return scriptLanguage === 'python'
+    ? executePythonScript(record) : executeJavascriptScript(record);
 }
 
 async function runInspectionScript(record) {
@@ -1579,10 +1632,17 @@ workbenchDivider.onkeydown = event => {
 for (const button of document.querySelectorAll('#script-slots button')) {
   button.onclick = () => loadScriptSlot(Number(button.dataset.slot));
 }
-byId('script-editor').oninput = event => localStorage.setItem(`spider-script-${scriptSlot}`, event.target.value);
+byId('script-editor').oninput = event => localStorage.setItem(scriptStorageKey(), event.target.value);
+byId('script-language').onchange = event => {
+  scriptLanguage = event.target.value;
+  localStorage.setItem('spider-script-language', scriptLanguage);
+  loadScriptSlot(scriptSlot);
+  byId('script-status').textContent = 'idle';
+  byId('script-status').className = 'empty';
+};
 byId('run-script').onclick = runScript;
 byId('reset-script').onclick = () => {
-  localStorage.removeItem(`spider-script-${scriptSlot}`);
+  localStorage.removeItem(scriptStorageKey());
   loadScriptSlot(scriptSlot);
 };
 byId('clear-traffic-rules').onclick = () => {

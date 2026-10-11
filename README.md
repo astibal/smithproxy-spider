@@ -61,11 +61,12 @@ The browser UI includes a Payload workbench. A WebSocket carries all events with
 monotonic revisions and replays a bounded in-memory log after short disconnects.
 The UI retains `connection-content` callbacks within configurable payload-count
 and memory budgets, displays the newest chunk first, preserves base64 data as
-bytes, and offers four JavaScript slots stored in local storage. Scripts receive
-an `api` object with `bytes`, decoded `text`, direction, and session metadata.
-Returning a string or `Uint8Array` creates a replacement preview; returning
-`undefined` keeps the payload unchanged. Each run uses a fresh Web Worker and is
-terminated after two seconds.
+bytes, and offers four slots per language stored in local storage. Python is the
+default; JavaScript remains available as a browser-side language. Both APIs expose
+payload bytes, decoded text, direction, session metadata, and captured output.
+Python additionally provides a compact `api.hexdump()` helper. Returning text or
+bytes creates a replacement preview; returning `None` (Python) or `undefined`
+(JavaScript) keeps the payload unchanged. Each run has a two-second limit.
 
 Live edit is opt-in. When enabled, each new content callback waits up to ten
 seconds for `accept`, `accept-session`, `replace`, or `discard`. Accept-session
@@ -99,6 +100,7 @@ GET  /api/health           unprotected liveness endpoint
 GET  /api/ready            Smithproxy readiness (200/503)
 GET  /api/status           connection and callback counters
 POST /api/config/smithproxy runtime Smithproxy URL and credentials
+POST /api/script/python   run a trusted Python payload script
 GET  /api/sessions         active sessions
 GET  /api/session-history  active and recently completed sessions
 GET  /api/session?id=ID    complete retained session detail

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import os
 import subprocess
@@ -97,6 +98,17 @@ def main():
                         raise AssertionError("browser API accepted a missing token")
                     except urllib.error.HTTPError as error:
                         assert error.code == 401
+                    python_status, python_result = post_json(
+                        f"http://127.0.0.1:{spider_port}/api/script/python",
+                        {"script": "api.print(api.side, len(api.bytes))\n"
+                                   "api.print(api.hexdump(limit=4))\nreturn api.bytes[::-1]",
+                         "content": base64.b64encode(b"hello").decode(),
+                         "side": "L", "session_id": "test", "session_label": "test-flow"},
+                        "frontend-key")
+                    assert python_status == 200
+                    assert python_result["ok"] is True
+                    assert python_result["logs"][0] == "L 5"
+                    assert base64.b64decode(python_result["replacement"]) == b"olleh"
                     callback = Handler.callback
                     assert callback
                     info_status, info = post_json(callback, {"action": "info"})
