@@ -10,6 +10,8 @@ let selectedSessionDetail = null;
 let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array(), scriptSlot = 1;
 let scriptLanguage = localStorage.getItem('spider-script-language') === 'javascript'
   ? 'javascript' : 'python';
+let pythonWorker = null, pythonWorkerReady = null, pythonRequestId = 0;
+const pythonRequests = new Map();
 const flowRecords = new Map();
 let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flows' ? 'flows' : 'payloads';
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
@@ -1073,26 +1075,60 @@ function executeJavascriptScript(record) {
   });
 }
 
+function stopPythonWorker(error) {
+  if (pythonWorker) pythonWorker.terminate();
+  pythonWorker = null;
+  pythonWorkerReady = null;
+  for (const pending of pythonRequests.values()) {
+    clearTimeout(pending.timeout);
+    pending.resolve({ok: false, logs: [], error});
+  }
+  pythonRequests.clear();
+}
+
+function ensurePythonWorker() {
+  if (pythonWorkerReady) return pythonWorkerReady;
+  pythonWorker = new Worker('python-worker.mjs', {type: 'module'});
+  pythonWorkerReady = new Promise((resolve, reject) => {
+    pythonWorker.onmessage = ({data}) => {
+      if (data.type === 'ready') { resolve(); return; }
+      if (data.type === 'init-error') {
+        reject(new Error(data.error));
+        stopPythonWorker(`Python initialization failed: ${data.error}`);
+        return;
+      }
+      const pending = pythonRequests.get(data.id);
+      if (!pending) return;
+      clearTimeout(pending.timeout);
+      pythonRequests.delete(data.id);
+      pending.resolve(data);
+    };
+    pythonWorker.onerror = event => {
+      const message = event.message || 'Python WebAssembly worker failed';
+      reject(new Error(message));
+      stopPythonWorker(message);
+    };
+  });
+  return pythonWorkerReady;
+}
+
 async function executePythonScript(record) {
   const info = record?.event?.details?.info || {};
   try {
-    const response = await fetch(`${baseUrl()}/api/script/python`, {
-      method: 'POST',
-      headers: {...headers(), 'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        script: byId('script-editor').value,
-        content: info.content || '',
-        side: info.side || '',
-        session_id: record?.event?.id || '',
-        session_label: info.session || '',
-      }),
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-    return result;
+    await ensurePythonWorker();
   } catch (error) {
-    return {ok: false, logs: [], error: `Python runner: ${error.message}`};
+    return {ok: false, logs: [], error: `Python initialization failed: ${error.message}`};
   }
+  return new Promise(resolve => {
+    const id = ++pythonRequestId;
+    const timeout = setTimeout(() => {
+      stopPythonWorker('Python script exceeded the 2 s execution limit.');
+    }, 2000);
+    pythonRequests.set(id, {resolve, timeout});
+    pythonWorker.postMessage({id, script: byId('script-editor').value,
+      content: info.content || '', side: info.side || '',
+      sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
+  });
 }
 
 function executeScript(record) {

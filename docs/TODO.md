@@ -6,4 +6,4 @@
 - Add a browsable cookbook ranging from simple payload logging to stateful session analysis.
 - Support replaying complete captured sessions through scripts.
 - Add explicit script capabilities and separate observe, transform, control, and offline modes.
-- Replace the initial per-run Python process with a managed long-lived worker when throughput requires it.
+- Vendor the Pyodide runtime for fully offline deployments instead of loading it from the pinned CDN release.

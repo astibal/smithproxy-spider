@@ -1,7 +1,6 @@
 #include "http_server.hpp"
 
 #include "decision_broker.hpp"
-#include "python_runner.hpp"
 #include "session_store.hpp"
 #include "smithproxy_manager.hpp"
 #include "webhook.hpp"
@@ -52,7 +51,7 @@ public:
                                p == "/api/events" || p == "/api/events/ws")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
                (m == "DELETE" && p == "/api/session-history") ||
-               (m == "POST" && (p == "/api/config/smithproxy" || p == "/api/script/python")) ||
+               (m == "POST" && p == "/api/config/smithproxy") ||
                (m == "POST" && p == callback_path());
     }
 
@@ -160,17 +159,6 @@ private:
                 std::from_chars(value, value + std::strlen(value), after);
             }
             return json_response(200, store_.events_after(after));
-        }
-        if (method == "POST" && url == "/api/script/python") {
-            try {
-                const auto request = nlohmann::json::parse(body);
-                if (!request.value("script", "").size()) {
-                    return json_response(400, {{"error", "script is required"}});
-                }
-                return json_response(200, run_python_script(request));
-            } catch (const nlohmann::json::exception&) {
-                return json_response(400, {{"error", "invalid script request"}});
-            }
         }
         if (method == "POST" && url == "/api/config/smithproxy") {
             try {
