@@ -437,6 +437,25 @@ function limitedEndpoints(entries) {
   return endpointDisplayLimit ? entries.slice(0, endpointDisplayLimit) : entries;
 }
 
+function attachEndpointScrollHint(target) {
+  let indicator = target.parentElement.querySelector('.endpoint-more');
+  if (!indicator) {
+    indicator = document.createElement('span');
+    indicator.className = 'endpoint-more';
+    indicator.textContent = '↓';
+    indicator.setAttribute('aria-hidden', 'true');
+    target.parentElement.append(indicator);
+  }
+  const refresh = () => {
+    const hasMore = target.scrollTop + target.clientHeight < target.scrollHeight - 2;
+    target.classList.toggle('has-more', hasMore);
+    indicator.hidden = !hasMore;
+    target.title = hasMore ? 'Scroll for more endpoints' : '';
+  };
+  target.onscroll = refresh;
+  requestAnimationFrame(refresh);
+}
+
 function renderEndpointBuilder() {
   const now = Date.now();
 
@@ -471,6 +490,7 @@ function renderEndpointBuilder() {
     };
     portTarget.append(button);
   }
+  attachEndpointScrollHint(portTarget);
 
   const sourceTarget = byId('observed-sources');
   sourceTarget.replaceChildren();
@@ -489,6 +509,7 @@ function renderEndpointBuilder() {
     button.onclick = () => { selectEndpoint('sourceHost', host, data.protocol); renderEndpointBuilder(); };
     sourceTarget.append(button);
   }
+  attachEndpointScrollHint(sourceTarget);
 
   const destinationTarget = byId('observed-destinations');
   destinationTarget.replaceChildren();
@@ -506,6 +527,7 @@ function renderEndpointBuilder() {
     hostButton.onclick = () => { selectEndpoint('destinationHost', host, data.protocol); renderEndpointBuilder(); };
     destinationTarget.append(hostButton);
   }
+  attachEndpointScrollHint(destinationTarget);
 }
 
 function pinSession(item, focus = true) {
