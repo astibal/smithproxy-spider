@@ -29,6 +29,7 @@ const reverseHostnames = new Map();
 let hostnameRevision = -1;
 let hostnameResolving = localStorage.getItem('spider-hostname-resolving') !== 'false';
 let hideResolvedIps = localStorage.getItem('spider-hide-resolved-ips') === 'true';
+let compactSessionLabels = localStorage.getItem('spider-compact-session-labels') === 'true';
 let hostnameExceptions = new Set();
 try {
   const savedExceptions = JSON.parse(localStorage.getItem('spider-hostname-exceptions') || '[]');
@@ -85,6 +86,7 @@ smithproxyUrl.value = localStorage.getItem('smithproxy-url') || smithproxyUrl.va
 smithproxyVerify.checked = localStorage.getItem('smithproxy-verify') !== 'false';
 byId('resolve-hostnames').checked = hostnameResolving;
 byId('hide-resolved-ips').checked = hideResolvedIps;
+byId('compact-session-labels').checked = compactSessionLabels;
 const savedSidebarWidth = Number(localStorage.getItem('spider-sidebar-width'));
 if (savedSidebarWidth >= 280) byId('sidebar').style.width = `${savedSidebarWidth}px`;
 if ('ResizeObserver' in window) {
@@ -499,6 +501,10 @@ function resolvedAddress(address) {
 function resolvedSessionLabel(label) {
   const connection = parseSessionLabel(label);
   if (!connection) return resolveText(label);
+  if (compactSessionLabels) {
+    return `${resolvedAddress(connection.sourceHost)}-${resolvedAddress(connection.destinationHost)}:` +
+      `${connection.destinationPort}`;
+  }
   return `${connection.sourceProtocol}_${resolvedAddress(connection.sourceHost)}:${connection.sourcePort}+` +
     `${connection.destinationProtocol}_${resolvedAddress(connection.destinationHost)}:${connection.destinationPort}`;
 }
@@ -833,11 +839,30 @@ function renderPayload() {
     ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${resolvedSessionLabel(info.session || selectedPayload.event.id)}`
     : `${payloadBytes.length} B sample`;
   byId('workbench-source').className = '';
+  const inspection = payloadInspectionInfo(selectedPayload);
+  byId('workbench-info').textContent = inspection || 'no inspection metadata';
+  byId('workbench-info').className = inspection ? '' : 'empty';
   const pending = selectedPayload?.event?.decision?.state === 'pending' && !selectedPayload.decided;
   byId('accept-payload').disabled = !pending;
   byId('accept-session').disabled = !pending;
   byId('discard-payload').disabled = !pending;
   byId('replace-payload').disabled = !pending || replacementBase64 === null;
+}
+
+function payloadInspectionInfo(record) {
+  if (!record) return payloadBytes.length ? 'synthetic sample' : '';
+  const info = record.event.details?.info || {};
+  const connection = parseSessionLabel(info.session);
+  const labels = [];
+  if ([connection?.sourceProtocol, connection?.destinationProtocol].includes('ssli')) {
+    labels.push('TLS inspection');
+  }
+  const layer = String(info.payload_layer || '').trim();
+  if (layer) labels.push(`${layer.toUpperCase()} payload`);
+  if (info.l7?.app) labels.push(String(info.l7.app));
+  if (record.event.decision?.state === 'pending') labels.push('awaiting decision');
+  else if (record.event.decision?.state === 'auto-accepted') labels.push('auto-accepted');
+  return [...new Set(labels)].join(' · ');
 }
 
 let payloadMode = 'ascii';
@@ -904,6 +929,8 @@ function selectPayload(record, follow = false) {
   if (!selectedPayload) {
     byId('workbench-source').textContent = 'no connection-content captured yet';
     byId('workbench-source').className = 'empty';
+    byId('workbench-info').textContent = 'waiting for metadata';
+    byId('workbench-info').className = 'empty';
     return;
   }
   payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
@@ -1324,6 +1351,11 @@ byId('hide-resolved-ips').onchange = event => {
   localStorage.setItem('spider-hide-resolved-ips', String(hideResolvedIps));
   refreshResolvedViews();
 };
+byId('compact-session-labels').onchange = event => {
+  compactSessionLabels = event.target.checked;
+  localStorage.setItem('spider-compact-session-labels', String(compactSessionLabels));
+  refreshResolvedViews();
+};
 byId('toggle-token').onclick = () => {
   const visible = token.type === 'text';
   token.type = visible ? 'password' : 'text';
@@ -1473,6 +1505,8 @@ byId('clear-payloads').onclick = () => {
   byId('payload-hex').textContent = '';
   byId('workbench-source').textContent = 'no connection-content captured yet';
   byId('workbench-source').className = 'empty';
+  byId('workbench-info').textContent = 'waiting for metadata';
+  byId('workbench-info').className = 'empty';
   updateCacheStats();
   scheduleRender(false, true);
 };
