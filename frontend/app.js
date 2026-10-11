@@ -139,12 +139,16 @@ endpointLimit.onchange = () => {
 };
 const workbenchLayout = byId('workbench-layout');
 const savedPayloadPane = Number(localStorage.getItem('spider-payload-pane'));
+const savedPayloadListHeight = Number(localStorage.getItem('spider-payload-list-height'));
+const savedPayloadViewHeight = Number(localStorage.getItem('spider-payload-view-height'));
 const savedCodeSize = Number(localStorage.getItem('spider-code-size'));
 let codeSize = savedCodeSize >= 11 && savedCodeSize <= 22 ? savedCodeSize : 13;
 if (savedPayloadPane >= 20 && savedPayloadPane <= 75) {
   workbenchLayout.style.setProperty('--payload-pane', `${savedPayloadPane}%`);
 }
 workbenchLayout.style.setProperty('--code-size', `${codeSize}px`);
+workbenchLayout.style.setProperty('--payload-list-height', `${savedPayloadListHeight >= 80 ? savedPayloadListHeight : 155}px`);
+workbenchLayout.style.setProperty('--payload-view-height', `${savedPayloadViewHeight >= 80 ? savedPayloadViewHeight : 300}px`);
 
 const baseUrl = () => backend.value.replace(/\/$/, '');
 function tokenValue() {
@@ -810,6 +814,10 @@ function renderPayload() {
     ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${resolvedSessionLabel(info.session || selectedPayload.event.id)}`
     : `${payloadBytes.length} B sample`;
   byId('workbench-source').className = '';
+  byId('payload-view-title').textContent = `${payloadMode.toUpperCase()} payload`;
+  byId('payload-view-status').textContent = selectedPayload
+    ? `${info.side || '?'} · ${payloadBytes.length} B · r${selectedPayload.revision}`
+    : `${payloadBytes.length} B`;
   const inspection = payloadInspectionInfo(selectedPayload);
   byId('workbench-info').textContent = inspection || 'no inspection metadata';
   byId('workbench-info').className = inspection ? '' : 'empty';
@@ -1502,6 +1510,34 @@ for (const button of document.querySelectorAll('#payload-views button')) {
 }
 byId('font-smaller').onclick = () => setCodeSize(codeSize - 1);
 byId('font-larger').onclick = () => setCodeSize(codeSize + 1);
+const payloadViewDivider = byId('payload-view-divider');
+function setPayloadViewSplit(listHeight, viewHeight) {
+  const list = Math.max(80, Math.min(500, listHeight));
+  const view = Math.max(80, Math.min(700, viewHeight));
+  workbenchLayout.style.setProperty('--payload-list-height', `${Math.round(list)}px`);
+  workbenchLayout.style.setProperty('--payload-view-height', `${Math.round(view)}px`);
+  localStorage.setItem('spider-payload-list-height', String(Math.round(list)));
+  localStorage.setItem('spider-payload-view-height', String(Math.round(view)));
+}
+payloadViewDivider.onpointerdown = event => {
+  const startY = event.clientY;
+  const startList = byId('payload-list').getBoundingClientRect().height;
+  const startView = byId('payload-viewer').open
+    ? byId('payload-viewer').querySelector('.payload-view-body').getBoundingClientRect().height : 300;
+  payloadViewDivider.setPointerCapture(event.pointerId);
+  payloadViewDivider.onpointermove = move => {
+    const delta = move.clientY - startY;
+    setPayloadViewSplit(startList + delta, startView - delta);
+  };
+  payloadViewDivider.onpointerup = () => { payloadViewDivider.onpointermove = null; };
+};
+payloadViewDivider.onkeydown = event => {
+  if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+  event.preventDefault();
+  const delta = event.key === 'ArrowUp' ? -20 : 20;
+  setPayloadViewSplit(byId('payload-list').getBoundingClientRect().height + delta,
+    byId('payload-viewer').querySelector('.payload-view-body').getBoundingClientRect().height - delta);
+};
 const workbenchDivider = byId('workbench-divider');
 workbenchDivider.onpointerdown = event => {
   workbenchDivider.setPointerCapture(event.pointerId);
