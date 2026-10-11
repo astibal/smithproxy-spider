@@ -74,8 +74,10 @@ session. Disabling live edit, losing the last WebSocket client, or reaching the
 deadline resolves pending callbacks unchanged (fail-open).
 
 The sidebar groups active sessions into observed source and destination
-endpoints. Selecting source addresses, destination addresses, and destination
-ports builds an editable auto-accept rule without depending on a session ID.
+endpoints. Traffic Endpoints retains observations for a configurable TTL from
+10 seconds to one hour (ten minutes by default); addresses fade near expiry.
+Selecting source addresses, destination addresses, and destination ports
+builds an editable auto-accept rule without depending on a session ID.
 Individual sessions and payload rows can still be pinned as a shortcut. Rules
 use a tcpdump-like expression language with `and`, `or`, `not`,
 parentheses, `tcp`, `udp`, `ssl`, `ssli`, `quic`, `host`, `port`, `src host`,

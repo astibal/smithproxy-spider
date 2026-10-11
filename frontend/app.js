@@ -19,6 +19,9 @@ let eventRecordLimit = Number(localStorage.getItem('spider-event-record-limit'))
 let pinnedSession = null;
 let endpointFilter = {protocol: null, sourceHost: null, destinationHost: null, destinationPort: null};
 let activeSessionRecords = [];
+let endpointTtlSeconds = Math.max(10, Math.min(3600,
+  Number(localStorage.getItem('spider-endpoint-ttl-seconds')) || 600));
+const observedSources = new Map(), observedDestinations = new Map(), observedPorts = new Map();
 let sessionGroupOrder = ['src', 'dst', 'dport'];
 let sessionGroupsEnabled = new Set(sessionGroupOrder);
 const openSessionGroups = new Set();
@@ -77,6 +80,40 @@ if ('ResizeObserver' in window) {
     }
   }).observe(byId('sidebar'));
 }
+const sidebarResizer = byId('sidebar-resizer');
+sidebarResizer.onpointerdown = event => {
+  const sidebar = byId('sidebar');
+  const startX = event.clientX, startWidth = sidebar.getBoundingClientRect().width;
+  sidebarResizer.setPointerCapture(event.pointerId);
+  sidebarResizer.onpointermove = move => {
+    const width = Math.max(280, Math.min(window.innerWidth * .7, startWidth + move.clientX - startX));
+    sidebar.style.width = `${Math.round(width)}px`;
+  };
+  sidebarResizer.onpointerup = () => { sidebarResizer.onpointermove = null; };
+};
+sidebarResizer.onkeydown = event => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  event.preventDefault();
+  const sidebar = byId('sidebar');
+  const change = event.key === 'ArrowLeft' ? -20 : 20;
+  sidebar.style.width = `${Math.max(280, Math.min(window.innerWidth * .7,
+    sidebar.getBoundingClientRect().width + change))}px`;
+};
+function formatEndpointTtl(seconds) {
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  return '1 h';
+}
+const endpointTtl = byId('endpoint-ttl');
+endpointTtl.value = endpointTtlSeconds;
+byId('endpoint-ttl-value').value = formatEndpointTtl(endpointTtlSeconds);
+endpointTtl.oninput = () => {
+  endpointTtlSeconds = Number(endpointTtl.value);
+  localStorage.setItem('spider-endpoint-ttl-seconds', String(endpointTtlSeconds));
+  byId('endpoint-ttl-value').value = formatEndpointTtl(endpointTtlSeconds);
+  updateObservedEndpoints([], Date.now());
+  renderEndpointBuilder();
+};
 const workbenchLayout = byId('workbench-layout');
 const savedPayloadPane = Number(localStorage.getItem('spider-payload-pane'));
 const savedCodeSize = Number(localStorage.getItem('spider-code-size'));
@@ -344,7 +381,7 @@ function selectEndpoint(part, value, protocol = null) {
   updateEndpointFilterDraft();
 }
 
-function renderEndpointBuilder(items) {
+function updateObservedEndpoints(items, now = Date.now()) {
   const sourceCounts = new Map();
   const destinations = new Map();
   const portCounts = new Map();
@@ -362,6 +399,33 @@ function renderEndpointBuilder(items) {
     port.count += 1;
     portCounts.set(connection.destinationPort, port);
   }
+  for (const [key, data] of sourceCounts) observedSources.set(key, {...data, lastSeen: now});
+  for (const [key, data] of destinations) observedDestinations.set(key, {...data, lastSeen: now});
+  for (const [key, data] of portCounts) observedPorts.set(key, {...data, lastSeen: now});
+  const cutoff = now - endpointTtlSeconds * 1000;
+  for (const values of [observedSources, observedDestinations, observedPorts]) {
+    for (const [key, data] of values) if (data.lastSeen < cutoff) values.delete(key);
+  }
+}
+
+function endpointIntensity(data, now = Date.now()) {
+  const ttl = endpointTtlSeconds * 1000;
+  const remaining = data.lastSeen + ttl - now;
+  const fadeWindow = Math.max(ttl * .1, 5000);
+  if (remaining > fadeWindow) return 1;
+  return Math.max(.3, remaining / fadeWindow);
+}
+
+function decorateExpiringEndpoint(button, data, now) {
+  const intensity = endpointIntensity(data, now);
+  if (intensity >= 1) return;
+  button.classList.add('expiring');
+  button.style.setProperty('--endpoint-intensity', intensity.toFixed(2));
+  button.title = `Expires in ${Math.max(0, Math.ceil((data.lastSeen + endpointTtlSeconds * 1000 - now) / 1000))} s`;
+}
+
+function renderEndpointBuilder() {
+  const now = Date.now();
 
   const enabledDimensions = sessionGroupOrder.filter(key => sessionGroupsEnabled.has(key));
   const columns = byId('endpoint-columns');
@@ -377,9 +441,9 @@ function renderEndpointBuilder(items) {
 
   const portTarget = byId('observed-ports');
   portTarget.replaceChildren();
-  portTarget.className = `endpoint-list${portCounts.size ? '' : ' empty'}`;
-  if (!portCounts.size) portTarget.textContent = 'none';
-  for (const [port, data] of [...portCounts].sort((a, b) => b[1].count - a[1].count || a[0] - b[0])) {
+  portTarget.className = `endpoint-list${observedPorts.size ? '' : ' empty'}`;
+  if (!observedPorts.size) portTarget.textContent = 'none';
+  for (const [port, data] of [...observedPorts].sort((a, b) => b[1].count - a[1].count || a[0] - b[0])) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'endpoint-port';
@@ -389,16 +453,16 @@ function renderEndpointBuilder(items) {
     button.append(number, count);
     button.onclick = () => {
       selectEndpoint('destinationPort', port, data.protocol);
-      renderEndpointBuilder(items);
+      renderEndpointBuilder();
     };
     portTarget.append(button);
   }
 
   const sourceTarget = byId('observed-sources');
   sourceTarget.replaceChildren();
-  sourceTarget.className = `endpoint-list${sourceCounts.size ? '' : ' empty'}`;
-  if (!sourceCounts.size) sourceTarget.textContent = 'none';
-  for (const [host, data] of [...sourceCounts].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))) {
+  sourceTarget.className = `endpoint-list${observedSources.size ? '' : ' empty'}`;
+  if (!observedSources.size) sourceTarget.textContent = 'none';
+  for (const [host, data] of [...observedSources].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'endpoint-choice';
@@ -406,22 +470,24 @@ function renderEndpointBuilder(items) {
     const address = document.createElement('span'); address.textContent = host;
     const count = document.createElement('small'); count.textContent = `${data.protocol} · ${data.count}`;
     button.append(address, count);
-    button.onclick = () => { selectEndpoint('sourceHost', host, data.protocol); renderEndpointBuilder(items); };
+    decorateExpiringEndpoint(button, data, now);
+    button.onclick = () => { selectEndpoint('sourceHost', host, data.protocol); renderEndpointBuilder(); };
     sourceTarget.append(button);
   }
 
   const destinationTarget = byId('observed-destinations');
   destinationTarget.replaceChildren();
-  destinationTarget.className = `endpoint-list${destinations.size ? '' : ' empty'}`;
-  if (!destinations.size) destinationTarget.textContent = 'none';
-  for (const [host, data] of [...destinations].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))) {
+  destinationTarget.className = `endpoint-list${observedDestinations.size ? '' : ' empty'}`;
+  if (!observedDestinations.size) destinationTarget.textContent = 'none';
+  for (const [host, data] of [...observedDestinations].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))) {
     const hostButton = document.createElement('button');
     hostButton.type = 'button'; hostButton.className = 'endpoint-choice';
     hostButton.setAttribute('aria-pressed', String(endpointFilter.destinationHost === host));
     const address = document.createElement('span'); address.textContent = host;
     const count = document.createElement('small'); count.textContent = String(data.count);
     hostButton.append(address, count);
-    hostButton.onclick = () => { selectEndpoint('destinationHost', host, data.protocol); renderEndpointBuilder(items); };
+    decorateExpiringEndpoint(hostButton, data, now);
+    hostButton.onclick = () => { selectEndpoint('destinationHost', host, data.protocol); renderEndpointBuilder(); };
     destinationTarget.append(hostButton);
   }
 }
@@ -954,7 +1020,8 @@ async function poll() {
       last_event: item.last_event ? summarizeEvent({revision: 0, event: item.last_event}).event : item.last_event,
     }));
     activeSessionRecords = sessionData.sessions;
-    renderEndpointBuilder(activeSessionRecords);
+    updateObservedEndpoints(activeSessionRecords);
+    renderEndpointBuilder();
     if (activeTab === 'history-tab') renderHistory();
     const proxy = current.smithproxy || {};
     const callback = current.last_callback || {};
