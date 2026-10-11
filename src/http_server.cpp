@@ -211,10 +211,17 @@ int run_http_server(const ServerConfig& config, SessionStore& store,
         if (message.value("type", "") == "auto-accept-rules-status-request") {
             return std::optional<nlohmann::json>{decisions.auto_accept_rule_status()};
         }
+        if (message.value("type", "") == "traffic-rules") {
+            return std::optional<nlohmann::json>{decisions.set_traffic_rules(message)};
+        }
+        if (message.value("type", "") == "traffic-rules-status-request") {
+            return std::optional<nlohmann::json>{decisions.traffic_rule_status()};
+        }
         decisions.handle_message(message);
         return std::nullopt;
     }, [&decisions] {
         decisions.handle_message({{"type", "live-edit"}, {"enabled", false}});
+        decisions.handle_message({{"type", "script-available"}, {"available", false}});
     });
     store.set_event_sink([&websocket](const std::uint64_t revision, const nlohmann::json& event) {
         websocket.publish(revision, event);

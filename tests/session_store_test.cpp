@@ -124,4 +124,39 @@ int main() {
     assert(refined.auto_accept_rule_status()["counts"][0]["matches"] == 1);
     const auto preserved_status = refined.set_auto_accept_rules(rules_message);
     assert(preserved_status["counts"][0]["matches"] == 1);
+
+    spider::DecisionBroker traffic(std::chrono::seconds(1));
+    const auto traffic_status = traffic.set_traffic_rules({{"rules", nlohmann::json::array({
+        {{"address", "1.1.1.1"}, {"mode", "ignore"}},
+        {{"address", "192.168.99.1"}, {"mode", "focus"}},
+    })}});
+    assert(traffic_status["errors"].empty());
+    auto ignored = filter_event;
+    ignored["details"]["info"]["session"] = "tcp_10.0.0.1:1234+tcp_1.1.1.1:443";
+    assert(!traffic.prepare(ignored));
+    assert(ignored["decision"]["state"] == "ignored");
+    auto focused = filter_event;
+    assert(!traffic.prepare(focused));
+    assert(focused["traffic_rule"]["mode"] == "focus");
+    auto passed = filter_event;
+    passed["details"]["info"]["session"] = "tcp_10.0.0.1:1234+tcp_8.8.8.8:443";
+    assert(!traffic.prepare(passed));
+    assert(passed["decision"]["state"] == "passed");
+
+    spider::SessionStore traffic_store(20);
+    assert(spider::process_webhook(traffic_store, traffic, ignored).status == 200);
+    assert(traffic_store.events_after(0)["events"].empty());
+    assert(spider::process_webhook(traffic_store, traffic, passed).status == 200);
+    assert(traffic_store.events_after(0)["events"].size() == 1);
+
+    spider::DecisionBroker inspection(std::chrono::seconds(1));
+    inspection.handle_message({{"type", "script-available"}, {"available", true}});
+    const auto inspection_status = inspection.set_traffic_rules({{"rules", nlohmann::json::array({
+        {{"address", "192.168.99.1"}, {"mode", "inspect"}},
+    })}});
+    assert(inspection_status["errors"].empty());
+    auto inspected = filter_event;
+    const auto inspection_ticket = inspection.prepare(inspected);
+    assert(inspection_ticket);
+    assert(inspected["decision"]["mode"] == "inspect");
 }

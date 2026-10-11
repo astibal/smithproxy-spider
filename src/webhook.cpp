@@ -25,7 +25,9 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
 
     const auto ticket = decisions.prepare(event);
     decisions.observe(event);
-    store.apply(event);
+    if (event.value("decision", nlohmann::json::object()).value("state", "") != "ignored") {
+        store.apply(event);
+    }
     if (action == "access-request") return {200, {{"access-response", "accept"}}};
     if (action == "connection-content") return decisions.wait(ticket);
     return {200, nlohmann::json::object()};

@@ -77,21 +77,18 @@ The sidebar groups active sessions into observed source and destination
 endpoints. Traffic Endpoints retains observations for a configurable TTL from
 10 seconds to one hour (ten minutes by default); addresses fade near expiry.
 Each endpoint column can show its top 10, top 20, or all observed values.
-Selecting source addresses, destination addresses, and destination ports
-builds an editable auto-accept rule without depending on a session ID.
-Individual sessions and payload rows can still be pinned as a shortcut. Rules
-use a tcpdump-like expression language with `and`, `or`, `not`,
-parentheses, `tcp`, `udp`, `ssl`, `ssli`, `quic`, `host`, `port`, `src host`,
-`dst host`, `src port`, `dst port`, and `side L|R`. Enabled rules are validated
-by the backend and accept matching callbacks before a decision ticket is
-created. The backend counts matches per enabled rule and the UI refreshes those
-counters periodically over the authenticated WebSocket. Rules are stored by
-the browser and restored whenever Spider reconnects.
+Right-clicking any observed IP adds an ordered traffic rule. `PASS` still sends
+callbacks to Spider and keeps them in Events, but excludes their content from
+Payloads and Flows. `IGNORE` accepts matching content in the backend without
+storing or broadcasting it. `FOCUS` makes unmatched traffic implicit PASS while
+at least one focus rule exists. `INSPECT` is non-exclusive and always runs the
+selected browser script, even when Live edit is disabled; its result is returned
+as accept or replace. First match wins. Rules and ordering are stored by the
+browser, restored on reconnect, and carry live backend match counters.
 
 The active-session tree shows only session keys at its leaves. Its draggable
 `src`, `dst`, and `dport` controls enable grouping dimensions and define their
-nesting and sorting priority. The filter builder mirrors the enabled dimensions
-and their order. All groups start folded; manually opened groups remain open
+nested sorting priority. All groups start folded; manually opened groups remain open
 across the live session refreshes.
 
 ## API

@@ -11,7 +11,29 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
     if (event.value("action", "") != "connection-content") return {};
     const auto session = event.value("id", "");
     std::scoped_lock lock(mutex_);
-    if (!enabled_ || session.empty() || accepted_sessions_.contains(session)) return {};
+    const auto focus_active = std::ranges::any_of(traffic_rules_,
+        [](const TrafficRule& rule) { return rule.mode == "focus"; });
+    TrafficRule* matched = nullptr;
+    for (auto& rule : traffic_rules_) {
+        if (rule.filter.matches(event)) {
+            matched = &rule;
+            ++rule.matches;
+            break;
+        }
+    }
+    if (matched && matched->mode == "ignore") {
+        event["decision"] = {{"state", "ignored"}, {"reason", "rule"}};
+        return {};
+    }
+    if ((matched && matched->mode == "pass") || (!matched && focus_active)) {
+        event["decision"] = {{"state", "passed"},
+                             {"reason", matched ? "rule" : "focus-default"}};
+        return {};
+    }
+    const auto inspect = matched && matched->mode == "inspect";
+    if (matched) event["traffic_rule"] = {{"mode", matched->mode}, {"address", matched->address}};
+    if ((!enabled_ && !(inspect && script_available_)) || session.empty() ||
+        (accepted_sessions_.contains(session) && !inspect)) return {};
     for (auto& rule : auto_accept_rules_) {
         if (rule.filter.matches(event)) {
             ++rule.matches;
@@ -25,7 +47,8 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
     ticket->session_id = session;
     pending_[ticket->id] = ticket;
     event["decision"] = {{"id", ticket->id}, {"state", "pending"},
-                         {"timeout_ms", timeout_.count()}};
+                         {"timeout_ms", timeout_.count()},
+                         {"mode", inspect ? "inspect" : "live-edit"}};
     return ticket;
 }
 
@@ -64,6 +87,11 @@ void DecisionBroker::handle_message(const nlohmann::json& message) {
             accepted_sessions_.clear();
             resolve_all_locked();
         }
+        return;
+    }
+    if (type == "script-available") {
+        script_available_ = message.value("available", false);
+        if (!script_available_) resolve_all_locked();
         return;
     }
     if (type == "inspect-session") {
@@ -134,6 +162,50 @@ nlohmann::json DecisionBroker::auto_accept_rule_status() const {
         counts.push_back({{"id", rule.id}, {"matches", rule.matches}});
     }
     return {{"type", "auto-accept-rules-status"}, {"counts", std::move(counts)}};
+}
+
+nlohmann::json DecisionBroker::set_traffic_rules(const nlohmann::json& message) {
+    std::vector<TrafficRule> next;
+    auto errors = nlohmann::json::array();
+    if (const auto rules = message.find("rules"); rules != message.end() && rules->is_array()) {
+        for (const auto& rule : *rules) {
+            const auto address = rule.value("address", "");
+            const auto mode = rule.value("mode", "");
+            std::string error;
+            auto filter = SessionFilter::compile(
+                "(src host " + address + " or dst host " + address + ")", error);
+            if (address.empty() || (mode != "pass" && mode != "focus" && mode != "inspect" &&
+                                    mode != "ignore")) {
+                errors.push_back({{"address", address}, {"error", "invalid address or mode"}});
+            } else if (!filter) {
+                errors.push_back({{"address", address}, {"error", error}});
+            } else {
+                next.push_back({address, mode, std::move(*filter)});
+            }
+        }
+    }
+    {
+        std::scoped_lock lock(mutex_);
+        for (auto& rule : next) {
+            const auto old = std::ranges::find_if(traffic_rules_, [&](const TrafficRule& existing) {
+                return existing.address == rule.address && existing.mode == rule.mode;
+            });
+            if (old != traffic_rules_.end()) rule.matches = old->matches;
+        }
+        traffic_rules_ = std::move(next);
+    }
+    auto status = traffic_rule_status();
+    status["errors"] = std::move(errors);
+    return status;
+}
+
+nlohmann::json DecisionBroker::traffic_rule_status() const {
+    std::scoped_lock lock(mutex_);
+    auto rules = nlohmann::json::array();
+    for (const auto& rule : traffic_rules_) {
+        rules.push_back({{"address", rule.address}, {"mode", rule.mode}, {"matches", rule.matches}});
+    }
+    return {{"type", "traffic-rules-status"}, {"rules", std::move(rules)}};
 }
 
 void DecisionBroker::observe(const nlohmann::json& event) {

@@ -11,7 +11,6 @@ let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array()
 const flowRecords = new Map();
 let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flows' ? 'flows' : 'payloads';
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
-let lastRuleStatsRequest = 0;
 let replacementBase64 = null;
 let activeTab = 'events-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
 let payloadCacheBytes = 0, payloadsDropped = 0, payloadBytesDropped = 0, evictionTimes = [];
@@ -19,8 +18,6 @@ let pollInFlight = false;
 let payloadMemoryLimit = Number(localStorage.getItem('spider-payload-memory-mib')) || 64;
 let payloadRecordLimit = Number(localStorage.getItem('spider-payload-record-limit')) || 200;
 let eventRecordLimit = Number(localStorage.getItem('spider-event-record-limit')) || 2000;
-let pinnedSession = null;
-let endpointFilter = {protocol: null, sourceHost: null, destinationHost: null, destinationPort: null};
 let activeSessionRecords = [];
 let endpointTtlSeconds = Math.max(10, Math.min(3600,
   Number(localStorage.getItem('spider-endpoint-ttl-seconds')) || 600));
@@ -61,11 +58,11 @@ if (localStorage.getItem('spider-session-layout') !== 'natural-order-v1') {
     enabled: sessionGroupOrder.filter(key => sessionGroupsEnabled.has(key)),
   }));
 }
-let autoAcceptRules = [];
+let trafficRules = [];
 try {
-  const savedRules = JSON.parse(localStorage.getItem('spider-auto-accept-rules') || '[]');
-  if (Array.isArray(savedRules)) autoAcceptRules = savedRules.filter(rule =>
-    rule && typeof rule.id === 'string' && typeof rule.filter === 'string');
+  const savedRules = JSON.parse(localStorage.getItem('spider-traffic-rules') || '[]');
+  if (Array.isArray(savedRules)) trafficRules = savedRules.filter(rule =>
+    rule && typeof rule.address === 'string' && ['pass', 'focus', 'inspect', 'ignore'].includes(rule.mode));
 } catch (_) {}
 const eventFilters = {ping: false, sessions: false, status: true, other: false};
 const defaultScript = `// api.bytes        Uint8Array with the original payload
@@ -159,56 +156,42 @@ function tokenValue() {
 }
 const headers = () => ({'X-Spider-Token': tokenValue()});
 
-function syncAutoAcceptRules() {
-  for (const rule of autoAcceptRules) delete rule.error;
-  localStorage.setItem('spider-auto-accept-rules', JSON.stringify(autoAcceptRules));
-  socketSend({type: 'auto-accept-rules', rules: autoAcceptRules});
+function syncTrafficRules() {
+  localStorage.setItem('spider-traffic-rules', JSON.stringify(trafficRules));
+  socketSend({type: 'traffic-rules', rules: trafficRules});
+  renderTrafficRules();
+  renderEndpointBuilder();
 }
 
-function renderAutoAcceptRules() {
-  const target = byId('auto-accept-rules');
-  const invalid = autoAcceptRules.filter(rule => rule.error).length;
-  byId('rule-count').textContent = autoAcceptRules.length
-    ? `${autoAcceptRules.length}${invalid ? ` · ${invalid} invalid` : ''}` : 'none';
+function renderTrafficRules() {
+  const target = byId('traffic-rules');
+  byId('focus-indicator').hidden = !trafficRules.some(rule => rule.mode === 'focus');
   target.replaceChildren();
-  if (!autoAcceptRules.length) {
-    target.textContent = 'none';
-    target.className = 'auto-accept-rules empty';
+  if (!trafficRules.length) {
+    target.textContent = 'right-click an IP to classify it';
+    target.className = 'traffic-rules empty';
     return;
   }
-  target.className = 'auto-accept-rules';
-  for (const rule of autoAcceptRules) {
+  target.className = 'traffic-rules';
+  for (let index = 0; index < trafficRules.length; ++index) {
+    const rule = trafficRules[index];
     const row = document.createElement('div');
-    row.className = `auto-rule${rule.enabled === false ? ' disabled' : ''}${rule.error ? ' error' : ''}`;
-    if (rule.error) row.title = rule.error;
-    const enabled = document.createElement('input');
-    enabled.type = 'checkbox';
-    enabled.checked = rule.enabled !== false;
-    enabled.title = 'Enable auto-accept filter';
-    enabled.onchange = () => {
-      rule.enabled = enabled.checked;
-      renderAutoAcceptRules();
-      syncAutoAcceptRules();
-    };
-    const expression = document.createElement('code');
-    expression.textContent = rule.filter;
-    expression.title = rule.filter;
+    row.className = `traffic-rule ${rule.mode}`;
+    const mode = document.createElement('b'); mode.textContent = rule.mode.toUpperCase();
+    const address = document.createElement('code'); address.textContent = rule.address;
     const matches = document.createElement('small');
-    matches.className = 'auto-rule-stats';
-    matches.textContent = rule.enabled === false
-      ? 'paused'
-      : `${Number(rule.matches || 0).toLocaleString()} accepted`;
+    matches.textContent = `${Number(rule.matches || 0).toLocaleString()} hits`;
+    const up = document.createElement('button'); up.textContent = '↑'; up.disabled = index === 0;
+    up.onclick = () => { [trafficRules[index - 1], trafficRules[index]] = [rule, trafficRules[index - 1]]; syncTrafficRules(); };
+    const down = document.createElement('button'); down.textContent = '↓'; down.disabled = index === trafficRules.length - 1;
+    down.onclick = () => { [trafficRules[index], trafficRules[index + 1]] = [trafficRules[index + 1], rule]; syncTrafficRules(); };
     const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'danger-subtle';
     remove.textContent = '×';
-    remove.title = 'Remove auto-accept filter';
     remove.onclick = () => {
-      autoAcceptRules = autoAcceptRules.filter(item => item !== rule);
-      renderAutoAcceptRules();
-      syncAutoAcceptRules();
+      trafficRules = trafficRules.filter(item => item !== rule);
+      syncTrafficRules();
     };
-    row.append(enabled, expression, matches, remove);
+    row.append(mode, address, matches, up, down, remove);
     target.append(row);
   }
 }
@@ -302,7 +285,6 @@ function moveSessionGroup(key, offset) {
   renderSessionGroupControls();
   renderActiveSessions(activeSessionRecords);
   renderEndpointBuilder(activeSessionRecords);
-  updateEndpointFilterDraft();
 }
 
 function renderSessionGroupControls() {
@@ -324,7 +306,6 @@ function renderSessionGroupControls() {
       renderSessionGroupControls();
       renderActiveSessions(activeSessionRecords);
       renderEndpointBuilder(activeSessionRecords);
-      updateEndpointFilterDraft();
     };
     button.onkeydown = event => {
       if (!event.altKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
@@ -355,56 +336,9 @@ function renderSessionGroupControls() {
       renderSessionGroupControls();
       renderActiveSessions(activeSessionRecords);
       renderEndpointBuilder(activeSessionRecords);
-      updateEndpointFilterDraft();
     };
     controls.append(button);
   }
-}
-
-function suggestedFilter(item) {
-  const connection = parseSessionLabel(item.label || item.last_event?.details?.info?.session);
-  if (!connection) return '';
-  const protocol = ['udp', 'quic'].includes(connection.sourceProtocol) ? 'udp' : 'tcp';
-  const clauses = {
-    src: `src host ${connection.sourceHost}`,
-    dst: `dst host ${connection.destinationHost}`,
-    dport: `dst port ${connection.destinationPort}`,
-  };
-  return [protocol, ...sessionGroupOrder
-    .filter(key => sessionGroupsEnabled.has(key))
-    .map(key => clauses[key])].join(' and ');
-}
-
-function endpointFilterExpression() {
-  const parts = [endpointFilter.protocol || 'tcp'];
-  const clauses = {
-    src: endpointFilter.sourceHost ? `src host ${endpointFilter.sourceHost}` : null,
-    dst: endpointFilter.destinationHost ? `dst host ${endpointFilter.destinationHost}` : null,
-    dport: endpointFilter.destinationPort !== null ? `dst port ${endpointFilter.destinationPort}` : null,
-  };
-  for (const key of sessionGroupOrder) {
-    if (sessionGroupsEnabled.has(key) && clauses[key]) parts.push(clauses[key]);
-  }
-  return parts.length > 1 ? parts.join(' and ') : '';
-}
-
-function updateEndpointFilterDraft() {
-  const expression = endpointFilterExpression();
-  const draft = byId('endpoint-filter-draft');
-  draft.textContent = expression || 'select an endpoint';
-  draft.className = `filter-draft${expression ? '' : ' empty'}`;
-  byId('open-filter-draft').disabled = !expression;
-  if (expression) {
-    byId('rule-filter').value = expression;
-    byId('pinned-session').textContent = 'Draft from observed endpoints';
-    byId('pinned-session').className = 'pinned-session';
-  }
-}
-
-function selectEndpoint(part, value, protocol = null) {
-  endpointFilter[part] = endpointFilter[part] === value ? null : value;
-  if (protocol && endpointFilter[part] !== null) endpointFilter.protocol = protocol;
-  updateEndpointFilterDraft();
 }
 
 function updateObservedEndpoints(items, now = Date.now()) {
@@ -456,6 +390,25 @@ function limitedEndpoints(entries) {
 
 function endpointDisplay(address) {
   return resolvedAddress(address);
+}
+
+function trafficRuleFor(address) {
+  return trafficRules.find(rule => rule.address === address);
+}
+
+function classifyEndpoint(address, mode) {
+  trafficRules = trafficRules.filter(rule => rule.address !== address);
+  if (mode !== 'clear') trafficRules.push({address, mode, matches: 0});
+  syncTrafficRules();
+}
+
+function openEndpointMenu(event, address) {
+  event.preventDefault();
+  const menu = byId('endpoint-menu');
+  menu.dataset.address = address;
+  menu.hidden = false;
+  menu.style.left = `${Math.min(event.clientX, innerWidth - 140)}px`;
+  menu.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
 }
 
 function normalizeHostname(value) {
@@ -644,14 +597,9 @@ function renderEndpointBuilder() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'endpoint-port';
-    button.setAttribute('aria-pressed', String(endpointFilter.destinationPort === port));
     const number = document.createElement('span'); number.textContent = String(port);
     const count = document.createElement('small'); count.textContent = String(data.count);
     button.append(number, count);
-    button.onclick = () => {
-      selectEndpoint('destinationPort', port, data.protocol);
-      renderEndpointBuilder();
-    };
     portTarget.append(button);
   }
   attachEndpointScrollHint(portTarget);
@@ -665,12 +613,13 @@ function renderEndpointBuilder() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'endpoint-choice';
-    button.setAttribute('aria-pressed', String(endpointFilter.sourceHost === host));
+    const rule = trafficRuleFor(host);
+    if (rule) button.dataset.ruleMode = rule.mode;
     const address = document.createElement('span'); address.textContent = endpointDisplay(host);
     const count = document.createElement('small'); count.textContent = `${data.protocol} · ${data.count}`;
     button.append(address, count);
     decorateExpiringEndpoint(button, data, now);
-    button.onclick = () => { selectEndpoint('sourceHost', host, data.protocol); renderEndpointBuilder(); };
+    button.oncontextmenu = event => openEndpointMenu(event, host);
     sourceTarget.append(button);
   }
   attachEndpointScrollHint(sourceTarget);
@@ -683,31 +632,19 @@ function renderEndpointBuilder() {
       .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0])))) {
     const hostButton = document.createElement('button');
     hostButton.type = 'button'; hostButton.className = 'endpoint-choice';
-    hostButton.setAttribute('aria-pressed', String(endpointFilter.destinationHost === host));
+    const rule = trafficRuleFor(host);
+    if (rule) hostButton.dataset.ruleMode = rule.mode;
     const address = document.createElement('span'); address.textContent = endpointDisplay(host);
     const count = document.createElement('small'); count.textContent = String(data.count);
     hostButton.append(address, count);
     decorateExpiringEndpoint(hostButton, data, now);
-    hostButton.onclick = () => { selectEndpoint('destinationHost', host, data.protocol); renderEndpointBuilder(); };
+    hostButton.oncontextmenu = event => openEndpointMenu(event, host);
     destinationTarget.append(hostButton);
   }
   attachEndpointScrollHint(destinationTarget);
 }
 
-function pinSession(item, focus = true) {
-  const event = item.event || item.last_event || {};
-  const session = {
-    id: item.id || event.id || 'unknown',
-    label: item.label || event.details?.info?.session || item.id || event.id || 'unlabelled',
-  };
-  pinnedSession = session;
-  byId('pinned-session').textContent = `${session.id} · ${resolvedSessionLabel(session.label)}`;
-  byId('pinned-session').className = 'pinned-session';
-  byId('rule-filter').value = suggestedFilter(session);
-  byId('rule-compose').hidden = false;
-  showTab('workbench-tab');
-  if (focus) byId('rule-filter').focus();
-}
+function pinSession() { showTab('workbench-tab'); }
 
 function eventCategory(event) {
   if (event.action === 'ping') return 'ping';
@@ -1037,7 +974,8 @@ function ingestEvent(record) {
   eventRecords.push(summarizeEvent(record));
   if (record.event.action === 'hostname-info') ingestHostnameInfo(record.event);
   if (eventRecords.length > eventRecordLimit) eventRecords.splice(0, eventRecords.length - eventRecordLimit);
-  if (record.event.action === 'connection-content' &&
+  const passed = record.event.decision?.state === 'passed';
+  if (record.event.action === 'connection-content' && !passed &&
       typeof record.event.details?.info?.content === 'string') {
     record.cacheBytes = payloadSize(record);
     payloadRecords.push(record);
@@ -1045,12 +983,16 @@ function ingestEvent(record) {
     updateFlowRecord(record);
     if (followPayload || !selectedPayload) selectedPayload = record;
     trimPayloadCache();
+    if (record.event.decision?.state === 'pending' && record.event.decision?.mode === 'inspect') {
+      runInspectionScript(record);
+    }
   }
   if (record.event.action === 'connection-stop') {
     const flow = flowRecords.get(record.event.id);
     if (flow) flow.active = false;
   }
-  scheduleRender(true, ['connection-content', 'connection-stop'].includes(record.event.action));
+  scheduleRender(true, (record.event.action === 'connection-content' && !passed) ||
+                       record.event.action === 'connection-stop');
 }
 
 function loadScriptSlot(number) {
@@ -1061,50 +1003,75 @@ function loadScriptSlot(number) {
   }
 }
 
-function runScript() {
-  const worker = new Worker('script-worker.js');
+function executeScript(record) {
+  return new Promise(resolve => {
+    const worker = new Worker('script-worker.js');
+    const info = record?.event?.details?.info || {};
+    const bytes = decodeBase64(info.content);
+    const timeout = setTimeout(() => {
+      worker.terminate();
+      resolve({ok: false, logs: [], error: 'Script exceeded the 2 s execution limit.'});
+    }, 2000);
+    worker.onmessage = ({data}) => {
+      clearTimeout(timeout);
+      worker.terminate();
+      resolve(data);
+    };
+    worker.onerror = event => {
+      clearTimeout(timeout);
+      worker.terminate();
+      resolve({ok: false, logs: [], error: event.message || 'Script worker failed.'});
+    };
+    worker.postMessage({script: byId('script-editor').value, bytes: Array.from(bytes),
+      side: info.side || '', sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
+  });
+}
+
+async function runInspectionScript(record) {
+  if (record.inspectRunning || record.decided) return;
+  record.inspectRunning = true;
+  const result = await executeScript(record);
+  if (record.decided) return;
+  const decisionId = record.event.decision?.id;
+  if (!decisionId) return;
+  socketSend(result.ok && result.replacement !== null
+    ? {type: 'decision', decision_id: decisionId, action: 'replace', content: result.replacement}
+    : {type: 'decision', decision_id: decisionId, action: 'accept'});
+  record.decided = true;
+  record.inspectResult = result.ok ? (result.replacement === null ? 'unchanged' : 'replaced') : 'script failed; accepted';
+  scheduleRender(false, true);
+}
+
+async function runScript() {
   const scriptStatus = byId('script-status');
   const scriptOutput = byId('script-output');
   scriptStatus.textContent = 'running…';
   scriptStatus.className = '';
   byId('run-script').disabled = true;
-  const timeout = setTimeout(() => {
-    worker.terminate();
-    scriptStatus.textContent = 'stopped after 2 s';
-    scriptStatus.className = 'error';
-    scriptOutput.textContent = 'Script exceeded the execution limit.';
-    byId('run-script').disabled = false;
-  }, 2000);
-  worker.onmessage = ({data}) => {
-    clearTimeout(timeout);
-    worker.terminate();
-    byId('run-script').disabled = false;
-    scriptOutput.textContent = [...data.logs, ...(data.error ? [data.error] : [])].join('\n');
-    if (!data.ok) {
+  const data = await executeScript(selectedPayload);
+  byId('run-script').disabled = false;
+  scriptOutput.textContent = [...data.logs, ...(data.error ? [data.error] : [])].join('\n');
+  if (!data.ok) {
       scriptStatus.textContent = 'failed';
       scriptStatus.className = 'error';
       byId('replacement-text').value = '';
       replacementBase64 = null;
       renderPayload();
-      return;
-    }
-    if (data.replacement === null) {
+    return;
+  }
+  if (data.replacement === null) {
       scriptStatus.textContent = 'unchanged';
       scriptStatus.className = 'ok';
       byId('replacement-text').value = '';
       replacementBase64 = null;
-    } else {
+  } else {
       const replacement = decodeBase64(data.replacement);
       replacementBase64 = data.replacement;
       scriptStatus.textContent = `replace · ${replacement.length} B`;
       scriptStatus.className = 'ok';
       byId('replacement-text').value = new TextDecoder().decode(replacement);
-    }
-    renderPayload();
-  };
-  const info = selectedPayload?.event?.details?.info || {};
-  worker.postMessage({script: byId('script-editor').value, bytes: Array.from(payloadBytes),
-    side: info.side || '', sessionId: selectedPayload?.event?.id || '', sessionLabel: info.session || ''});
+  }
+  renderPayload();
 }
 
 function formatTime(value) {
@@ -1254,20 +1221,18 @@ function connectEventSocket() {
       ? {type: 'subscribe', tail: true}
       : {type: 'subscribe', after: revision}));
     socket.send(JSON.stringify({type: 'live-edit', enabled: liveEdit}));
-    socket.send(JSON.stringify({type: 'auto-accept-rules', rules: autoAcceptRules}));
+    socket.send(JSON.stringify({type: 'traffic-rules', rules: trafficRules}));
+    socket.send(JSON.stringify({type: 'script-available', available: true}));
   };
   socket.onmessage = message => {
     const data = JSON.parse(message.data);
     if (data.type === 'event') ingestEvent({revision: data.revision, event: data.event});
     if (data.type === 'subscribed') revision = Math.max(revision, Number(data.revision) || 0);
-    if (data.type === 'auto-accept-rules-status') {
-      const errors = new Map((data.errors || []).map(item => [item.id, item.error]));
-      const counts = new Map((data.counts || []).map(item => [item.id, Number(item.matches) || 0]));
-      for (const rule of autoAcceptRules) {
-        rule.error = errors.get(rule.id) || null;
-        rule.matches = counts.get(rule.id) || 0;
-      }
-      renderAutoAcceptRules();
+    if (data.type === 'traffic-rules-status') {
+      const counts = new Map((data.rules || []).map(item =>
+        [`${item.mode}:${item.address}`, Number(item.matches) || 0]));
+      for (const rule of trafficRules) rule.matches = counts.get(`${rule.mode}:${rule.address}`) || 0;
+      renderTrafficRules();
     }
     if (data.type === 'gap') {
       status.textContent = `stream gap · oldest r${data.oldest_available}`;
@@ -1360,10 +1325,7 @@ async function poll() {
     renderActiveSessions(activeSessionRecords);
     status.textContent = `${eventSocket?.readyState === WebSocket.OPEN ? 'live' : 'connecting'} · r${revision}`;
     status.className = 'ok';
-    if (Date.now() - lastRuleStatsRequest >= 5000 &&
-        socketSend({type: 'auto-accept-rules-status-request'})) {
-      lastRuleStatsRequest = Date.now();
-    }
+    socketSend({type: 'traffic-rules-status-request'});
     updateCacheStats();
   } catch (error) {
     status.textContent = `offline · ${error.message}`;
@@ -1555,43 +1517,23 @@ byId('reset-script').onclick = () => {
   localStorage.removeItem(`spider-script-${scriptSlot}`);
   loadScriptSlot(scriptSlot);
 };
-function addAutoAcceptRule() {
-  const expression = byId('rule-filter').value.trim();
-  if (!expression) return;
-  autoAcceptRules.push({id: `rule-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-                        filter: expression, enabled: true});
-  renderAutoAcceptRules();
-  syncAutoAcceptRules();
-  byId('rule-filter').select();
-  if (payloadRecords.length) {
-    selectPayload(payloadRecords[payloadRecords.length - 1], true);
-  } else {
-    followPayload = true;
-    byId('follow-payload').setAttribute('aria-pressed', 'true');
-  }
+byId('clear-traffic-rules').onclick = () => {
+  trafficRules = [];
+  syncTrafficRules();
+};
+for (const button of document.querySelectorAll('#endpoint-menu button')) {
+  button.onclick = () => {
+    classifyEndpoint(byId('endpoint-menu').dataset.address, button.dataset.mode);
+    byId('endpoint-menu').hidden = true;
+  };
 }
-byId('add-rule').onclick = addAutoAcceptRule;
-byId('rule-filter').onkeydown = event => {
-  if (event.key !== 'Enter') return;
-  event.preventDefault();
-  addAutoAcceptRule();
-};
-byId('clear-endpoint-filter').onclick = () => {
-  const previous = endpointFilterExpression();
-  endpointFilter = {protocol: null, sourceHost: null, destinationHost: null, destinationPort: null};
-  updateEndpointFilterDraft();
-  if (byId('rule-filter').value === previous) byId('rule-filter').value = '';
-  byId('pinned-session').textContent = 'Build a draft from observed endpoints or enter a filter directly.';
-  byId('pinned-session').className = 'pinned-session empty';
-  renderEndpointBuilder(activeSessionRecords);
-};
-byId('open-filter-draft').onclick = () => {
-  const expression = endpointFilterExpression();
-  if (!expression) return;
-  byId('rule-filter').value = expression;
-  showTab('workbench-tab');
-  byId('rule-filter').focus();
-};
+document.addEventListener('click', event => {
+  const menu = byId('endpoint-menu');
+  if (!menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') byId('endpoint-menu').hidden = true;
+});
 byId('payload-memory-limit').value = payloadMemoryLimit;
 byId('payload-record-limit').value = payloadRecordLimit;
 byId('event-record-limit').value = eventRecordLimit;
@@ -1651,7 +1593,7 @@ byId('clear-history').onclick = async () => {
 };
 loadScriptSlot(1);
 renderSessionGroupControls();
-renderAutoAcceptRules();
+renderTrafficRules();
 updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
 connect();
