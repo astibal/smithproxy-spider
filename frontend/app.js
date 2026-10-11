@@ -19,7 +19,7 @@ let eventRecordLimit = Number(localStorage.getItem('spider-event-record-limit'))
 let pinnedSession = null;
 let endpointFilter = {protocol: null, sourceHost: null, destinationHost: null, destinationPort: null};
 let activeSessionRecords = [];
-let sessionGroupOrder = ['src', 'dst', 'dport'];
+let sessionGroupOrder = ['dport', 'src', 'dst'];
 let sessionGroupsEnabled = new Set(sessionGroupOrder);
 const openSessionGroups = new Set();
 try {
@@ -34,6 +34,14 @@ try {
     sessionGroupsEnabled = new Set(savedGrouping.enabled.filter(key => sessionGroupOrder.includes(key)));
   }
 } catch (_) {}
+if (localStorage.getItem('spider-session-layout') !== 'ports-first-v1') {
+  sessionGroupOrder = ['dport', ...sessionGroupOrder.filter(key => key !== 'dport')];
+  localStorage.setItem('spider-session-layout', 'ports-first-v1');
+  localStorage.setItem('spider-session-grouping', JSON.stringify({
+    order: sessionGroupOrder,
+    enabled: sessionGroupOrder.filter(key => sessionGroupsEnabled.has(key)),
+  }));
+}
 let autoAcceptRules = [];
 try {
   const savedRules = JSON.parse(localStorage.getItem('spider-auto-accept-rules') || '[]');
@@ -294,7 +302,14 @@ function suggestedFilter(item) {
   const connection = parseSessionLabel(item.label || item.last_event?.details?.info?.session);
   if (!connection) return '';
   const protocol = ['udp', 'quic'].includes(connection.sourceProtocol) ? 'udp' : 'tcp';
-  return `${protocol} and src host ${connection.sourceHost} and dst host ${connection.destinationHost} and dst port ${connection.destinationPort}`;
+  const clauses = {
+    src: `src host ${connection.sourceHost}`,
+    dst: `dst host ${connection.destinationHost}`,
+    dport: `dst port ${connection.destinationPort}`,
+  };
+  return [protocol, ...sessionGroupOrder
+    .filter(key => sessionGroupsEnabled.has(key))
+    .map(key => clauses[key])].join(' and ');
 }
 
 function endpointFilterExpression() {
@@ -326,15 +341,13 @@ function updateEndpointFilterDraft() {
 function selectEndpoint(part, value, protocol = null) {
   endpointFilter[part] = endpointFilter[part] === value ? null : value;
   if (protocol && endpointFilter[part] !== null) endpointFilter.protocol = protocol;
-  if (part === 'destinationHost' && endpointFilter.destinationHost === null) {
-    endpointFilter.destinationPort = null;
-  }
   updateEndpointFilterDraft();
 }
 
 function renderEndpointBuilder(items) {
   const sourceCounts = new Map();
   const destinations = new Map();
+  const portCounts = new Map();
   for (const item of items) {
     const connection = parseSessionLabel(item.label || item.last_event?.details?.info?.session);
     if (!connection) continue;
@@ -342,17 +355,46 @@ function renderEndpointBuilder(items) {
     const source = sourceCounts.get(connection.sourceHost) || {count: 0, protocol};
     source.count += 1;
     sourceCounts.set(connection.sourceHost, source);
-    const destination = destinations.get(connection.destinationHost) || {count: 0, protocol, ports: new Map()};
+    const destination = destinations.get(connection.destinationHost) || {count: 0, protocol};
     destination.count += 1;
-    destination.ports.set(connection.destinationPort,
-      (destination.ports.get(connection.destinationPort) || 0) + 1);
     destinations.set(connection.destinationHost, destination);
+    const port = portCounts.get(connection.destinationPort) || {count: 0, protocol};
+    port.count += 1;
+    portCounts.set(connection.destinationPort, port);
+  }
+
+  const enabledDimensions = sessionGroupOrder.filter(key => sessionGroupsEnabled.has(key));
+  const columns = byId('endpoint-columns');
+  columns.style.gridTemplateColumns = enabledDimensions.length
+    ? enabledDimensions.map(key => key === 'dport'
+      ? 'minmax(52px,max-content)' : 'minmax(0,1fr)').join(' ')
+    : '1fr';
+  for (const column of columns.children) {
+    const dimension = column.dataset.dimension;
+    column.hidden = !sessionGroupsEnabled.has(dimension);
+    column.style.order = String(sessionGroupOrder.indexOf(dimension));
+  }
+
+  const portTarget = byId('observed-ports');
+  portTarget.replaceChildren();
+  portTarget.className = `endpoint-list${portCounts.size ? '' : ' empty'}`;
+  if (!portCounts.size) portTarget.textContent = 'none';
+  for (const [port, data] of [...portCounts].sort((a, b) => b[1].count - a[1].count || a[0] - b[0])) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'endpoint-port';
+    button.setAttribute('aria-pressed', String(endpointFilter.destinationPort === port));
+    const number = document.createElement('span'); number.textContent = String(port);
+    const count = document.createElement('small'); count.textContent = String(data.count);
+    button.append(number, count);
+    button.onclick = () => {
+      selectEndpoint('destinationPort', port, data.protocol);
+      renderEndpointBuilder(items);
+    };
+    portTarget.append(button);
   }
 
   const sourceTarget = byId('observed-sources');
-  const sourceColumn = sourceTarget.parentElement;
-  sourceColumn.hidden = !sessionGroupsEnabled.has('src');
-  sourceColumn.style.order = String(sessionGroupOrder.indexOf('src'));
   sourceTarget.replaceChildren();
   sourceTarget.className = `endpoint-list${sourceCounts.size ? '' : ' empty'}`;
   if (!sourceCounts.size) sourceTarget.textContent = 'none';
@@ -369,49 +411,18 @@ function renderEndpointBuilder(items) {
   }
 
   const destinationTarget = byId('observed-destinations');
-  const destinationColumn = destinationTarget.parentElement;
-  const destinationDimensions = ['dst', 'dport'].filter(key => sessionGroupsEnabled.has(key));
-  destinationColumn.hidden = destinationDimensions.length === 0;
-  destinationColumn.style.order = String(destinationDimensions.length
-    ? Math.min(...destinationDimensions.map(key => sessionGroupOrder.indexOf(key))) : 3);
   destinationTarget.replaceChildren();
   destinationTarget.className = `endpoint-list${destinations.size ? '' : ' empty'}`;
   if (!destinations.size) destinationTarget.textContent = 'none';
   for (const [host, data] of [...destinations].sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))) {
-    const row = document.createElement('div'); row.className = 'destination-row';
     const hostButton = document.createElement('button');
     hostButton.type = 'button'; hostButton.className = 'endpoint-choice';
     hostButton.setAttribute('aria-pressed', String(endpointFilter.destinationHost === host));
     const address = document.createElement('span'); address.textContent = host;
     const count = document.createElement('small'); count.textContent = String(data.count);
     hostButton.append(address, count);
-    hostButton.hidden = !sessionGroupsEnabled.has('dst');
     hostButton.onclick = () => { selectEndpoint('destinationHost', host, data.protocol); renderEndpointBuilder(items); };
-    const ports = document.createElement('span'); ports.className = 'destination-ports';
-    ports.hidden = !sessionGroupsEnabled.has('dport');
-    for (const [port, portCount] of [...data.ports].sort((a, b) => b[1] - a[1] || a[0] - b[0])) {
-      const portButton = document.createElement('button');
-      portButton.type = 'button'; portButton.className = 'endpoint-port';
-      portButton.setAttribute('aria-pressed', String(endpointFilter.destinationHost === host && endpointFilter.destinationPort === port));
-      portButton.title = `${portCount} active connection${portCount === 1 ? '' : 's'}`;
-      portButton.textContent = String(port);
-      portButton.onclick = () => {
-        const alreadySelected = endpointFilter.destinationHost === host && endpointFilter.destinationPort === port;
-        endpointFilter.destinationHost = alreadySelected ? null : host;
-        endpointFilter.destinationPort = alreadySelected ? null : port;
-        if (!alreadySelected) endpointFilter.protocol = data.protocol;
-        updateEndpointFilterDraft();
-        renderEndpointBuilder(items);
-      };
-      ports.append(portButton);
-    }
-    if (sessionGroupOrder.indexOf('dport') < sessionGroupOrder.indexOf('dst')) {
-      row.classList.add('ports-first');
-      row.append(ports, hostButton);
-    } else {
-      row.append(hostButton, ports);
-    }
-    destinationTarget.append(row);
+    destinationTarget.append(hostButton);
   }
 }
 
