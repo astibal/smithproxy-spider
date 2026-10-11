@@ -19,7 +19,7 @@ let eventRecordLimit = Number(localStorage.getItem('spider-event-record-limit'))
 let pinnedSession = null;
 let endpointFilter = {protocol: null, sourceHost: null, destinationHost: null, destinationPort: null};
 let activeSessionRecords = [];
-let sessionGroupOrder = ['dport', 'src', 'dst'];
+let sessionGroupOrder = ['src', 'dst', 'dport'];
 let sessionGroupsEnabled = new Set(sessionGroupOrder);
 const openSessionGroups = new Set();
 try {
@@ -34,9 +34,9 @@ try {
     sessionGroupsEnabled = new Set(savedGrouping.enabled.filter(key => sessionGroupOrder.includes(key)));
   }
 } catch (_) {}
-if (localStorage.getItem('spider-session-layout') !== 'ports-first-v1') {
-  sessionGroupOrder = ['dport', ...sessionGroupOrder.filter(key => key !== 'dport')];
-  localStorage.setItem('spider-session-layout', 'ports-first-v1');
+if (localStorage.getItem('spider-session-layout') !== 'natural-order-v1') {
+  sessionGroupOrder = ['src', 'dst', 'dport'];
+  localStorage.setItem('spider-session-layout', 'natural-order-v1');
   localStorage.setItem('spider-session-grouping', JSON.stringify({
     order: sessionGroupOrder,
     enabled: sessionGroupOrder.filter(key => sessionGroupsEnabled.has(key)),
