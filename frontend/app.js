@@ -704,7 +704,7 @@ function summarizeEvent(record) {
   const info = details?.info;
   if (typeof info?.content === 'string') {
     event.details = {...details, info: {...info,
-      content: `<payload ${decodedPayloadSize(info.content)} B; retained in workbench cache>`,
+      content: `[binary data: ${decodedPayloadSize(info.content)} bytes]`,
     }};
   }
   return {revision: record.revision, event};
