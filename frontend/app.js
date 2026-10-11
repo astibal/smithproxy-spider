@@ -782,6 +782,7 @@ function scheduleRender(eventsChanged = false, payloadsChanged = false) {
       if (selectedPayload) {
         payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
         replacementBase64 = null;
+        if (selectedPayload.inspectOutput) displayScriptResult(selectedPayload.inspectOutput, true);
         renderPayload();
       }
       renderPayloadList();
@@ -839,7 +840,8 @@ function payloadInspectionInfo(record) {
   const layer = String(info.payload_layer || '').trim();
   if (layer) labels.push(`${layer.toUpperCase()} payload`);
   if (info.l7?.app) labels.push(String(info.l7.app));
-  if (record.event.decision?.state === 'pending') labels.push('awaiting decision');
+  if (record.inspectResult) labels.push(`INSPECT ${record.inspectResult}`);
+  if (record.event.decision?.state === 'pending' && !record.decided) labels.push('awaiting decision');
   else if (record.event.decision?.state === 'auto-accepted') labels.push('auto-accepted');
   return [...new Set(labels)].join(' · ');
 }
@@ -982,6 +984,12 @@ function selectPayload(record, follow = false) {
   payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
   replacementBase64 = null;
   byId('replacement-text').value = '';
+  if (selectedPayload.inspectOutput) displayScriptResult(selectedPayload.inspectOutput, true);
+  else {
+    byId('script-output').textContent = '';
+    byId('script-status').textContent = 'idle';
+    byId('script-status').className = 'empty';
+  }
   renderPayload();
   renderPayloadList();
 }
@@ -1056,39 +1064,44 @@ async function runInspectionScript(record) {
     ? {type: 'decision', decision_id: decisionId, action: 'replace', content: result.replacement}
     : {type: 'decision', decision_id: decisionId, action: 'accept'});
   record.decided = true;
+  record.inspectOutput = result;
   record.inspectResult = result.ok ? (result.replacement === null ? 'unchanged' : 'replaced') : 'script failed; accepted';
+  if (selectedPayload === record) displayScriptResult(result, true);
   scheduleRender(false, true);
+}
+
+function displayScriptResult(data, automatic = false) {
+  const scriptStatus = byId('script-status');
+  byId('script-output').textContent = [...(data.logs || []), ...(data.error ? [data.error] : [])].join('\n');
+  if (!data.ok) {
+    scriptStatus.textContent = automatic ? 'inspect failed · accepted' : 'failed';
+    scriptStatus.className = 'error';
+    byId('replacement-text').value = '';
+    replacementBase64 = null;
+    return;
+  }
+  if (data.replacement === null) {
+    scriptStatus.textContent = automatic ? 'inspect · unchanged' : 'unchanged';
+    scriptStatus.className = 'ok';
+    byId('replacement-text').value = '';
+    replacementBase64 = null;
+    return;
+  }
+  const replacement = decodeBase64(data.replacement);
+  replacementBase64 = data.replacement;
+  scriptStatus.textContent = `${automatic ? 'inspect · ' : ''}replace · ${replacement.length} B`;
+  scriptStatus.className = 'ok';
+  byId('replacement-text').value = new TextDecoder().decode(replacement);
 }
 
 async function runScript() {
   const scriptStatus = byId('script-status');
-  const scriptOutput = byId('script-output');
   scriptStatus.textContent = 'running…';
   scriptStatus.className = '';
   byId('run-script').disabled = true;
   const data = await executeScript(selectedPayload);
   byId('run-script').disabled = false;
-  scriptOutput.textContent = [...data.logs, ...(data.error ? [data.error] : [])].join('\n');
-  if (!data.ok) {
-      scriptStatus.textContent = 'failed';
-      scriptStatus.className = 'error';
-      byId('replacement-text').value = '';
-      replacementBase64 = null;
-      renderPayload();
-    return;
-  }
-  if (data.replacement === null) {
-      scriptStatus.textContent = 'unchanged';
-      scriptStatus.className = 'ok';
-      byId('replacement-text').value = '';
-      replacementBase64 = null;
-  } else {
-      const replacement = decodeBase64(data.replacement);
-      replacementBase64 = data.replacement;
-      scriptStatus.textContent = `replace · ${replacement.length} B`;
-      scriptStatus.className = 'ok';
-      byId('replacement-text').value = new TextDecoder().decode(replacement);
-  }
+  displayScriptResult(data);
   renderPayload();
 }
 
