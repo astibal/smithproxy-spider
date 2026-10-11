@@ -15,7 +15,8 @@ int main() {
                                   {"side", "L"}, {"payload_length", 4}}}}}};
     const auto envelope_json = envelope_metadata.dump();
     char envelope_prefix[17]{};
-    std::snprintf(envelope_prefix, sizeof(envelope_prefix), "SXBN001:%08zX", envelope_json.size());
+    std::snprintf(envelope_prefix, sizeof(envelope_prefix), "SXBN001:%08X",
+                  static_cast<unsigned>(envelope_json.size()));
     const std::string envelope = std::string(envelope_prefix, 16) + envelope_json +
                                  std::string("\x00\x01\xfe\xff", 4);
     nlohmann::json decoded_envelope;
