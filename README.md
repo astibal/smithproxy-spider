@@ -84,6 +84,11 @@ by the backend and accept matching callbacks before a decision ticket is
 created. They are stored by the browser and restored over the authenticated
 WebSocket whenever Spider reconnects.
 
+The active-session tree shows only session keys at its leaves. Its draggable
+`src`, `dst`, and `dport` controls enable grouping dimensions and define their
+nesting and sorting priority. All groups start folded; manually opened groups
+remain open across the live session refreshes.
+
 ## API
 
 ```text

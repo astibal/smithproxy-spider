@@ -18,6 +18,21 @@ let eventRecordLimit = Number(localStorage.getItem('spider-event-record-limit'))
 let pinnedSession = null;
 let endpointFilter = {protocol: null, sourceHost: null, destinationHost: null, destinationPort: null};
 let activeSessionRecords = [];
+let sessionGroupOrder = ['src', 'dst', 'dport'];
+let sessionGroupsEnabled = new Set(sessionGroupOrder);
+const openSessionGroups = new Set();
+try {
+  const savedGrouping = JSON.parse(localStorage.getItem('spider-session-grouping') || 'null');
+  if (Array.isArray(savedGrouping?.order) &&
+      savedGrouping.order.length === 3 &&
+      new Set(savedGrouping.order).size === 3 &&
+      savedGrouping.order.every(key => ['src', 'dst', 'dport'].includes(key))) {
+    sessionGroupOrder = savedGrouping.order;
+  }
+  if (Array.isArray(savedGrouping?.enabled)) {
+    sessionGroupsEnabled = new Set(savedGrouping.enabled.filter(key => sessionGroupOrder.includes(key)));
+  }
+} catch (_) {}
 let autoAcceptRules = [];
 try {
   const savedRules = JSON.parse(localStorage.getItem('spider-auto-accept-rules') || '[]');
@@ -126,6 +141,141 @@ function parseSessionLabel(label) {
   if (!match) return null;
   return {sourceProtocol: match[1].toLowerCase(), sourceHost: match[2], sourcePort: Number(match[3]),
           destinationProtocol: match[4].toLowerCase(), destinationHost: match[5], destinationPort: Number(match[6])};
+}
+
+function saveSessionGrouping() {
+  localStorage.setItem('spider-session-grouping', JSON.stringify({
+    order: sessionGroupOrder,
+    enabled: sessionGroupOrder.filter(key => sessionGroupsEnabled.has(key)),
+  }));
+}
+
+function sessionGroupValue(item, key) {
+  const connection = parseSessionLabel(item.label || item.last_event?.details?.info?.session);
+  if (!connection) return 'unknown';
+  if (key === 'src') return connection.sourceHost;
+  if (key === 'dst') return connection.destinationHost;
+  return String(connection.destinationPort);
+}
+
+function renderSessionBranch(target, items, dimensions, depth = 0, parentPath = '') {
+  if (depth >= dimensions.length) {
+    for (const item of [...items].sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, {numeric: true}))) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'session-key';
+      row.textContent = item.id;
+      row.title = item.label || item.id;
+      row.onclick = () => pinSession(item);
+      target.append(row);
+    }
+    return;
+  }
+
+  const dimension = dimensions[depth];
+  const groups = new Map();
+  for (const item of items) {
+    const value = sessionGroupValue(item, dimension);
+    if (!groups.has(value)) groups.set(value, []);
+    groups.get(value).push(item);
+  }
+  for (const [value, members] of [...groups].sort((a, b) =>
+    a[0].localeCompare(b[0], undefined, {numeric: true}))) {
+    const path = `${parentPath}/${dimension}:${value}`;
+    const details = document.createElement('details');
+    details.className = 'session-group';
+    details.open = openSessionGroups.has(path);
+    const summary = document.createElement('summary');
+    summary.append(document.createTextNode(`${dimension} ${value}`));
+    const count = document.createElement('span');
+    count.textContent = String(members.length);
+    summary.append(count);
+    const children = document.createElement('div');
+    children.className = 'session-group-children';
+    renderSessionBranch(children, members, dimensions, depth + 1, path);
+    details.ontoggle = () => {
+      if (details.open) openSessionGroups.add(path);
+      else openSessionGroups.delete(path);
+    };
+    details.append(summary, children);
+    target.append(details);
+  }
+}
+
+function renderActiveSessions(items) {
+  sessions.replaceChildren();
+  if (!items.length) {
+    sessions.textContent = 'none';
+    sessions.className = 'empty';
+    return;
+  }
+  sessions.className = 'session-tree';
+  const dimensions = sessionGroupOrder.filter(key => sessionGroupsEnabled.has(key));
+  renderSessionBranch(sessions, items, dimensions);
+}
+
+function moveSessionGroup(key, offset) {
+  const from = sessionGroupOrder.indexOf(key);
+  const to = Math.max(0, Math.min(sessionGroupOrder.length - 1, from + offset));
+  if (from === to) return;
+  sessionGroupOrder.splice(from, 1);
+  sessionGroupOrder.splice(to, 0, key);
+  openSessionGroups.clear();
+  saveSessionGrouping();
+  renderSessionGroupControls();
+  renderActiveSessions(activeSessionRecords);
+}
+
+function renderSessionGroupControls() {
+  const controls = byId('session-group-controls');
+  controls.replaceChildren();
+  for (const key of sessionGroupOrder) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.group = key;
+    button.draggable = true;
+    button.textContent = key;
+    button.title = 'Click to toggle; drag or Alt+Left/Right to change priority';
+    button.setAttribute('aria-pressed', String(sessionGroupsEnabled.has(key)));
+    button.onclick = () => {
+      if (sessionGroupsEnabled.has(key)) sessionGroupsEnabled.delete(key);
+      else sessionGroupsEnabled.add(key);
+      openSessionGroups.clear();
+      saveSessionGrouping();
+      renderSessionGroupControls();
+      renderActiveSessions(activeSessionRecords);
+    };
+    button.onkeydown = event => {
+      if (!event.altKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault();
+      moveSessionGroup(key, event.key === 'ArrowLeft' ? -1 : 1);
+    };
+    button.ondragstart = event => {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', key);
+      button.classList.add('dragging');
+    };
+    button.ondragend = () => button.classList.remove('dragging');
+    button.ondragover = event => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+    };
+    button.ondrop = event => {
+      event.preventDefault();
+      const moved = event.dataTransfer.getData('text/plain');
+      if (!sessionGroupOrder.includes(moved) || moved === key) return;
+      const from = sessionGroupOrder.indexOf(moved);
+      sessionGroupOrder.splice(from, 1);
+      let to = sessionGroupOrder.indexOf(key);
+      if (event.clientX > button.getBoundingClientRect().left + button.offsetWidth / 2) ++to;
+      sessionGroupOrder.splice(to, 0, moved);
+      openSessionGroups.clear();
+      saveSessionGrouping();
+      renderSessionGroupControls();
+      renderActiveSessions(activeSessionRecords);
+    };
+    controls.append(button);
+  }
 }
 
 function suggestedFilter(item) {
@@ -775,21 +925,7 @@ async function poll() {
       `Lease expires     ${leaseExpiry}\n` +
       `Callbacks         ${current.callbacks_received} · last ${callback.action || 'n/a'} ${callbackAge}` +
       `${proxy.detail ? `\n${proxy.detail}` : ''}`;
-    if (sessionData.sessions.length === 0) {
-      sessions.textContent = 'none';
-      sessions.className = 'empty';
-    } else {
-      sessions.className = '';
-      sessions.replaceChildren();
-      for (const item of sessionData.sessions.sort((a, b) => b.revision - a.revision)) {
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = 'session';
-        row.innerHTML = `<b>${escapeHtml(item.id)}</b> ${escapeHtml(item.state)}<br><span>${escapeHtml(item.label || 'unlabelled')}</span>`;
-        row.onclick = () => pinSession(item);
-        sessions.append(row);
-      }
-    }
+    renderActiveSessions(activeSessionRecords);
     status.textContent = `${eventSocket?.readyState === WebSocket.OPEN ? 'live' : 'connecting'} · r${revision}`;
     status.className = 'ok';
     updateCacheStats();
@@ -1040,6 +1176,7 @@ byId('clear-history').onclick = async () => {
   }
 };
 loadScriptSlot(1);
+renderSessionGroupControls();
 renderAutoAcceptRules();
 updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
