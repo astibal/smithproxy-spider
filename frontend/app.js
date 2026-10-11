@@ -30,6 +30,7 @@ let hostnameRevision = -1;
 let hostnameResolving = localStorage.getItem('spider-hostname-resolving') !== 'false';
 let hideResolvedIps = localStorage.getItem('spider-hide-resolved-ips') === 'true';
 let compactSessionLabels = localStorage.getItem('spider-compact-session-labels') === 'true';
+let hostnameSort = {key: 'ip', direction: 1};
 let hostnameExceptions = new Set();
 try {
   const savedExceptions = JSON.parse(localStorage.getItem('spider-hostname-exceptions') || '[]');
@@ -536,9 +537,26 @@ function refreshResolvedViews() {
 
 function renderHostnames() {
   const target = byId('hostname-list');
-  const entries = [...reverseHostnames.entries()].sort((a, b) =>
-    a[0].localeCompare(b[0], undefined, {numeric: true}));
+  const sortValue = ([address, entry]) => {
+    if (hostnameSort.key === 'hostname') return entry.preferred || '';
+    if (hostnameSort.key === 'origin') {
+      return entry.entries?.find(candidate => candidate.hostname === entry.preferred)?.origins?.join('+') || '';
+    }
+    return address;
+  };
+  const entries = [...reverseHostnames.entries()].sort((a, b) => {
+    const primary = sortValue(a).localeCompare(sortValue(b), undefined,
+      {numeric: true, sensitivity: 'base'});
+    const stable = primary || a[0].localeCompare(b[0], undefined, {numeric: true});
+    return hostnameSort.direction * stable;
+  });
   byId('hostname-count').textContent = `${entries.length}`;
+  for (const button of document.querySelectorAll('[data-hostname-sort]')) {
+    const active = button.dataset.hostnameSort === hostnameSort.key;
+    button.setAttribute('aria-pressed', String(active));
+    button.textContent = button.dataset.hostnameSort +
+      (active ? ` ${hostnameSort.direction > 0 ? '↑' : '↓'}` : '');
+  }
   target.replaceChildren();
   if (!entries.length) {
     target.textContent = 'none';
@@ -1383,6 +1401,14 @@ byId('clear-events').onclick = () => {
 };
 for (const button of document.querySelectorAll('.tabs button')) {
   button.onclick = () => showTab(button.dataset.tab);
+}
+for (const button of document.querySelectorAll('[data-hostname-sort]')) {
+  button.onclick = () => {
+    const key = button.dataset.hostnameSort;
+    if (hostnameSort.key === key) hostnameSort.direction *= -1;
+    else hostnameSort = {key, direction: 1};
+    renderHostnames();
+  };
 }
 byId('reload-detail').onclick = loadSessionDetail;
 byId('follow-payload').onclick = () => {
