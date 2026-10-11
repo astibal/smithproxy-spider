@@ -81,13 +81,15 @@ use a tcpdump-like expression language with `and`, `or`, `not`,
 parentheses, `tcp`, `udp`, `ssl`, `ssli`, `quic`, `host`, `port`, `src host`,
 `dst host`, `src port`, `dst port`, and `side L|R`. Enabled rules are validated
 by the backend and accept matching callbacks before a decision ticket is
-created. They are stored by the browser and restored over the authenticated
-WebSocket whenever Spider reconnects.
+created. The backend counts matches per enabled rule and the UI refreshes those
+counters periodically over the authenticated WebSocket. Rules are stored by
+the browser and restored whenever Spider reconnects.
 
 The active-session tree shows only session keys at its leaves. Its draggable
 `src`, `dst`, and `dport` controls enable grouping dimensions and define their
-nesting and sorting priority. All groups start folded; manually opened groups
-remain open across the live session refreshes.
+nesting and sorting priority. The filter builder mirrors the enabled dimensions
+and their order. All groups start folded; manually opened groups remain open
+across the live session refreshes.
 
 ## API
 

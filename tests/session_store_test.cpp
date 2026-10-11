@@ -98,4 +98,7 @@ int main() {
     assert(!refined.prepare(accepted_event));
     assert(accepted_event["decision"]["state"] == "auto-accepted");
     assert(accepted_event["decision"]["rule_id"] == "google-https");
+    assert(refined.auto_accept_rule_status()["counts"][0]["matches"] == 1);
+    const auto preserved_status = refined.set_auto_accept_rules(rules_message);
+    assert(preserved_status["counts"][0]["matches"] == 1);
 }

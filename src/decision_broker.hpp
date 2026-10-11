@@ -27,6 +27,7 @@ public:
     [[nodiscard]] WebhookReply wait(const std::shared_ptr<Ticket>& ticket);
     void handle_message(const nlohmann::json& message);
     [[nodiscard]] nlohmann::json set_auto_accept_rules(const nlohmann::json& message);
+    [[nodiscard]] nlohmann::json auto_accept_rule_status() const;
     void observe(const nlohmann::json& event);
     [[nodiscard]] bool enabled() const;
 
@@ -45,6 +46,7 @@ private:
         std::string id;
         std::string expression;
         SessionFilter filter;
+        std::uint64_t matches{};
     };
     void resolve_locked(const std::shared_ptr<Ticket>& ticket, Result result);
     void resolve_all_locked();

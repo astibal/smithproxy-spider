@@ -206,6 +206,9 @@ int run_http_server(const ServerConfig& config, SessionStore& store,
         if (message.value("type", "") == "auto-accept-rules") {
             return std::optional<nlohmann::json>{decisions.set_auto_accept_rules(message)};
         }
+        if (message.value("type", "") == "auto-accept-rules-status-request") {
+            return std::optional<nlohmann::json>{decisions.auto_accept_rule_status()};
+        }
         decisions.handle_message(message);
         return std::nullopt;
     }, [&decisions] {

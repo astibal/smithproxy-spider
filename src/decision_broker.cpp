@@ -1,5 +1,6 @@
 #include "decision_broker.hpp"
 
+#include <algorithm>
 #include <vector>
 
 namespace spider {
@@ -11,8 +12,9 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
     const auto session = event.value("id", "");
     std::scoped_lock lock(mutex_);
     if (!enabled_ || session.empty() || accepted_sessions_.contains(session)) return {};
-    for (const auto& rule : auto_accept_rules_) {
+    for (auto& rule : auto_accept_rules_) {
         if (rule.filter.matches(event)) {
+            ++rule.matches;
             event["decision"] = {{"state", "auto-accepted"}, {"rule_id", rule.id},
                                  {"filter", rule.expression}};
             return {};
@@ -110,10 +112,28 @@ nlohmann::json DecisionBroker::set_auto_accept_rules(const nlohmann::json& messa
     }
     {
         std::scoped_lock lock(mutex_);
+        for (auto& rule : next) {
+            const auto previous = std::find_if(auto_accept_rules_.begin(), auto_accept_rules_.end(),
+                [&rule](const AutoAcceptRule& existing) {
+                    return existing.id == rule.id && existing.expression == rule.expression;
+                });
+            if (previous != auto_accept_rules_.end()) rule.matches = previous->matches;
+        }
         auto_accept_rules_ = std::move(next);
     }
-    return {{"type", "auto-accept-rules-status"}, {"accepted", std::move(accepted)},
-            {"errors", std::move(errors)}};
+    auto status = auto_accept_rule_status();
+    status["accepted"] = std::move(accepted);
+    status["errors"] = std::move(errors);
+    return status;
+}
+
+nlohmann::json DecisionBroker::auto_accept_rule_status() const {
+    std::scoped_lock lock(mutex_);
+    auto counts = nlohmann::json::array();
+    for (const auto& rule : auto_accept_rules_) {
+        counts.push_back({{"id", rule.id}, {"matches", rule.matches}});
+    }
+    return {{"type", "auto-accept-rules-status"}, {"counts", std::move(counts)}};
 }
 
 void DecisionBroker::observe(const nlohmann::json& event) {

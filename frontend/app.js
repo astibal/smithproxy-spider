@@ -8,6 +8,7 @@ const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('conf
 let revision = 0, timer, eventRecords = [], historyRecords = [], selectedSessionId = null;
 let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array(), scriptSlot = 1;
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
+let lastRuleStatsRequest = 0;
 let replacementBase64 = null;
 let activeTab = 'events-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
 let payloadCacheBytes = 0, payloadsDropped = 0, payloadBytesDropped = 0, evictionTimes = [];
@@ -121,6 +122,11 @@ function renderAutoAcceptRules() {
     const expression = document.createElement('code');
     expression.textContent = rule.filter;
     expression.title = rule.filter;
+    const matches = document.createElement('small');
+    matches.className = 'auto-rule-stats';
+    matches.textContent = rule.enabled === false
+      ? 'paused'
+      : `${Number(rule.matches || 0).toLocaleString()} accepted`;
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'danger-subtle';
@@ -131,7 +137,7 @@ function renderAutoAcceptRules() {
       renderAutoAcceptRules();
       syncAutoAcceptRules();
     };
-    row.append(enabled, expression, remove);
+    row.append(enabled, expression, matches, remove);
     target.append(row);
   }
 }
@@ -224,6 +230,8 @@ function moveSessionGroup(key, offset) {
   saveSessionGrouping();
   renderSessionGroupControls();
   renderActiveSessions(activeSessionRecords);
+  renderEndpointBuilder(activeSessionRecords);
+  updateEndpointFilterDraft();
 }
 
 function renderSessionGroupControls() {
@@ -244,6 +252,8 @@ function renderSessionGroupControls() {
       saveSessionGrouping();
       renderSessionGroupControls();
       renderActiveSessions(activeSessionRecords);
+      renderEndpointBuilder(activeSessionRecords);
+      updateEndpointFilterDraft();
     };
     button.onkeydown = event => {
       if (!event.altKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
@@ -273,6 +283,8 @@ function renderSessionGroupControls() {
       saveSessionGrouping();
       renderSessionGroupControls();
       renderActiveSessions(activeSessionRecords);
+      renderEndpointBuilder(activeSessionRecords);
+      updateEndpointFilterDraft();
     };
     controls.append(button);
   }
@@ -287,9 +299,14 @@ function suggestedFilter(item) {
 
 function endpointFilterExpression() {
   const parts = [endpointFilter.protocol || 'tcp'];
-  if (endpointFilter.sourceHost) parts.push(`src host ${endpointFilter.sourceHost}`);
-  if (endpointFilter.destinationHost) parts.push(`dst host ${endpointFilter.destinationHost}`);
-  if (endpointFilter.destinationPort !== null) parts.push(`dst port ${endpointFilter.destinationPort}`);
+  const clauses = {
+    src: endpointFilter.sourceHost ? `src host ${endpointFilter.sourceHost}` : null,
+    dst: endpointFilter.destinationHost ? `dst host ${endpointFilter.destinationHost}` : null,
+    dport: endpointFilter.destinationPort !== null ? `dst port ${endpointFilter.destinationPort}` : null,
+  };
+  for (const key of sessionGroupOrder) {
+    if (sessionGroupsEnabled.has(key) && clauses[key]) parts.push(clauses[key]);
+  }
   return parts.length > 1 ? parts.join(' and ') : '';
 }
 
@@ -333,6 +350,9 @@ function renderEndpointBuilder(items) {
   }
 
   const sourceTarget = byId('observed-sources');
+  const sourceColumn = sourceTarget.parentElement;
+  sourceColumn.hidden = !sessionGroupsEnabled.has('src');
+  sourceColumn.style.order = String(sessionGroupOrder.indexOf('src'));
   sourceTarget.replaceChildren();
   sourceTarget.className = `endpoint-list${sourceCounts.size ? '' : ' empty'}`;
   if (!sourceCounts.size) sourceTarget.textContent = 'none';
@@ -349,6 +369,11 @@ function renderEndpointBuilder(items) {
   }
 
   const destinationTarget = byId('observed-destinations');
+  const destinationColumn = destinationTarget.parentElement;
+  const destinationDimensions = ['dst', 'dport'].filter(key => sessionGroupsEnabled.has(key));
+  destinationColumn.hidden = destinationDimensions.length === 0;
+  destinationColumn.style.order = String(destinationDimensions.length
+    ? Math.min(...destinationDimensions.map(key => sessionGroupOrder.indexOf(key))) : 3);
   destinationTarget.replaceChildren();
   destinationTarget.className = `endpoint-list${destinations.size ? '' : ' empty'}`;
   if (!destinations.size) destinationTarget.textContent = 'none';
@@ -360,8 +385,10 @@ function renderEndpointBuilder(items) {
     const address = document.createElement('span'); address.textContent = host;
     const count = document.createElement('small'); count.textContent = String(data.count);
     hostButton.append(address, count);
+    hostButton.hidden = !sessionGroupsEnabled.has('dst');
     hostButton.onclick = () => { selectEndpoint('destinationHost', host, data.protocol); renderEndpointBuilder(items); };
     const ports = document.createElement('span'); ports.className = 'destination-ports';
+    ports.hidden = !sessionGroupsEnabled.has('dport');
     for (const [port, portCount] of [...data.ports].sort((a, b) => b[1] - a[1] || a[0] - b[0])) {
       const portButton = document.createElement('button');
       portButton.type = 'button'; portButton.className = 'endpoint-port';
@@ -378,7 +405,12 @@ function renderEndpointBuilder(items) {
       };
       ports.append(portButton);
     }
-    row.append(hostButton, ports);
+    if (sessionGroupOrder.indexOf('dport') < sessionGroupOrder.indexOf('dst')) {
+      row.classList.add('ports-first');
+      row.append(ports, hostButton);
+    } else {
+      row.append(hostButton, ports);
+    }
     destinationTarget.append(row);
   }
 }
@@ -850,7 +882,11 @@ function connectEventSocket() {
     if (data.type === 'subscribed') revision = Math.max(revision, Number(data.revision) || 0);
     if (data.type === 'auto-accept-rules-status') {
       const errors = new Map((data.errors || []).map(item => [item.id, item.error]));
-      for (const rule of autoAcceptRules) rule.error = errors.get(rule.id) || null;
+      const counts = new Map((data.counts || []).map(item => [item.id, Number(item.matches) || 0]));
+      for (const rule of autoAcceptRules) {
+        rule.error = errors.get(rule.id) || null;
+        rule.matches = counts.get(rule.id) || 0;
+      }
       renderAutoAcceptRules();
     }
     if (data.type === 'gap') {
@@ -928,6 +964,10 @@ async function poll() {
     renderActiveSessions(activeSessionRecords);
     status.textContent = `${eventSocket?.readyState === WebSocket.OPEN ? 'live' : 'connecting'} · r${revision}`;
     status.className = 'ok';
+    if (Date.now() - lastRuleStatsRequest >= 5000 &&
+        socketSend({type: 'auto-accept-rules-status-request'})) {
+      lastRuleStatsRequest = Date.now();
+    }
     updateCacheStats();
   } catch (error) {
     status.textContent = `offline · ${error.message}`;
