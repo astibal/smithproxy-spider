@@ -8,6 +8,8 @@ const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('conf
 let revision = 0, timer, eventRecords = [], historyRecords = [], selectedSessionId = null;
 let selectedSessionDetail = null;
 let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array(), scriptSlot = 1;
+const flowRecords = new Map();
+let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flows' ? 'flows' : 'payloads';
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let lastRuleStatsRequest = 0;
 let replacementBase64 = null;
@@ -768,6 +770,10 @@ function trimPayloadCache() {
     payloadBytesDropped += bytes;
     evictionTimes.push(Date.now());
     if (selectedPayload === removed) selectedPayload = null;
+    const flow = flowRecords.get(removed.event.id);
+    if (flow?.latest === removed) {
+      flow.latest = [...payloadRecords].reverse().find(record => record.event.id === removed.event.id) || null;
+    }
   }
   const cutoff = Date.now() - 60000;
   evictionTimes = evictionTimes.filter(time => time >= cutoff);
@@ -911,14 +917,47 @@ function setPayloadPane(clientX) {
 
 function renderPayloadList() {
   const list = byId('payload-list');
-  byId('payload-count').textContent = payloadRecords.length;
+  const flows = [...flowRecords.values()].sort((a, b) =>
+    Number(b.active) - Number(a.active) || b.lastRevision - a.lastRevision);
+  const rows = payloadListView === 'flows' ? flows : payloadRecords;
+  byId('payload-list-title').textContent = payloadListView === 'flows' ? 'Flows' : 'Payloads';
+  byId('payload-count').textContent = rows.length;
+  for (const button of document.querySelectorAll('#payload-views button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.view === payloadListView));
+  }
   list.replaceChildren();
-  if (!payloadRecords.length) {
+  if (!rows.length) {
     list.textContent = 'none';
     list.className = 'payload-list empty';
     return;
   }
   list.className = 'payload-list';
+  if (payloadListView === 'flows') {
+    for (const flow of flows) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = `flow-row${selectedPayload?.event?.id === flow.id ? ' selected' : ''}` +
+        `${flow.active ? '' : ' inactive'}`;
+      const label = document.createElement('span');
+      label.textContent = resolvedSessionLabel(flow.label || flow.id);
+      label.title = flow.label || flow.id;
+      const left = document.createElement('span');
+      left.className = 'flow-side';
+      left.textContent = `L ${flow.L.count} · ${formatBytes(flow.L.bytes)}`;
+      const right = document.createElement('span');
+      right.className = 'flow-side';
+      right.textContent = `R ${flow.R.count} · ${formatBytes(flow.R.bytes)}`;
+      row.append(label, left, right);
+      row.onclick = () => {
+        if (!flow.latest) return;
+        selectPayload(flow.latest, false);
+        pinSession(flow.latest, false);
+      };
+      list.append(row);
+    }
+    if (followPayload) list.scrollTop = 0;
+    return;
+  }
   for (let index = payloadRecords.length - 1; index >= 0; --index) {
     const record = payloadRecords[index];
     const info = record.event.details?.info || {};
@@ -938,6 +977,40 @@ function renderPayloadList() {
     list.append(row);
   }
   if (followPayload) list.scrollTop = 0;
+}
+
+function updateFlowRecord(record) {
+  const event = record.event;
+  const info = event.details?.info || {};
+  let flow = flowRecords.get(event.id);
+  if (!flow) {
+    flow = {id: event.id, label: info.session || event.id, active: true,
+            lastRevision: record.revision, latest: record,
+            L: {count: 0, bytes: 0}, R: {count: 0, bytes: 0}};
+    flowRecords.set(event.id, flow);
+  }
+  const side = info.side === 'R' ? 'R' : 'L';
+  flow[side].count += 1;
+  flow[side].bytes += decodedPayloadSize(info.content);
+  flow.label = info.session || flow.label;
+  flow.lastRevision = record.revision;
+  flow.latest = record;
+  flow.active = true;
+  if (flowRecords.size > 2000) {
+    const oldest = [...flowRecords.values()].sort((a, b) => a.lastRevision - b.lastRevision)[0];
+    if (oldest) flowRecords.delete(oldest.id);
+  }
+}
+
+function updateFlowActivity(activeItems) {
+  const activeIds = new Set(activeItems.map(item => item.id));
+  let changed = false;
+  for (const flow of flowRecords.values()) {
+    const active = activeIds.has(flow.id);
+    changed ||= flow.active !== active;
+    flow.active = active;
+  }
+  return changed;
 }
 
 function selectPayload(record, follow = false) {
@@ -969,10 +1042,15 @@ function ingestEvent(record) {
     record.cacheBytes = payloadSize(record);
     payloadRecords.push(record);
     payloadCacheBytes += record.cacheBytes;
+    updateFlowRecord(record);
     if (followPayload || !selectedPayload) selectedPayload = record;
     trimPayloadCache();
   }
-  scheduleRender(true, record.event.action === 'connection-content');
+  if (record.event.action === 'connection-stop') {
+    const flow = flowRecords.get(record.event.id);
+    if (flow) flow.active = false;
+  }
+  scheduleRender(true, ['connection-content', 'connection-stop'].includes(record.event.action));
 }
 
 function loadScriptSlot(number) {
@@ -1256,6 +1334,10 @@ async function poll() {
       last_event: item.last_event ? summarizeEvent({revision: 0, event: item.last_event}).event : item.last_event,
     }));
     activeSessionRecords = sessionData.sessions;
+    const flowActivityChanged = updateFlowActivity(activeSessionRecords);
+    if (flowActivityChanged && activeTab === 'workbench-tab' && payloadListView === 'flows') {
+      renderPayloadList();
+    }
     updateObservedEndpoints(activeSessionRecords);
     renderEndpointBuilder();
     if (activeTab === 'history-tab') renderHistory();
@@ -1315,6 +1397,7 @@ function connect() {
   revision = 0;
   eventRecords = [];
   payloadRecords = [];
+  flowRecords.clear();
   payloadCacheBytes = 0;
   payloadsDropped = 0;
   payloadBytesDropped = 0;
@@ -1438,6 +1521,13 @@ byId('payload-text').oninput = event => {
 for (const button of document.querySelectorAll('#payload-modes button')) {
   button.onclick = () => setPayloadMode(button.dataset.mode);
 }
+for (const button of document.querySelectorAll('#payload-views button')) {
+  button.onclick = () => {
+    payloadListView = button.dataset.view === 'flows' ? 'flows' : 'payloads';
+    localStorage.setItem('spider-payload-list-view', payloadListView);
+    renderPayloadList();
+  };
+}
 byId('font-smaller').onclick = () => setCodeSize(codeSize - 1);
 byId('font-larger').onclick = () => setCodeSize(codeSize + 1);
 const workbenchDivider = byId('workbench-divider');
@@ -1523,6 +1613,7 @@ byId('apply-cache-limits').onclick = () => {
 };
 byId('clear-payloads').onclick = () => {
   payloadRecords = [];
+  flowRecords.clear();
   selectedPayload = null;
   payloadBytes = new Uint8Array();
   payloadCacheBytes = 0;
