@@ -782,7 +782,6 @@ function scheduleRender(eventsChanged = false, payloadsChanged = false) {
       if (selectedPayload) {
         payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
         replacementBase64 = null;
-        if (selectedPayload.inspectOutput) displayScriptResult(selectedPayload.inspectOutput, true);
         renderPayload();
       }
       renderPayloadList();
@@ -985,11 +984,6 @@ function selectPayload(record, follow = false) {
   replacementBase64 = null;
   byId('replacement-text').value = '';
   if (selectedPayload.inspectOutput) displayScriptResult(selectedPayload.inspectOutput, true);
-  else {
-    byId('script-output').textContent = '';
-    byId('script-status').textContent = 'idle';
-    byId('script-status').className = 'empty';
-  }
   renderPayload();
   renderPayloadList();
 }
@@ -1066,13 +1060,28 @@ async function runInspectionScript(record) {
   record.decided = true;
   record.inspectOutput = result;
   record.inspectResult = result.ok ? (result.replacement === null ? 'unchanged' : 'replaced') : 'script failed; accepted';
-  if (selectedPayload === record) displayScriptResult(result, true);
+  appendInspectionOutput(record, result);
+  if (selectedPayload === record) displayScriptResult(result, true, false);
   scheduleRender(false, true);
 }
 
-function displayScriptResult(data, automatic = false) {
+function appendInspectionOutput(record, data) {
+  const info = record.event.details?.info || {};
+  const messages = [...(data.logs || []), ...(data.error ? [data.error] : [])];
+  const outcome = !data.ok ? 'failed · accepted'
+    : data.replacement === null ? 'unchanged' : `replace · ${decodeBase64(data.replacement).length} B`;
+  const block = [`[r${record.revision} ${info.side || '?'} ${record.event.id}] ${outcome}`,
+    ...messages.map(line => `  ${line}`)].join('\n');
+  const output = byId('script-output');
+  output.textContent = `${output.textContent}${output.textContent ? '\n' : ''}${block}`.slice(-50000);
+  output.scrollTop = output.scrollHeight;
+}
+
+function displayScriptResult(data, automatic = false, replaceOutput = true) {
   const scriptStatus = byId('script-status');
-  byId('script-output').textContent = [...(data.logs || []), ...(data.error ? [data.error] : [])].join('\n');
+  if (replaceOutput) {
+    byId('script-output').textContent = [...(data.logs || []), ...(data.error ? [data.error] : [])].join('\n');
+  }
   if (!data.ok) {
     scriptStatus.textContent = automatic ? 'inspect failed · accepted' : 'failed';
     scriptStatus.className = 'error';
