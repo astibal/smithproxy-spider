@@ -28,6 +28,7 @@ const observedSources = new Map(), observedDestinations = new Map(), observedPor
 const reverseHostnames = new Map();
 let hostnameRevision = -1;
 let hostnameResolving = localStorage.getItem('spider-hostname-resolving') !== 'false';
+let hideResolvedIps = localStorage.getItem('spider-hide-resolved-ips') === 'true';
 let hostnameExceptions = new Set();
 try {
   const savedExceptions = JSON.parse(localStorage.getItem('spider-hostname-exceptions') || '[]');
@@ -83,6 +84,7 @@ token.value = sessionStorage.getItem('spider-token') || '';
 smithproxyUrl.value = localStorage.getItem('smithproxy-url') || smithproxyUrl.value;
 smithproxyVerify.checked = localStorage.getItem('smithproxy-verify') !== 'false';
 byId('resolve-hostnames').checked = hostnameResolving;
+byId('hide-resolved-ips').checked = hideResolvedIps;
 const savedSidebarWidth = Number(localStorage.getItem('spider-sidebar-width'));
 if (savedSidebarWidth >= 280) byId('sidebar').style.width = `${savedSidebarWidth}px`;
 if ('ResizeObserver' in window) {
@@ -491,7 +493,7 @@ function compareHostnames(left, right) {
 function resolvedAddress(address) {
   if (!hostnameResolving || hostnameExceptions.has(address)) return address;
   const preferred = reverseHostnames.get(address)?.preferred;
-  return preferred ? `${preferred} · ${address}` : address;
+  return preferred ? (hideResolvedIps ? preferred : `${preferred} · ${address}`) : address;
 }
 
 function resolvedSessionLabel(label) {
@@ -1315,6 +1317,11 @@ byId('configure').onclick = configureSmithproxy;
 byId('resolve-hostnames').onchange = event => {
   hostnameResolving = event.target.checked;
   localStorage.setItem('spider-hostname-resolving', String(hostnameResolving));
+  refreshResolvedViews();
+};
+byId('hide-resolved-ips').onchange = event => {
+  hideResolvedIps = event.target.checked;
+  localStorage.setItem('spider-hide-resolved-ips', String(hideResolvedIps));
   refreshResolvedViews();
 };
 byId('toggle-token').onclick = () => {
