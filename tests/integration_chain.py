@@ -111,7 +111,8 @@ def main():
                             "payload_length": len(payload), "payload_layer": "tcp",
                         }},
                     }, separators=(",", ":")).encode()
-                    envelope = b"SXBN001:" + f"{len(metadata):08X}".encode() + metadata + payload
+                    envelope = (b"SXBN001:" + f"{len(metadata):08X}:{len(payload):08X}".encode()
+                                + metadata + payload)
                     binary_status, binary_reply = post_bytes(callback, envelope)
                     assert binary_status == 200
                     assert binary_reply["action"] == "unchanged"

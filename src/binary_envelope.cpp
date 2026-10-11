@@ -33,17 +33,34 @@ std::string base64_encode(const std::string_view input) {
 } // namespace
 
 bool decode_sxbn(const std::string& body, nlohmann::json& event, std::string& error) {
-    constexpr std::size_t prefix_size = 16;
+    constexpr std::size_t prefix_size = 25;
     if (body.size() < prefix_size || !std::string_view(body).starts_with(sxbn_magic)) {
         error = "missing SXBN001 envelope";
         return false;
     }
+    if (body[16] != ':') {
+        error = "invalid SXBN length separator";
+        return false;
+    }
     std::uint32_t json_size{};
-    const auto first = body.data() + sxbn_magic.size();
-    const auto last = body.data() + prefix_size;
-    const auto parsed = std::from_chars(first, last, json_size, 16);
-    if (parsed.ec != std::errc{} || parsed.ptr != last || json_size > body.size() - prefix_size) {
+    std::uint32_t payload_size{};
+    const auto json_first = body.data() + sxbn_magic.size();
+    const auto json_last = body.data() + 16;
+    const auto payload_first = body.data() + 17;
+    const auto payload_last = body.data() + prefix_size;
+    const auto parsed_json = std::from_chars(json_first, json_last, json_size, 16);
+    const auto parsed_payload = std::from_chars(payload_first, payload_last, payload_size, 16);
+    if (parsed_json.ec != std::errc{} || parsed_json.ptr != json_last) {
         error = "invalid SXBN JSON length";
+        return false;
+    }
+    if (parsed_payload.ec != std::errc{} || parsed_payload.ptr != payload_last) {
+        error = "invalid SXBN payload length";
+        return false;
+    }
+    const auto content_size = static_cast<std::uint64_t>(json_size) + payload_size;
+    if (content_size != body.size() - prefix_size) {
+        error = "SXBN envelope length mismatch";
         return false;
     }
     try {
@@ -63,14 +80,13 @@ bool decode_sxbn(const std::string& body, nlohmann::json& event, std::string& er
         return false;
     }
     const auto payload_offset = prefix_size + json_size;
-    const auto payload_size = body.size() - payload_offset;
     if (info.value("payload_length", payload_size) != payload_size) {
         error = "SXBN payload length mismatch";
         return false;
     }
     info["payload_encoding"] = "sxbn-001";
     info["payload_length"] = payload_size;
-    info["content"] = base64_encode(std::string_view(body).substr(payload_offset));
+    info["content"] = base64_encode(std::string_view(body).substr(payload_offset, payload_size));
     return true;
 }
 

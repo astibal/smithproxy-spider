@@ -14,10 +14,10 @@ int main() {
         {"details", {{"info", {{"session", "tcp_10.0.0.1:1+tcp_10.0.0.2:2"},
                                   {"side", "L"}, {"payload_length", 4}}}}}};
     const auto envelope_json = envelope_metadata.dump();
-    char envelope_prefix[17]{};
-    std::snprintf(envelope_prefix, sizeof(envelope_prefix), "SXBN001:%08X",
-                  static_cast<unsigned>(envelope_json.size()));
-    const std::string envelope = std::string(envelope_prefix, 16) + envelope_json +
+    char envelope_prefix[26]{};
+    std::snprintf(envelope_prefix, sizeof(envelope_prefix), "SXBN001:%08X:%08X",
+                  static_cast<unsigned>(envelope_json.size()), 4U);
+    const std::string envelope = std::string(envelope_prefix, 25) + envelope_json +
                                  std::string("\x00\x01\xfe\xff", 4);
     nlohmann::json decoded_envelope;
     std::string envelope_error;
