@@ -17,6 +17,7 @@ endif()
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 add_library(spider_core
+    src/binary_envelope.cpp
     src/decision_broker.cpp
     src/session_filter.cpp
     src/session_store.cpp

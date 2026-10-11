@@ -1,12 +1,29 @@
 #include "decision_broker.hpp"
+#include "binary_envelope.hpp"
 #include "session_filter.hpp"
 #include "session_store.hpp"
 #include "webhook.hpp"
 
 #include <cassert>
+#include <cstdio>
 #include <future>
 
 int main() {
+    const auto envelope_metadata = nlohmann::json{
+        {"action", "connection-content"}, {"id", "binary-session"},
+        {"details", {{"info", {{"session", "tcp_10.0.0.1:1+tcp_10.0.0.2:2"},
+                                  {"side", "L"}, {"payload_length", 4}}}}}};
+    const auto envelope_json = envelope_metadata.dump();
+    char envelope_prefix[17]{};
+    std::snprintf(envelope_prefix, sizeof(envelope_prefix), "SXBN001:%08zX", envelope_json.size());
+    const std::string envelope = std::string(envelope_prefix, 16) + envelope_json +
+                                 std::string("\x00\x01\xfe\xff", 4);
+    nlohmann::json decoded_envelope;
+    std::string envelope_error;
+    assert(spider::decode_sxbn(envelope, decoded_envelope, envelope_error));
+    assert(decoded_envelope["details"]["info"]["content"] == "AAH+/w==");
+    assert(decoded_envelope["details"]["info"]["payload_encoding"] == "sxbn-001");
+
     const nlohmann::json filter_event = {
         {"action", "connection-content"}, {"id", "filter-session"},
         {"details", {{"info", {{"session", "ssli_192.168.99.1:45678+ssli_142.251.154.4:443"},
@@ -54,6 +71,10 @@ int main() {
 
     const auto invalid = spider::process_webhook(store, decisions, {{"action", "wat"}});
     assert(invalid.status == 422);
+    const auto info = spider::process_webhook(store, decisions, {{"action", "info"}});
+    assert(info.status == 200);
+    assert(info.body["action"] == "info-response");
+    assert(info.body["protocols"]["connection-content"][0] == "sxbn-001");
 
     const nlohmann::json hostnames = {
         {"action", "hostname-info"},

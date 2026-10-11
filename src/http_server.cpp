@@ -4,6 +4,7 @@
 #include "session_store.hpp"
 #include "smithproxy_manager.hpp"
 #include "webhook.hpp"
+#include "binary_envelope.hpp"
 #include "websocket_hub.hpp"
 
 #include <lmhttpd.hpp>
@@ -116,7 +117,16 @@ private:
         // credential. Smithproxy cannot attach the browser API header.
         if (method == "POST" && url == callback_path()) {
             try {
-                const auto reply = process_webhook(store_, decisions_, nlohmann::json::parse(body));
+                nlohmann::json event;
+                if (std::string_view(body).starts_with(sxbn_magic)) {
+                    std::string error;
+                    if (!decode_sxbn(body, event, error)) {
+                        return json_response(400, {{"error", error}});
+                    }
+                } else {
+                    event = nlohmann::json::parse(body);
+                }
+                const auto reply = process_webhook(store_, decisions_, event);
                 return json_response(reply.status, reply.body);
             } catch (const nlohmann::json::exception&) {
                 return json_response(400, {{"error", "invalid JSON"}});

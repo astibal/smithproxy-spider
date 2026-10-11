@@ -25,6 +25,12 @@ def post_json(url, body, token=None):
     with urllib.request.urlopen(request, timeout=2) as response:
         return response.status, json.load(response)
 
+def post_bytes(url, body):
+    request = urllib.request.Request(url, data=body,
+                                     headers={"Content-Type": "application/octet-stream"})
+    with urllib.request.urlopen(request, timeout=2) as response:
+        return response.status, json.load(response)
+
 def delete_json(url, token=None):
     headers = {"X-Spider-Token": token} if token else {}
     request = urllib.request.Request(url, headers=headers, method="DELETE")
@@ -91,6 +97,29 @@ def main():
                         raise AssertionError("browser API accepted a missing token")
                     except urllib.error.HTTPError as error:
                         assert error.code == 401
+                    callback = Handler.callback
+                    assert callback
+                    info_status, info = post_json(callback, {"action": "info"})
+                    assert info_status == 200
+                    assert info["action"] == "info-response"
+                    assert "sxbn-001" in info["protocols"]["connection-content"]
+                    payload = b"\x00binary\xffpayload"
+                    metadata = json.dumps({
+                        "action": "connection-content", "id": "binary-integration",
+                        "details": {"info": {
+                            "session": "tcp_10.0.0.1:1+tcp_10.0.0.2:2", "side": "L",
+                            "payload_length": len(payload), "payload_layer": "tcp",
+                        }},
+                    }, separators=(",", ":")).encode()
+                    envelope = b"SXBN001:" + f"{len(metadata):08X}".encode() + metadata + payload
+                    binary_status, binary_reply = post_bytes(callback, envelope)
+                    assert binary_status == 200
+                    assert binary_reply["action"] == "unchanged"
+                    binary_events = get_json(events_url, "frontend-key")["events"]
+                    binary_event = next(entry["event"] for entry in binary_events
+                                        if entry["event"].get("id") == "binary-integration")
+                    assert binary_event["details"]["info"]["payload_encoding"] == "sxbn-001"
+                    assert binary_event["details"]["info"]["payload_length"] == len(payload)
                     return 0
             except OSError:
                 pass

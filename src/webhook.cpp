@@ -15,14 +15,18 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
-    constexpr std::array<std::string_view, 8> supported{
+    constexpr std::array<std::string_view, 9> supported{
         "access-request", "connection-content", "connection-start", "connection-stop",
-        "connection-info", "hostname-info", "neighbor", "ping",
+        "connection-info", "hostname-info", "info", "neighbor", "ping",
     };
     if (std::find(supported.begin(), supported.end(), action) == supported.end()) {
         return {422, {{"error", "unsupported action"}}};
     }
 
+    if (action == "info") {
+        return {200, {{"action", "info-response"},
+                      {"protocols", {{"connection-content", {"sxbn-001"}}}}}};
+    }
     const auto ticket = decisions.prepare(event);
     decisions.observe(event);
     if (event.value("decision", nlohmann::json::object()).value("state", "") != "ignored") {

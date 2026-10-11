@@ -9,6 +9,7 @@ API_KEY = "integration-key"
 lease_id = "fake-owned-lease"
 
 class Handler(BaseHTTPRequestHandler):
+    callback = None
     def log_message(self, *_):
         pass
 
@@ -33,6 +34,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(401, {"error": "access denied"})
                 return
             callback = body["params"]["rande_url"]
+            Handler.callback = callback
             self.reply(200, {"status": "accepted"})
             threading.Thread(target=send_ping, args=(callback,), daemon=True).start()
             return
@@ -41,6 +43,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(401, {"error": "access denied"})
                 return
             params = body["params"]
+            Handler.callback = params["url"]
             presented = params.get("lease_id")
             if presented not in (None, lease_id):
                 self.reply(409, {"status": "conflict"})
