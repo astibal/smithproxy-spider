@@ -2,12 +2,35 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
+#include <tuple>
 
 namespace spider {
 namespace {
 std::int64_t unix_time_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+std::string normalized_hostname(std::string hostname) {
+    while (!hostname.empty() && hostname.back() == '.') hostname.pop_back();
+    std::ranges::transform(hostname, hostname.begin(),
+                           [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return hostname;
+}
+
+std::size_t hostname_levels(const std::string& hostname) {
+    return hostname.empty() ? 0 : 1 + static_cast<std::size_t>(std::ranges::count(hostname, '.'));
+}
+
+std::size_t leaf_length(const std::string& hostname) {
+    const auto separator = hostname.find('.');
+    return separator == std::string::npos ? hostname.size() : separator;
+}
+
+bool preferred_hostname(const std::string& lhs, const std::string& rhs) {
+    return std::tuple{hostname_levels(lhs), leaf_length(lhs), lhs.size(), lhs} <
+           std::tuple{hostname_levels(rhs), leaf_length(rhs), rhs.size(), rhs};
 }
 } // namespace
 
@@ -45,6 +68,8 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event) {
         rev = ++revision_;
         history_.push_back({rev, stored_event});
         while (history_.size() > history_limit_) history_.pop_front();
+
+        if (action == "hostname-info") apply_hostname_info(event);
 
         if (action == "spider-smithproxy-status") {
             smithproxy_status_ = stored_event;
@@ -85,6 +110,36 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event) {
     }
     if (sink) sink(rev, stored_event);
     return rev;
+}
+
+void SessionStore::apply_hostname_info(const nlohmann::json& event) {
+    const nlohmann::json* list = nullptr;
+    if (const auto details = event.find("details"); details != event.end() && details->is_object()) {
+        if (const auto info = details->find("info"); info != details->end() && info->is_object()) {
+            if (const auto found = info->find("list"); found != info->end()) list = &*found;
+        }
+    }
+    if (list == nullptr || !list->is_array()) return;
+    bool changed = false;
+    for (const auto& item : *list) {
+        if (!item.is_object() || !item.contains("hostname") || !item["hostname"].is_string() ||
+            !item.contains("address") || !item["address"].is_array()) continue;
+        const auto hostname = normalized_hostname(item["hostname"].get<std::string>());
+        if (hostname.empty()) continue;
+        const auto origin = item.contains("origin") && item["origin"].is_string()
+                                ? item["origin"].get<std::string>() : std::string{};
+        const auto type = item.contains("type") && item["type"].is_string()
+                              ? item["type"].get<std::string>() : std::string{};
+        for (const auto& address : item["address"]) {
+            if (!address.is_string() || address.get_ref<const std::string&>().empty()) continue;
+            auto& observations = reverse_hostnames_[address.get<std::string>()];
+            const auto [position, inserted] = observations.try_emplace(hostname);
+            changed |= inserted;
+            if (!origin.empty()) changed |= position->second.origins.insert(origin).second;
+            if (!type.empty()) changed |= position->second.types.insert(type).second;
+        }
+    }
+    if (changed) ++hostname_revision_;
 }
 
 void SessionStore::set_event_sink(std::function<void(std::uint64_t, const nlohmann::json&)> sink,
@@ -140,12 +195,38 @@ nlohmann::json SessionStore::status() const {
             [](const auto& entry) { return entry.second.state != "completed"; })},
         {"callbacks_received", callback_count_},
         {"last_callback_revision", last_callback_revision_},
+        {"hostname_revision", hostname_revision_},
         {"last_callback", {
             {"received_at_ms", last_callback_at_ms_},
             {"action", last_callback_action_},
             {"source", last_callback_source_},
         }},
     };
+}
+
+nlohmann::json SessionStore::reverse_hostnames() const {
+    std::scoped_lock lock(mutex_);
+    auto mappings = nlohmann::json::object();
+    for (const auto& [address, observations] : reverse_hostnames_) {
+        if (observations.empty()) continue;
+        auto candidates = std::vector<std::string>{};
+        candidates.reserve(observations.size());
+        for (const auto& observation : observations) candidates.push_back(observation.first);
+        std::ranges::sort(candidates, preferred_hostname);
+        auto entries = nlohmann::json::array();
+        for (const auto& hostname : candidates) {
+            const auto& observation = observations.at(hostname);
+            auto origins = std::vector<std::string>(observation.origins.begin(), observation.origins.end());
+            auto types = std::vector<std::string>(observation.types.begin(), observation.types.end());
+            std::ranges::sort(origins);
+            std::ranges::sort(types);
+            entries.push_back({{"hostname", hostname}, {"origins", std::move(origins)},
+                               {"types", std::move(types)}});
+        }
+        mappings[address] = {{"preferred", candidates.front()}, {"candidates", std::move(candidates)},
+                             {"entries", std::move(entries)}};
+    }
+    return {{"revision", hostname_revision_}, {"mappings", std::move(mappings)}};
 }
 
 nlohmann::json SessionStore::snapshot() const {

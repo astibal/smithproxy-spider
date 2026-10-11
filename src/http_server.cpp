@@ -45,6 +45,7 @@ public:
         const std::string_view m(method);
         return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/ready" ||
                                p == "/api/status" || p == "/api/sessions" ||
+                               p == "/api/hostnames" ||
                                p == "/api/session-history" || p == "/api/session" ||
                                p == "/api/events" || p == "/api/events/ws")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
@@ -128,6 +129,7 @@ private:
             return json_response(status.value("ready", false) ? 200U : 503U, status);
         }
         if (method == "GET" && url == "/api/sessions") return json_response(200, store_.snapshot());
+        if (method == "GET" && url == "/api/hostnames") return json_response(200, store_.reverse_hostnames());
         if (method == "GET" && url == "/api/session-history") {
             return json_response(200, store_.session_history());
         }

@@ -6,6 +6,7 @@ const historyList = byId('history-list'), sessionDetail = byId('session-detail')
 const smithproxyUrl = byId('smithproxy-url'), smithproxyKey = byId('smithproxy-key');
 const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('configure-status');
 let revision = 0, timer, eventRecords = [], historyRecords = [], selectedSessionId = null;
+let selectedSessionDetail = null;
 let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array(), scriptSlot = 1;
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let lastRuleStatsRequest = 0;
@@ -24,6 +25,14 @@ let endpointTtlSeconds = Math.max(10, Math.min(3600,
 let endpointDisplayLimit = Number(localStorage.getItem('spider-endpoint-display-limit') || 10);
 if (![0, 10, 20].includes(endpointDisplayLimit)) endpointDisplayLimit = 10;
 const observedSources = new Map(), observedDestinations = new Map(), observedPorts = new Map();
+const reverseHostnames = new Map();
+let hostnameRevision = -1;
+let hostnameResolving = localStorage.getItem('spider-hostname-resolving') !== 'false';
+let hostnameExceptions = new Set();
+try {
+  const savedExceptions = JSON.parse(localStorage.getItem('spider-hostname-exceptions') || '[]');
+  if (Array.isArray(savedExceptions)) hostnameExceptions = new Set(savedExceptions.filter(String));
+} catch (_) {}
 let sessionGroupOrder = ['src', 'dst', 'dport'];
 let sessionGroupsEnabled = new Set(sessionGroupOrder);
 const openSessionGroups = new Set();
@@ -73,6 +82,7 @@ backend.value = localStorage.getItem('spider-backend') || suggestedBackend;
 token.value = sessionStorage.getItem('spider-token') || '';
 smithproxyUrl.value = localStorage.getItem('smithproxy-url') || smithproxyUrl.value;
 smithproxyVerify.checked = localStorage.getItem('smithproxy-verify') !== 'false';
+byId('resolve-hostnames').checked = hostnameResolving;
 const savedSidebarWidth = Number(localStorage.getItem('spider-sidebar-width'));
 if (savedSidebarWidth >= 280) byId('sidebar').style.width = `${savedSidebarWidth}px`;
 if ('ResizeObserver' in window) {
@@ -213,8 +223,8 @@ function saveSessionGrouping() {
 function sessionGroupValue(item, key) {
   const connection = parseSessionLabel(item.label || item.last_event?.details?.info?.session);
   if (!connection) return 'unknown';
-  if (key === 'src') return connection.sourceHost;
-  if (key === 'dst') return connection.destinationHost;
+  if (key === 'src') return resolvedAddress(connection.sourceHost);
+  if (key === 'dst') return resolvedAddress(connection.destinationHost);
   return String(connection.destinationPort);
 }
 
@@ -225,7 +235,7 @@ function renderSessionBranch(target, items, dimensions, depth = 0, parentPath = 
       row.type = 'button';
       row.className = 'session-key';
       row.textContent = item.id;
-      row.title = item.label || item.id;
+      row.title = resolvedSessionLabel(item.label) || item.id;
       row.onclick = () => pinSession(item);
       target.append(row);
     }
@@ -437,6 +447,132 @@ function limitedEndpoints(entries) {
   return endpointDisplayLimit ? entries.slice(0, endpointDisplayLimit) : entries;
 }
 
+function endpointDisplay(address) {
+  return resolvedAddress(address);
+}
+
+function normalizeHostname(value) {
+  return value.toLowerCase().replace(/\.+$/, '');
+}
+
+function ingestHostnameInfo(event) {
+  const list = event.details?.info?.list;
+  if (!Array.isArray(list)) return;
+  for (const item of list) {
+    if (!item || typeof item.hostname !== 'string' || !Array.isArray(item.address)) continue;
+    const hostname = normalizeHostname(item.hostname);
+    if (!hostname) continue;
+    for (const address of item.address) {
+      if (typeof address !== 'string') continue;
+      const existing = reverseHostnames.get(address) || {preferred: hostname, candidates: [], entries: []};
+      if (!existing.candidates.includes(hostname)) existing.candidates.push(hostname);
+      let detail = existing.entries.find(candidate => candidate.hostname === hostname);
+      if (!detail) {
+        detail = {hostname, origins: [], types: []};
+        existing.entries.push(detail);
+      }
+      if (typeof item.origin === 'string' && !detail.origins.includes(item.origin)) detail.origins.push(item.origin);
+      if (typeof item.type === 'string' && !detail.types.includes(item.type)) detail.types.push(item.type);
+      existing.candidates.sort(compareHostnames);
+      existing.preferred = existing.candidates[0];
+      reverseHostnames.set(address, existing);
+    }
+  }
+}
+
+function compareHostnames(left, right) {
+  const a = normalizeHostname(left), b = normalizeHostname(right);
+  const aKey = [a ? a.split('.').length : 0, a.split('.')[0].length, a.length];
+  const bKey = [b ? b.split('.').length : 0, b.split('.')[0].length, b.length];
+  for (let i = 0; i < aKey.length; ++i) if (aKey[i] !== bKey[i]) return aKey[i] - bKey[i];
+  return a.localeCompare(b);
+}
+
+function resolvedAddress(address) {
+  if (!hostnameResolving || hostnameExceptions.has(address)) return address;
+  const preferred = reverseHostnames.get(address)?.preferred;
+  return preferred ? `${preferred} · ${address}` : address;
+}
+
+function resolvedSessionLabel(label) {
+  const connection = parseSessionLabel(label);
+  if (!connection) return resolveText(label);
+  return `${connection.sourceProtocol}_${resolvedAddress(connection.sourceHost)}:${connection.sourcePort}+` +
+    `${connection.destinationProtocol}_${resolvedAddress(connection.destinationHost)}:${connection.destinationPort}`;
+}
+
+function resolveText(value) {
+  let result = String(value ?? '');
+  if (!hostnameResolving) return result;
+  const addresses = [...reverseHostnames.keys()].sort((a, b) => b.length - a.length);
+  for (const address of addresses) {
+    if (!hostnameExceptions.has(address)) result = result.replaceAll(address, resolvedAddress(address));
+  }
+  return result;
+}
+
+function saveHostnameExceptions() {
+  localStorage.setItem('spider-hostname-exceptions', JSON.stringify([...hostnameExceptions].sort()));
+}
+
+function refreshResolvedViews() {
+  openSessionGroups.clear();
+  renderActiveSessions(activeSessionRecords);
+  renderEndpointBuilder();
+  renderHistory();
+  if (selectedSessionDetail) renderSessionDetail(selectedSessionDetail);
+  if (selectedPayload) renderPayload();
+  renderPayloadList();
+  renderHostnames();
+}
+
+function renderHostnames() {
+  const target = byId('hostname-list');
+  const entries = [...reverseHostnames.entries()].sort((a, b) =>
+    a[0].localeCompare(b[0], undefined, {numeric: true}));
+  byId('hostname-count').textContent = `${entries.length}`;
+  target.replaceChildren();
+  if (!entries.length) {
+    target.textContent = 'none';
+    target.className = 'hostname-list empty';
+    return;
+  }
+  target.className = 'hostname-list';
+  for (const [address, entry] of entries) {
+    const row = document.createElement('div');
+    row.className = 'hostname-row';
+    const ip = document.createElement('code');
+    ip.textContent = address;
+    const names = document.createElement('div');
+    names.className = 'hostname-names';
+    for (const hostname of entry.candidates || [entry.preferred]) {
+      const chip = document.createElement('span');
+      const detail = entry.entries?.find(candidate => candidate.hostname === hostname);
+      const origins = detail?.origins?.join('+');
+      chip.textContent = origins ? `${hostname} · ${origins}` : hostname;
+      if (hostname === entry.preferred) {
+        chip.className = 'preferred';
+        chip.title = 'Preferred reverse display name';
+      }
+      names.append(chip);
+    }
+    const exception = document.createElement('label');
+    exception.className = 'hostname-exception';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = hostnameExceptions.has(address);
+    checkbox.onchange = () => {
+      if (checkbox.checked) hostnameExceptions.add(address);
+      else hostnameExceptions.delete(address);
+      saveHostnameExceptions();
+      refreshResolvedViews();
+    };
+    exception.append(checkbox, document.createTextNode('keep IP'));
+    row.append(ip, names, exception);
+    target.append(row);
+  }
+}
+
 function attachEndpointScrollHint(target) {
   let indicator = target.parentElement.querySelector('.endpoint-more');
   if (!indicator) {
@@ -502,7 +638,7 @@ function renderEndpointBuilder() {
     button.type = 'button';
     button.className = 'endpoint-choice';
     button.setAttribute('aria-pressed', String(endpointFilter.sourceHost === host));
-    const address = document.createElement('span'); address.textContent = host;
+    const address = document.createElement('span'); address.textContent = endpointDisplay(host);
     const count = document.createElement('small'); count.textContent = `${data.protocol} · ${data.count}`;
     button.append(address, count);
     decorateExpiringEndpoint(button, data, now);
@@ -520,7 +656,7 @@ function renderEndpointBuilder() {
     const hostButton = document.createElement('button');
     hostButton.type = 'button'; hostButton.className = 'endpoint-choice';
     hostButton.setAttribute('aria-pressed', String(endpointFilter.destinationHost === host));
-    const address = document.createElement('span'); address.textContent = host;
+    const address = document.createElement('span'); address.textContent = endpointDisplay(host);
     const count = document.createElement('small'); count.textContent = String(data.count);
     hostButton.append(address, count);
     decorateExpiringEndpoint(hostButton, data, now);
@@ -537,7 +673,7 @@ function pinSession(item, focus = true) {
     label: item.label || event.details?.info?.session || item.id || event.id || 'unlabelled',
   };
   pinnedSession = session;
-  byId('pinned-session').textContent = `${session.id} · ${session.label}`;
+  byId('pinned-session').textContent = `${session.id} · ${resolvedSessionLabel(session.label)}`;
   byId('pinned-session').className = 'pinned-session';
   byId('rule-filter').value = suggestedFilter(session);
   byId('rule-compose').hidden = false;
@@ -692,7 +828,7 @@ function renderPayload() {
   else byId('payload-text').value = new TextDecoder().decode(payloadBytes);
   const info = selectedPayload?.event?.details?.info || {};
   byId('workbench-source').textContent = selectedPayload
-    ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${info.session || selectedPayload.event.id}`
+    ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${resolvedSessionLabel(info.session || selectedPayload.event.id)}`
     : `${payloadBytes.length} B sample`;
   byId('workbench-source').className = '';
   const pending = selectedPayload?.event?.decision?.state === 'pending' && !selectedPayload.decided;
@@ -749,7 +885,7 @@ function renderPayloadList() {
       `${record.decided ? ' decided' : ''}`;
     row.innerHTML = `<span>r${record.revision}</span><b>${escapeHtml(info.side || '?')}</b>` +
       `<span>${escapeHtml(formatBytes(size) || `${size} B`)}</span>` +
-      `<span>${escapeHtml(info.session || record.event.id || 'unlabelled')}</span>`;
+      `<span>${escapeHtml(resolvedSessionLabel(info.session || record.event.id || 'unlabelled'))}</span>`;
     row.onclick = () => {
       selectPayload(record, false);
       pinSession(record, false);
@@ -779,6 +915,7 @@ function ingestEvent(record) {
   if (!record || !record.event || record.revision <= revision) return;
   revision = record.revision;
   eventRecords.push(summarizeEvent(record));
+  if (record.event.action === 'hostname-info') ingestHostnameInfo(record.event);
   if (eventRecords.length > eventRecordLimit) eventRecords.splice(0, eventRecords.length - eventRecordLimit);
   if (record.event.action === 'connection-content' &&
       typeof record.event.details?.info?.content === 'string') {
@@ -870,6 +1007,7 @@ function detailRow(label, value, extraClass = '') {
 }
 
 function renderSessionDetail(detail) {
+  selectedSessionDetail = detail;
   const info = detail.last_event?.details?.info || {};
   const tls = info.tls || {};
   const l7 = info.l7 || {};
@@ -881,13 +1019,13 @@ function renderSessionDetail(detail) {
     return `<details class="timeline-event"><summary><b>${escapeHtml(event.action || 'event')}</b><time>${escapeHtml(timestamp)}</time></summary><pre>${escapeHtml(JSON.stringify(event, null, 2))}</pre></details>`;
   }).join('');
   sessionDetail.innerHTML =
-    `<div class="detail-hero"><span class="state ${escapeHtml(detail.state)}">${escapeHtml(detail.state)}</span><strong>${escapeHtml(tls.sni || l7.app || detail.label || detail.id)}</strong><small>${escapeHtml(detail.id)}</small></div>` +
+    `<div class="detail-hero"><span class="state ${escapeHtml(detail.state)}">${escapeHtml(detail.state)}</span><strong>${escapeHtml(resolveText(tls.sni || l7.app || detail.label || detail.id))}</strong><small>${escapeHtml(detail.id)}</small></div>` +
     `<dl class="detail-grid">` +
       detailRow('Started', formatTime(detail.started_at_ms)) +
       detailRow('Ended', detail.ended_at_ms ? formatTime(detail.ended_at_ms) : 'active') +
       detailRow('Duration', formatDuration(detail.started_at_ms, detail.ended_at_ms)) +
       detailRow('Events', detail.event_count) +
-      detailRow('Connection', info.session || detail.label, 'wide') +
+      detailRow('Connection', resolvedSessionLabel(info.session || detail.label), 'wide') +
       detailRow('SNI', tls.sni) +
       detailRow('Application', l7.app) +
       detailRow('Policy', info.policy) +
@@ -908,7 +1046,7 @@ function sessionSubtitle(item) {
   const info = item.last_event?.details?.info || {};
   const sni = info.tls?.sni;
   const app = info.l7?.app;
-  return [item.label || 'unlabelled', sni, app].filter(Boolean).join(' · ');
+  return [resolvedSessionLabel(item.label || 'unlabelled'), sni, app].filter(Boolean).join(' · ');
 }
 
 function renderHistory() {
@@ -959,11 +1097,13 @@ function showTab(tabId) {
   }
   if (tabId === 'events-tab') scheduleRender(true, false);
   if (tabId === 'history-tab') renderHistory();
+  if (tabId === 'hostnames-tab') renderHostnames();
   if (tabId === 'workbench-tab') scheduleRender(false, true);
 }
 
 function selectSession(id) {
   selectedSessionId = id;
+  selectedSessionDetail = null;
   showTab('history-tab');
   renderHistory();
   loadSessionDetail();
@@ -1054,6 +1194,17 @@ async function poll() {
     const [current, sessionData, historyData] = await Promise.all([
       statusResponse.json(), sessionResponse.json(), historyResponse.json(),
     ]);
+    if (Number(current.hostname_revision) !== hostnameRevision) {
+      const hostnameResponse = await fetch(`${baseUrl()}/api/hostnames`, {headers: headers()});
+      if (!hostnameResponse.ok) throw new Error(`hostnames HTTP ${hostnameResponse.status}`);
+      const hostnameData = await hostnameResponse.json();
+      reverseHostnames.clear();
+      for (const [address, entry] of Object.entries(hostnameData.mappings || {})) {
+        reverseHostnames.set(address, entry);
+      }
+      hostnameRevision = Number(hostnameData.revision) || 0;
+      renderHostnames();
+    }
     historyRecords = historyData.sessions.map(item => ({...item,
       last_event: item.last_event ? summarizeEvent({revision: 0, event: item.last_event}).event : item.last_event,
     }));
@@ -1124,6 +1275,9 @@ function connect() {
   selectedPayload = null;
   historyRecords = [];
   selectedSessionId = null;
+  selectedSessionDetail = null;
+  reverseHostnames.clear();
+  hostnameRevision = -1;
   events.textContent = '';
   renderPayloadList();
   updateCacheStats();
@@ -1158,6 +1312,11 @@ async function configureSmithproxy() {
 
 byId('connect').onclick = connect;
 byId('configure').onclick = configureSmithproxy;
+byId('resolve-hostnames').onchange = event => {
+  hostnameResolving = event.target.checked;
+  localStorage.setItem('spider-hostname-resolving', String(hostnameResolving));
+  refreshResolvedViews();
+};
 byId('toggle-token').onclick = () => {
   const visible = token.type === 'text';
   token.type = visible ? 'password' : 'text';
@@ -1320,6 +1479,7 @@ byId('clear-history').onclick = async () => {
     historyRecords = historyRecords.filter(item => item.state !== 'completed');
     if (!historyRecords.some(item => item.id === selectedSessionId)) {
       selectedSessionId = null;
+      selectedSessionDetail = null;
       byId('detail-title').textContent = 'Session detail';
       sessionDetail.textContent = 'select a session';
       sessionDetail.className = 'empty';

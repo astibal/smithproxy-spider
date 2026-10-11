@@ -55,6 +55,29 @@ int main() {
     const auto invalid = spider::process_webhook(store, decisions, {{"action", "wat"}});
     assert(invalid.status == 422);
 
+    const nlohmann::json hostnames = {
+        {"action", "hostname-info"},
+        {"details", {{"info", {{"list", nlohmann::json::array({
+            {{"origin", "dns"}, {"type", "ipv4"}, {"address", {"192.0.2.1"}},
+             {"hostname", "long-leaf.example.com"}},
+            {{"origin", "sni"}, {"type", "ipv4"}, {"address", {"192.0.2.1"}},
+             {"hostname", "a.example.com"}},
+            {{"origin", "dns"}, {"type", "ipv4"}, {"address", {"192.0.2.1"}},
+             {"hostname", "example.com."}},
+            {{"origin", "dns"}, {"type", "ipv4"}, {"address", {"192.0.2.2"}},
+             {"hostname", "frontend.example.com"}},
+            {{"origin", "dns"}, {"type", "ipv4"}, {"address", {"192.0.2.2"}},
+             {"hostname", "api.example.com"}},
+        })}}}}},
+    };
+    assert(spider::process_webhook(store, decisions, hostnames).status == 200);
+    const auto reverse = store.reverse_hostnames();
+    assert(reverse["revision"] == 1);
+    assert(reverse["mappings"]["192.0.2.1"]["preferred"] == "example.com");
+    assert(reverse["mappings"]["192.0.2.1"]["candidates"].size() == 3);
+    assert(reverse["mappings"]["192.0.2.1"]["entries"][0]["origins"][0] == "dns");
+    assert(reverse["mappings"]["192.0.2.2"]["preferred"] == "api.example.com");
+
     assert(store.clear_completed_sessions() == 1);
     assert(store.session_history()["sessions"].empty());
 

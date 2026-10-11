@@ -15,9 +15,9 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
-    constexpr std::array<std::string_view, 7> supported{
+    constexpr std::array<std::string_view, 8> supported{
         "access-request", "connection-content", "connection-start", "connection-stop",
-        "connection-info", "neighbor", "ping",
+        "connection-info", "hostname-info", "neighbor", "ping",
     };
     if (std::find(supported.begin(), supported.end(), action) == supported.end()) {
         return {422, {{"error", "unsupported action"}}};

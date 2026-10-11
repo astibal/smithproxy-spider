@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -39,9 +40,15 @@ public:
     std::size_t clear_completed_sessions();
     [[nodiscard]] nlohmann::json events_after(std::uint64_t revision) const;
     [[nodiscard]] nlohmann::json status() const;
+    [[nodiscard]] nlohmann::json reverse_hostnames() const;
     [[nodiscard]] std::uint64_t revision() const;
 
 private:
+    struct HostnameObservation {
+        std::unordered_set<std::string> origins;
+        std::unordered_set<std::string> types;
+    };
+
     struct EventRecord {
         std::uint64_t revision;
         nlohmann::json event;
@@ -49,6 +56,7 @@ private:
 
     static std::string session_label(const nlohmann::json& event);
     static nlohmann::json session_json(const Session& session, bool include_events);
+    void apply_hostname_info(const nlohmann::json& event);
     void prune_session_history();
 
     const std::size_t history_limit_;
@@ -64,6 +72,9 @@ private:
     std::int64_t last_callback_at_ms_{};
     std::string last_callback_action_;
     std::string last_callback_source_;
+    std::unordered_map<std::string,
+        std::unordered_map<std::string, HostnameObservation>> reverse_hostnames_;
+    std::uint64_t hostname_revision_{};
     std::uint64_t revision_{};
     std::function<void(std::uint64_t, const nlohmann::json&)> event_sink_;
 };
