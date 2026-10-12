@@ -29,6 +29,12 @@ int main() {
           "signature count missing");
     check(live_stats.at("timing").at("inspection_us").at("samples") == 2,
           "inspection timing samples missing");
+    runtime.record_engine_delay(std::chrono::microseconds(125));
+    const auto timed_stats = runtime.status();
+    check(timed_stats.at("timing").at("engine_delay_us").at("samples") == 1,
+          "engine delay timing samples missing");
+    check(timed_stats.at("timing").at("engine_delay_us").at("last") == 125.0,
+          "engine delay timing value is wrong");
 
     runtime.close("flow-1");
     const auto closed_stats = runtime.status();

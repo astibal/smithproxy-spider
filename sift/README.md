@@ -14,6 +14,9 @@ Spider server -- replay/SXBN001 ------> sx-siftd
 ```
 
 Runtime counters are available as JSON from `GET /api/stats`. The existing
+timing section reports both matcher-only `inspection_us` and content request
+`engine_delay_us` (request decoded through verdict produced). Network and broker
+latency is deliberately not included.
 `/api/status` endpoint returns the same snapshot, while `/api/health` remains
 available for deployment health checks. The snapshot includes flow lifecycle,
 directional traffic, payload sizes, per-signature matches, decisions, uptime,

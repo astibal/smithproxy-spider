@@ -64,6 +64,16 @@ Verdict Runtime::inspect(const std::string_view session, const char side,
     return verdict;
 }
 
+void Runtime::record_engine_delay(const std::chrono::nanoseconds elapsed) {
+    const auto value = static_cast<std::uint64_t>(elapsed.count());
+    std::scoped_lock guard(lock_);
+    ++engine_delay_samples_;
+    engine_delay_total_ns_ += value;
+    engine_delay_last_ns_ = value;
+    engine_delay_min_ns_ = std::min(engine_delay_min_ns_, value);
+    engine_delay_max_ns_ = std::max(engine_delay_max_ns_, value);
+}
+
 void Runtime::close(const std::string_view session) {
     std::scoped_lock guard(lock_);
     if (flows_.erase(std::string(session)) > 0) ++flows_closed_;
@@ -85,6 +95,8 @@ nlohmann::json Runtime::status() const {
     };
     const auto average_inspection = inspection_samples_ == 0 ? 0.0
         : ns_to_us(inspection_total_ns_) / static_cast<double>(inspection_samples_);
+    const auto average_engine_delay = engine_delay_samples_ == 0 ? 0.0
+        : ns_to_us(engine_delay_total_ns_) / static_cast<double>(engine_delay_samples_);
     return {
         {"service", "sx-siftd"}, {"engine", "bootstrap-ng"}, {"uptime_ms", uptime},
         {"flows", {{"active", flows_.size()}, {"seen", flows_seen_},
@@ -103,6 +115,11 @@ nlohmann::json Runtime::status() const {
                                          {"min", inspection_samples_ == 0 ? 0.0 : ns_to_us(inspection_min_ns_)},
                                          {"max", ns_to_us(inspection_max_ns_)},
                                          {"average", average_inspection}}},
+                    {"engine_delay_us", {{"samples", engine_delay_samples_},
+                                          {"last", ns_to_us(engine_delay_last_ns_)},
+                                          {"min", engine_delay_samples_ == 0 ? 0.0 : ns_to_us(engine_delay_min_ns_)},
+                                          {"max", ns_to_us(engine_delay_max_ns_)},
+                                          {"average", average_engine_delay}}},
                     {"round_trip_us", nullptr},
                     {"round_trip_status", "requires Smithproxy/broker telemetry"}}}
     };

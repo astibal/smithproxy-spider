@@ -6,6 +6,7 @@
 #include <lmhttpd.hpp>
 #include <microhttpd.h>
 
+#include <chrono>
 #include <memory>
 #include <string_view>
 
@@ -76,6 +77,7 @@ public:
 
 private:
     nlohmann::json process(const std::string& body, unsigned& status) {
+        const auto started = std::chrono::steady_clock::now();
         nlohmann::json event;
         std::string payload;
         if (std::string_view(body).starts_with(spider::sxbn_magic)) {
@@ -113,8 +115,10 @@ private:
         }
         const auto side_text = info.value("side", "L");
         const auto side = side_text.empty() ? 'L' : side_text.front();
-        return verdict_json(runtime_.inspect(info.value("session", event.value("id", "")),
-                                             side, payload));
+        auto reply = verdict_json(runtime_.inspect(
+            info.value("session", event.value("id", "")), side, payload));
+        runtime_.record_engine_delay(std::chrono::steady_clock::now() - started);
+        return reply;
     }
 
     const ServerConfig& config_;
