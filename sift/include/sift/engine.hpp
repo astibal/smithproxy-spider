@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -37,6 +38,7 @@ private:
     struct Flow {
         std::string left;
         std::string right;
+        std::unordered_set<std::string> matches;
     };
 
     mutable std::mutex lock_;

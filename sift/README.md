@@ -26,4 +26,8 @@ directional traffic, payload sizes, per-signature matches, decisions, uptime,
 and inspection latency. End-to-end round-trip latency requires telemetry from
 Smithproxy and its communication broker and is therefore reported as pending.
 
+The bootstrap runtime currently carries 19 reviewed protocol rules derived
+from `smithproxy-signature-pack`. This remains a temporary, deliberately small
+subset until the compiled-pack loader replaces the built-in table.
+
 Default endpoint: `http://127.0.0.1:18081/webhook`.
