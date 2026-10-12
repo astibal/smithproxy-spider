@@ -16,8 +16,14 @@ if(NOT nlohmann_json_FOUND)
 endif()
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
-add_library(spider_core
+add_library(spider_protocol
     src/binary_envelope.cpp
+)
+target_include_directories(spider_protocol PUBLIC src)
+target_link_libraries(spider_protocol PUBLIC nlohmann_json::nlohmann_json)
+target_compile_options(spider_protocol PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+
+add_library(spider_core
     src/decision_broker.cpp
     src/session_filter.cpp
     src/session_store.cpp
@@ -26,7 +32,7 @@ add_library(spider_core
     src/webhook.cpp
 )
 target_include_directories(spider_core PUBLIC src)
-target_link_libraries(spider_core PUBLIC nlohmann_json::nlohmann_json PkgConfig::CURL)
+target_link_libraries(spider_core PUBLIC spider_protocol nlohmann_json::nlohmann_json PkgConfig::CURL)
 target_compile_options(spider_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 
 add_executable(smithproxy-spider
@@ -42,6 +48,7 @@ target_link_libraries(smithproxy-spider PRIVATE spider_core PkgConfig::MICROHTTP
 target_compile_options(smithproxy-spider PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 
 include(CTest)
+add_subdirectory(engine)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(spider_tests tests/session_store_test.cpp)

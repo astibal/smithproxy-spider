@@ -32,7 +32,8 @@ std::string base64_encode(const std::string_view input) {
 
 } // namespace
 
-bool decode_sxbn(const std::string& body, nlohmann::json& event, std::string& error) {
+bool decode_sxbn(const std::string& body, nlohmann::json& event,
+                 std::string& payload, std::string& error) {
     constexpr std::size_t prefix_size = 25;
     if (body.size() < prefix_size || !std::string_view(body).starts_with(sxbn_magic)) {
         error = "missing SXBN001 envelope";
@@ -86,7 +87,14 @@ bool decode_sxbn(const std::string& body, nlohmann::json& event, std::string& er
     }
     info["payload_encoding"] = "sxbn-001";
     info["payload_length"] = payload_size;
-    info["content"] = base64_encode(std::string_view(body).substr(payload_offset, payload_size));
+    payload.assign(body.data() + static_cast<std::ptrdiff_t>(payload_offset), payload_size);
+    return true;
+}
+
+bool decode_sxbn(const std::string& body, nlohmann::json& event, std::string& error) {
+    std::string payload;
+    if (!decode_sxbn(body, event, payload, error)) return false;
+    event["details"]["info"]["content"] = base64_encode(payload);
     return true;
 }
 
