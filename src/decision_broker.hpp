@@ -51,9 +51,12 @@ private:
         std::uint64_t matches{};
     };
     struct TrafficRule {
+        std::string id;
+        std::string kind;
+        std::string value;
         std::string address;
         std::string mode;
-        SessionFilter filter;
+        std::optional<SessionFilter> filter;
         std::uint64_t matches{};
     };
     void resolve_locked(const std::shared_ptr<Ticket>& ticket, Result result);
@@ -63,9 +66,11 @@ private:
     mutable std::mutex mutex_;
     bool enabled_{};
     bool script_available_{};
+    bool bypass_all_{};
     std::uint64_t next_id_{};
     std::unordered_map<std::string, std::shared_ptr<Ticket>> pending_;
     std::unordered_set<std::string> accepted_sessions_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> session_classifications_;
     std::vector<AutoAcceptRule> auto_accept_rules_;
     std::vector<TrafficRule> traffic_rules_;
 };

@@ -14,12 +14,16 @@ let pythonWorker = null, pythonWorkerReady = null, pythonRequestId = 0;
 const pythonRequests = new Map();
 const flowRecords = new Map();
 const liveSiftClassifications = new Map();
+const followedFlows = new Map();
+let flowMenuSession = null;
 let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flows' ? 'flows' : 'payloads';
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let replacementBase64 = null;
 let activeTab = 'workbench-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
 let payloadCacheBytes = 0, payloadsDropped = 0, payloadBytesDropped = 0, evictionTimes = [];
+let evictionActivityPending = 0, evictionActivityTimer = null;
 let pollInFlight = false;
+let lastConnectionActivityState = null;
 let payloadMemoryLimit = Number(localStorage.getItem('spider-payload-memory-mib')) || 64;
 let payloadRecordLimit = Number(localStorage.getItem('spider-payload-record-limit')) || 200;
 let eventRecordLimit = Number(localStorage.getItem('spider-event-record-limit')) || 2000;
@@ -29,6 +33,8 @@ let endpointTtlSeconds = Math.max(10, Math.min(3600,
 let endpointDisplayLimit = Number(localStorage.getItem('spider-endpoint-display-limit') || 10);
 if (![0, 10, 20].includes(endpointDisplayLimit)) endpointDisplayLimit = 10;
 const observedSources = new Map(), observedDestinations = new Map(), observedPorts = new Map();
+const observedSift = new Map();
+const observedSiftSessions = new Map();
 const reverseHostnames = new Map();
 let hostnameRevision = -1;
 let hostnameResolving = localStorage.getItem('spider-hostname-resolving') !== 'false';
@@ -66,9 +72,25 @@ if (localStorage.getItem('spider-session-layout') !== 'natural-order-v1') {
 let trafficRules = [];
 try {
   const savedRules = JSON.parse(localStorage.getItem('spider-traffic-rules') || '[]');
-  if (Array.isArray(savedRules)) trafficRules = savedRules.filter(rule =>
-    rule && typeof rule.address === 'string' && ['pass', 'focus', 'inspect', 'ignore'].includes(rule.mode));
+  if (Array.isArray(savedRules)) trafficRules = savedRules.map(rule => ({
+    ...rule,
+    id: rule.id || `address:${rule.address}`,
+    kind: rule.kind || 'address',
+    value: rule.value || rule.address,
+  })).filter(rule => rule && typeof rule.value === 'string' &&
+    ['pass', 'focus', 'inspect', 'ignore'].includes(rule.mode));
 } catch (_) {}
+let endpointAggregates = [];
+try {
+  const saved = JSON.parse(localStorage.getItem('spider-endpoint-aggregates') || '[]');
+  if (Array.isArray(saved)) endpointAggregates = saved.filter(item => item &&
+    typeof item.id === 'string' && ['hostname-suffix', 'cidr'].includes(item.kind) &&
+    typeof item.value === 'string');
+} catch (_) {}
+let bypassAll = localStorage.getItem('spider-bypass-all') === 'true';
+const aggregateMembers = new Map();
+let activityRecords = [], activitySequence = 0, activityUnread = 0;
+const activityFilters = {rule: true, sift: true, system: true};
 const eventFilters = {ping: false, sessions: false, status: true, other: false};
 const defaultJavascriptScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
@@ -189,9 +211,74 @@ function tokenValue() {
 }
 const headers = () => ({'X-Spider-Token': tokenValue()});
 
+function modeEffect(mode) {
+  if (mode === 'ignore') return 'Future payloads will be auto-accepted by the backend and will not reach Spider.';
+  if (mode === 'pass') return 'Payloads will reach Spider, but will be excluded from flow analysis.';
+  if (mode === 'focus') return 'Non-matching traffic will be passed after classification.';
+  if (mode === 'inspect') return 'Matching payloads will always be sent through the active script.';
+  return '';
+}
+
+function addActivity(category, action, subject, effect = '', severity = 'info') {
+  const record = {id: ++activitySequence, at: Date.now(), category, action, subject, effect, severity};
+  activityRecords.push(record);
+  if (activityRecords.length > 500) activityRecords.splice(0, activityRecords.length - 500);
+  if (!byId('activity-drawer').open) ++activityUnread;
+  renderActivity();
+}
+
+function renderActivity() {
+  const target = byId('activity-list');
+  const visible = activityRecords.filter(item => activityFilters[item.category] !== false).slice().reverse();
+  target.replaceChildren();
+  target.className = `activity-list${visible.length ? '' : ' empty'}`;
+  if (!visible.length) target.textContent = 'No matching activity yet.';
+  for (const item of visible) {
+    const row = document.createElement('div');
+    row.className = `activity-row ${item.category} ${item.severity}`;
+    const time = document.createElement('time');
+    time.textContent = new Date(item.at).toLocaleTimeString();
+    const action = document.createElement('b'); action.textContent = item.action;
+    const subject = document.createElement('code'); subject.textContent = item.subject;
+    row.append(time, action, subject);
+    if (item.effect) {
+      const effect = document.createElement('p'); effect.textContent = item.effect;
+      row.append(effect);
+    }
+    target.append(row);
+  }
+  const unread = byId('activity-unread');
+  unread.hidden = activityUnread === 0;
+  unread.textContent = `${activityUnread} new`;
+  byId('activity-summary').textContent = activityRecords.length
+    ? `${activityRecords.at(-1).action}: ${activityRecords.at(-1).subject}` : 'ready';
+}
+
+function ruleLabel(rule) {
+  if (rule.kind === 'hostname-suffix') return `*.${rule.value}`;
+  if (rule.kind === 'sift') return classificationLabel(rule.value);
+  return rule.value;
+}
+
+function expandedTrafficRules() {
+  const expanded = [];
+  for (const rule of trafficRules) {
+    if (rule.kind === 'sift') {
+      expanded.push({id: rule.id, kind: 'sift', value: rule.value, mode: rule.mode});
+      continue;
+    }
+    const addresses = rule.kind === 'address' ? [rule.value] : aggregateMatchingAddresses(rule);
+    for (const address of addresses) {
+      expanded.push({id: `${rule.id}@${address}`, parent_id: rule.id, address, mode: rule.mode});
+    }
+  }
+  return expanded;
+}
+
 function syncTrafficRules() {
   localStorage.setItem('spider-traffic-rules', JSON.stringify(trafficRules));
-  socketSend({type: 'traffic-rules', rules: trafficRules});
+  localStorage.setItem('spider-bypass-all', String(bypassAll));
+  socketSend({type: 'traffic-rules', bypass_all: bypassAll, rules: expandedTrafficRules()});
   renderTrafficRules();
   renderEndpointBuilder();
 }
@@ -199,9 +286,11 @@ function syncTrafficRules() {
 function renderTrafficRules() {
   const target = byId('traffic-rules');
   byId('focus-indicator').hidden = !trafficRules.some(rule => rule.mode === 'focus');
+  byId('bypass-indicator').hidden = !bypassAll;
+  byId('bypass-all').setAttribute('aria-pressed', String(bypassAll));
   target.replaceChildren();
   if (!trafficRules.length) {
-    target.textContent = 'right-click an IP to classify it';
+    target.textContent = 'right-click an endpoint or Sift label to classify it';
     target.className = 'traffic-rules empty';
     return;
   }
@@ -211,7 +300,8 @@ function renderTrafficRules() {
     const row = document.createElement('div');
     row.className = `traffic-rule ${rule.mode}`;
     const mode = document.createElement('b'); mode.textContent = rule.mode.toUpperCase();
-    const address = document.createElement('code'); address.textContent = rule.address;
+    const address = document.createElement('code'); address.textContent = ruleLabel(rule);
+    address.title = modeEffect(rule.mode);
     const matches = document.createElement('small');
     matches.textContent = `${Number(rule.matches || 0).toLocaleString()} hits`;
     const up = document.createElement('button'); up.textContent = '↑'; up.disabled = index === 0;
@@ -222,6 +312,8 @@ function renderTrafficRules() {
     remove.textContent = '×';
     remove.onclick = () => {
       trafficRules = trafficRules.filter(item => item !== rule);
+      addActivity('rule', 'RULE REMOVED', `${rule.mode.toUpperCase()} ${ruleLabel(rule)}`,
+        'Future traffic will no longer inherit this behavior.');
       syncTrafficRules();
     };
     row.append(mode, address, matches, up, down, remove);
@@ -435,12 +527,58 @@ function endpointDisplay(address) {
   return resolvedAddress(address);
 }
 
+function hostnameMatchesSuffix(hostname, suffix) {
+  const normalized = normalizeHostname(hostname);
+  const wanted = normalizeHostname(suffix).replace(/^\*\./, '');
+  return normalized === wanted || normalized.endsWith(`.${wanted}`);
+}
+
+function ipv4Number(value) {
+  const parts = String(value).split('.');
+  if (parts.length !== 4) return null;
+  let result = 0;
+  for (const part of parts) {
+    if (!/^\d+$/.test(part) || Number(part) > 255) return null;
+    result = (result * 256 + Number(part)) >>> 0;
+  }
+  return result;
+}
+
+function addressMatchesCidr(address, cidr) {
+  const [network, prefixText] = String(cidr).split('/');
+  const value = ipv4Number(address), base = ipv4Number(network), prefix = Number(prefixText);
+  if (value === null || base === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (value & mask) === (base & mask);
+}
+
+function addressMatchesAggregate(address, aggregate) {
+  if (aggregate.kind === 'cidr') return addressMatchesCidr(address, aggregate.value);
+  const entry = reverseHostnames.get(address);
+  return aggregate.kind === 'hostname-suffix' && (entry?.candidates || [])
+    .some(hostname => hostnameMatchesSuffix(hostname, aggregate.value));
+}
+
+function aggregateMatchingAddresses(aggregate) {
+  const candidates = new Set([
+    ...reverseHostnames.keys(), ...observedSources.keys(), ...observedDestinations.keys(),
+  ]);
+  return [...candidates].filter(address => addressMatchesAggregate(address, aggregate)).sort();
+}
+
+function aggregateForAddress(address) {
+  return endpointAggregates.find(aggregate => addressMatchesAggregate(address, aggregate));
+}
+
 function trafficRuleFor(address) {
-  return trafficRules.find(rule => rule.address === address);
+  return trafficRules.find(rule => rule.kind === 'address' && rule.value === address) ||
+    trafficRules.find(rule => rule.kind !== 'address' && addressMatchesAggregate(address, rule));
 }
 
 function endpointRulePriority(address) {
-  const index = trafficRules.findIndex(rule => rule.address === address);
+  const index = trafficRules.findIndex(rule =>
+    (rule.kind === 'address' && rule.value === address) ||
+    (rule.kind !== 'address' && addressMatchesAggregate(address, rule)));
   return index < 0 ? Number.MAX_SAFE_INTEGER : index;
 }
 
@@ -449,23 +587,106 @@ function compareEndpoints(a, b) {
   return priority || b[1].count - a[1].count || a[0].localeCompare(b[0]);
 }
 
-function classifyEndpoint(address, mode) {
-  trafficRules = trafficRules.filter(rule => rule.address !== address);
-  if (mode !== 'clear') trafficRules.push({address, mode, matches: 0});
+function classifyEndpoint(target, mode) {
+  if (!target) return;
+  const id = target.id || `address:${target.value}`;
+  const previous = trafficRules.find(rule => rule.id === id);
+  trafficRules = trafficRules.filter(rule => rule.id !== id);
+  if (mode !== 'clear') {
+    const rule = {id, kind: target.kind || 'address', value: target.value, mode, matches: 0};
+    trafficRules.push(rule);
+    addActivity('rule', mode.toUpperCase(), `${mode.toUpperCase()} ${ruleLabel(rule)}`,
+      modeEffect(mode));
+  } else if (previous) {
+    addActivity('rule', 'RULE REMOVED', `${previous.mode.toUpperCase()} ${ruleLabel(previous)}`,
+      'Future traffic will no longer inherit this behavior.');
+  }
   syncTrafficRules();
 }
 
-function openEndpointMenu(event, address) {
+let endpointMenuTarget = null;
+function openEndpointMenu(event, target) {
   event.preventDefault();
   const menu = byId('endpoint-menu');
-  menu.dataset.address = address;
+  endpointMenuTarget = typeof target === 'string'
+    ? {id: `address:${target}`, kind: 'address', value: target} : target;
+  const aggregateActions = endpointMenuTarget?.kind === 'address';
+  byId('aggregate-hostname').hidden = !aggregateActions ||
+    !reverseHostnames.get(endpointMenuTarget?.value)?.preferred;
+  byId('aggregate-network').hidden = !aggregateActions || ipv4Number(endpointMenuTarget?.value) === null;
+  byId('remove-aggregate').hidden = !['hostname-suffix', 'cidr'].includes(endpointMenuTarget?.kind);
   menu.hidden = false;
   menu.style.left = `${Math.min(event.clientX, innerWidth - 140)}px`;
   menu.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
 }
 
+function suggestedHostnameSuffix(address) {
+  const hostname = reverseHostnames.get(address)?.preferred || '';
+  const parts = normalizeHostname(hostname).split('.').filter(Boolean);
+  return parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
+}
+
+function suggestedNetwork(address) {
+  const parts = String(address).split('.');
+  return parts.length === 4 ? `${parts[0]}.${parts[1]}.${parts[2]}.0/24` : '';
+}
+
+function createEndpointAggregate(kind, value) {
+  value = kind === 'hostname-suffix'
+    ? normalizeHostname(value).replace(/^\*\./, '') : String(value).trim();
+  if (!value) return;
+  if (kind === 'cidr' && !String(value).includes('/')) return;
+  const id = `${kind}:${value}`;
+  if (endpointAggregates.some(item => item.id === id)) return;
+  const aggregate = {id, kind, value};
+  endpointAggregates.push(aggregate);
+  localStorage.setItem('spider-endpoint-aggregates', JSON.stringify(endpointAggregates));
+  const members = new Set(aggregateMatchingAddresses(aggregate));
+  aggregateMembers.set(id, members);
+  addActivity('rule', 'AGGREGATE', `${ruleLabel(aggregate)} created`,
+    `${members.size} currently known ${members.size === 1 ? 'address' : 'addresses'} grouped; no traffic behavior is assigned yet.`);
+  renderEndpointBuilder();
+}
+
+function refreshAggregateMembership(logChanges = true) {
+  let rulesChanged = false;
+  for (const aggregate of endpointAggregates) {
+    const previous = aggregateMembers.get(aggregate.id);
+    const current = new Set(aggregateMatchingAddresses(aggregate));
+    aggregateMembers.set(aggregate.id, current);
+    const rule = trafficRules.find(item => item.id === aggregate.id);
+    if (!previous) {
+      rulesChanged ||= Boolean(rule && current.size);
+      continue;
+    }
+    for (const address of current) {
+      if (previous.has(address)) continue;
+      rulesChanged ||= Boolean(rule);
+      if (logChanges) addActivity('rule', 'MEMBER ADDED',
+        `${address} joined ${ruleLabel(aggregate)}`,
+        rule ? modeEffect(rule.mode) : 'The address is now grouped by this aggregate; no traffic behavior is assigned.');
+    }
+    for (const address of previous) {
+      if (current.has(address)) continue;
+      rulesChanged ||= Boolean(rule);
+      if (logChanges) addActivity('rule', 'MEMBER EXPIRED',
+        `${address} left ${ruleLabel(aggregate)}`,
+        rule ? `Its inherited ${rule.mode.toUpperCase()} behavior is no longer active.` :
+          'The address is no longer part of this display aggregate.');
+    }
+  }
+  if (rulesChanged) syncTrafficRules();
+}
+
 function normalizeHostname(value) {
   return value.toLowerCase().replace(/\.+$/, '');
+}
+
+function observeSiftClassification(sessionId, classification) {
+  if (!sessionId || !classification) return;
+  if (!observedSiftSessions.has(classification)) observedSiftSessions.set(classification, new Set());
+  observedSiftSessions.get(classification).add(sessionId);
+  observedSift.set(classification, observedSiftSessions.get(classification).size);
 }
 
 function ingestHostnameInfo(event) {
@@ -491,6 +712,7 @@ function ingestHostnameInfo(event) {
       reverseHostnames.set(address, existing);
     }
   }
+  refreshAggregateMembership();
 }
 
 function compareHostnames(left, right) {
@@ -657,6 +879,27 @@ function renderEndpointBuilder() {
   }
   attachEndpointScrollHint(portTarget);
 
+  const siftTarget = byId('observed-sift');
+  siftTarget.replaceChildren();
+  siftTarget.className = `endpoint-list sift-endpoints${observedSift.size ? '' : ' empty'}`;
+  if (!observedSift.size) siftTarget.textContent = 'none';
+  for (const [classification, countValue] of [...observedSift]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'endpoint-choice';
+    const id = `sift:${classification}`;
+    const rule = trafficRules.find(item => item.id === id);
+    if (rule) button.dataset.ruleMode = rule.mode;
+    const label = document.createElement('span'); label.textContent = classificationLabel(classification);
+    const count = document.createElement('small'); count.textContent = String(countValue);
+    button.append(label, count);
+    button.title = 'This rule takes effect after Sift classifies the flow; earlier payloads may already have passed.';
+    button.oncontextmenu = event => openEndpointMenu(event,
+      {id, kind: 'sift', value: classification});
+    siftTarget.append(button);
+  }
+  attachEndpointScrollHint(siftTarget);
+
   const sourceTarget = byId('observed-sources');
   sourceTarget.replaceChildren();
   sourceTarget.className = `endpoint-list${observedSources.size ? '' : ' empty'}`;
@@ -679,9 +922,30 @@ function renderEndpointBuilder() {
 
   const destinationTarget = byId('observed-destinations');
   destinationTarget.replaceChildren();
-  destinationTarget.className = `endpoint-list${observedDestinations.size ? '' : ' empty'}`;
-  if (!observedDestinations.size) destinationTarget.textContent = 'none';
-  for (const [host, data] of limitedEndpoints([...observedDestinations]
+  const aggregatedAddresses = new Set();
+  for (const aggregate of endpointAggregates) {
+    const members = [...observedDestinations].filter(([address]) =>
+      addressMatchesAggregate(address, aggregate));
+    members.forEach(([address]) => aggregatedAddresses.add(address));
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'endpoint-choice aggregate';
+    const rule = trafficRules.find(item => item.id === aggregate.id);
+    if (rule) button.dataset.ruleMode = rule.mode;
+    const label = document.createElement('span'); label.textContent = ruleLabel(aggregate);
+    const hostnames = new Set(members.flatMap(([address]) =>
+      reverseHostnames.get(address)?.candidates || []));
+    const count = document.createElement('small');
+    count.textContent = `${hostnames.size} hosts · ${members.length} IPs · ` +
+      `${members.reduce((sum, [, data]) => sum + data.count, 0)}`;
+    button.append(label, count);
+    button.oncontextmenu = event => openEndpointMenu(event, aggregate);
+    destinationTarget.append(button);
+  }
+  const destinations = [...observedDestinations]
+    .filter(([address]) => !aggregatedAddresses.has(address));
+  destinationTarget.className = `endpoint-list${destinationTarget.childElementCount || destinations.length ? '' : ' empty'}`;
+  if (!destinationTarget.childElementCount && !destinations.length) destinationTarget.textContent = 'none';
+  for (const [host, data] of limitedEndpoints(destinations
       .sort(compareEndpoints))) {
     const hostButton = document.createElement('button');
     hostButton.type = 'button'; hostButton.className = 'endpoint-choice';
@@ -757,8 +1021,17 @@ function trimPayloadCache() {
     const bytes = removed.cacheBytes || payloadSize(removed);
     payloadCacheBytes = Math.max(0, payloadCacheBytes - bytes);
     payloadsDropped += 1;
+    evictionActivityPending += 1;
+    if (!evictionActivityTimer) evictionActivityTimer = setTimeout(() => {
+      addActivity('system', 'CACHE EVICTION', `${evictionActivityPending} payloads evicted`,
+        'Opened flows may no longer contain their beginning; increase the browser cache limit if needed.', 'warn');
+      evictionActivityPending = 0;
+      evictionActivityTimer = null;
+    }, 500);
     payloadBytesDropped += bytes;
     evictionTimes.push(Date.now());
+    const followed = followedFlows.get(removed.event.id);
+    if (followed) followed.evicted += 1;
     if (selectedPayload === removed) selectedPayload = null;
     const flow = flowRecords.get(removed.event.id);
     if (flow?.latest === removed) {
@@ -824,6 +1097,12 @@ function scheduleRender(eventsChanged = false, payloadsChanged = false) {
         renderPayload();
       }
       renderPayloadList();
+      payloadsDirty = false;
+    }
+    if (payloadsDirty || activeTab.startsWith('flow-follow-')) {
+      for (const sessionId of followedFlows.keys()) {
+        if (activeTab === followedFlows.get(sessionId).id) renderFlowTab(sessionId);
+      }
       payloadsDirty = false;
     }
   });
@@ -975,6 +1254,7 @@ function renderPayloadList() {
         selectPayload(flow.latest, false);
         pinSession(flow.latest, false);
       };
+      row.oncontextmenu = event => openFlowMenu(event, flow.id);
       list.append(row);
     }
     if (followPayload) list.scrollTop = 0;
@@ -996,9 +1276,96 @@ function renderPayloadList() {
       selectPayload(record, false);
       pinSession(record, false);
     };
+    row.oncontextmenu = event => openFlowMenu(event, record.event.id);
     list.append(row);
   }
   if (followPayload) list.scrollTop = 0;
+}
+
+function flowTabId(sessionId) {
+  let hash = 2166136261;
+  for (const character of String(sessionId)) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `flow-follow-${(hash >>> 0).toString(16)}`;
+}
+
+function openFlowMenu(event, sessionId) {
+  event.preventDefault();
+  flowMenuSession = sessionId;
+  const menu = byId('flow-menu');
+  menu.hidden = false;
+  menu.style.left = `${Math.min(event.clientX, innerWidth - 210)}px`;
+  menu.style.top = `${Math.min(event.clientY, innerHeight - 70)}px`;
+}
+
+function openFlowTab(sessionId) {
+  if (!sessionId) return;
+  const id = flowTabId(sessionId);
+  if (!followedFlows.has(sessionId)) {
+    const flow = flowRecords.get(sessionId);
+    followedFlows.set(sessionId, {id, evicted: 0, label: flow?.label || sessionId});
+    const button = document.createElement('button');
+    button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
+    const label = document.createElement('span');
+    label.textContent = resolvedSessionLabel(flow?.label || sessionId);
+    const close = document.createElement('i'); close.textContent = '×'; close.title = 'Close flow tab';
+    close.onclick = event => { event.stopPropagation(); closeFlowTab(sessionId); };
+    button.append(label, close);
+    button.onclick = () => showTab(id);
+    byId('flow-tabs').append(button);
+    byId('flow-tab-separator').hidden = false;
+    const panel = document.createElement('div');
+    panel.id = id; panel.className = 'tab-panel flow-follow-panel'; panel.hidden = true;
+    document.querySelector('.workspace').append(panel);
+    addActivity('system', 'FOLLOW', `${sessionId} opened in a flow tab`,
+      'New payloads for this flow will be appended while they remain in the browser cache.');
+  }
+  renderFlowTab(sessionId);
+  showTab(id);
+}
+
+function closeFlowTab(sessionId) {
+  const followed = followedFlows.get(sessionId);
+  if (!followed) return;
+  byId(followed.id)?.remove();
+  document.querySelector(`[data-tab="${followed.id}"]`)?.remove();
+  followedFlows.delete(sessionId);
+  byId('flow-tab-separator').hidden = followedFlows.size === 0;
+  if (activeTab === followed.id) showTab('workbench-tab');
+}
+
+function renderFlowTab(sessionId) {
+  const followed = followedFlows.get(sessionId);
+  const panel = followed && byId(followed.id);
+  if (!panel) return;
+  const retained = payloadRecords.filter(record => record.event.id === sessionId)
+    .sort((a, b) => a.revision - b.revision);
+  const records = [];
+  let displayBytes = 0;
+  for (let index = retained.length - 1; index >= 0 && records.length < 250; --index) {
+    const size = retained[index].cacheBytes || payloadSize(retained[index]);
+    if (records.length && displayBytes + size > 2 * 1024 * 1024) break;
+    displayBytes += size;
+    records.unshift(retained[index]);
+  }
+  const omitted = retained.length - records.length;
+  const flow = flowRecords.get(sessionId);
+  const classification = workbenchSiftClassifications(records.at(-1));
+  panel.innerHTML = `<div class="flow-follow-head"><h2>Follow flow</h2>` +
+    `<small>${escapeHtml(resolvedSessionLabel(flow?.label || followed.label))}</small>` +
+    (classification.length ? classificationChips(classification) : '') + `</div>` +
+    (followed.evicted ? `<div class="flow-gap">=!= ${followed.evicted} earlier payloads were evicted from the browser cache.</div>` : '') +
+    (omitted ? `<div class="flow-gap">=!= ${omitted} retained payloads are outside this 2 MiB live view window.</div>` : '') +
+    `<div class="flow-stream">${records.map(record => {
+      const info = record.event.details?.info || {};
+      const bytes = decodeBase64(info.content);
+      const body = payloadMode === 'hex' ? encodeHex(bytes) : new TextDecoder().decode(bytes);
+      const side = info.side === 'R' ? 'R' : 'L';
+      return `<article class="flow-chunk ${side}"><b>${side}</b><small>r${record.revision}<br>${escapeHtml(formatBytes(bytes.length))}</small><pre>${escapeHtml(body)}</pre></article>`;
+    }).join('') || '<span class="empty">No retained payloads for this flow.</span>'}</div>`;
+  panel.scrollTop = panel.scrollHeight;
 }
 
 function updateFlowRecord(record) {
@@ -1061,8 +1428,15 @@ function ingestEvent(record) {
   if (record.event.action === 'hostname-info') ingestHostnameInfo(record.event);
   const sift = record.event.details?.info?.classification?.sift;
   if (Array.isArray(sift) && sift.length) {
-    liveSiftClassifications.set(record.event.id,
-      [...new Set(sift.filter(value => typeof value === 'string' && value.trim()))].sort());
+    const previous = new Set(liveSiftClassifications.get(record.event.id) || []);
+    const current = [...new Set(sift.filter(value => typeof value === 'string' && value.trim()))].sort();
+    liveSiftClassifications.set(record.event.id, current);
+    for (const classification of current) {
+      observeSiftClassification(record.event.id, classification);
+      if (!previous.has(classification)) addActivity('sift', 'SIFT',
+          `${record.event.id} classified as ${classificationLabel(classification)}`,
+          'Classification-based rules become effective from this point onward.');
+    }
   }
   if (eventRecords.length > eventRecordLimit) eventRecords.splice(0, eventRecords.length - eventRecordLimit);
   const passed = record.event.decision?.state === 'passed';
@@ -1392,6 +1766,9 @@ function showTab(tabId) {
   if (tabId === 'history-tab') renderHistory();
   if (tabId === 'hostnames-tab') renderHostnames();
   if (tabId === 'workbench-tab') scheduleRender(false, true);
+  for (const [sessionId, followed] of followedFlows) {
+    if (followed.id === tabId) renderFlowTab(sessionId);
+  }
 }
 
 function selectSession(id) {
@@ -1422,7 +1799,8 @@ function connectEventSocket() {
       ? {type: 'subscribe', tail: true}
       : {type: 'subscribe', after: revision}));
     socket.send(JSON.stringify({type: 'live-edit', enabled: liveEdit}));
-    socket.send(JSON.stringify({type: 'traffic-rules', rules: trafficRules}));
+    socket.send(JSON.stringify({type: 'traffic-rules', bypass_all: bypassAll,
+      rules: expandedTrafficRules()}));
     socket.send(JSON.stringify({type: 'script-available', available: true}));
   };
   socket.onmessage = message => {
@@ -1430,14 +1808,20 @@ function connectEventSocket() {
     if (data.type === 'event') ingestEvent({revision: data.revision, event: data.event});
     if (data.type === 'subscribed') revision = Math.max(revision, Number(data.revision) || 0);
     if (data.type === 'traffic-rules-status') {
-      const counts = new Map((data.rules || []).map(item =>
-        [`${item.mode}:${item.address}`, Number(item.matches) || 0]));
-      for (const rule of trafficRules) rule.matches = counts.get(`${rule.mode}:${rule.address}`) || 0;
+      const counts = new Map();
+      for (const item of data.rules || []) {
+        const parent = String(item.id || '').split('@')[0];
+        counts.set(parent, (counts.get(parent) || 0) + (Number(item.matches) || 0));
+      }
+      for (const rule of trafficRules) rule.matches = counts.get(rule.id) || 0;
+      bypassAll = Boolean(data.bypass_all);
       renderTrafficRules();
     }
     if (data.type === 'gap') {
       status.textContent = `stream gap · oldest r${data.oldest_available}`;
       status.className = 'error';
+      addActivity('system', 'STREAM GAP', `Events before r${data.oldest_available} are unavailable`,
+        'Some earlier payloads may be missing from flow views.', 'warn');
     }
   };
   socket.onerror = () => socket.close();
@@ -1494,12 +1878,18 @@ async function poll() {
         reverseHostnames.set(address, entry);
       }
       hostnameRevision = Number(hostnameData.revision) || 0;
+      refreshAggregateMembership();
       renderHostnames();
     }
     historyRecords = historyData.sessions.map(item => ({...item,
       last_event: item.last_event ? summarizeEvent({revision: 0, event: item.last_event}).event : item.last_event,
     }));
     activeSessionRecords = sessionData.sessions;
+    for (const item of [...historyRecords, ...activeSessionRecords]) {
+      for (const classification of siftClassifications(item)) {
+        observeSiftClassification(item.id, classification);
+      }
+    }
     const flowActivityChanged = updateFlowActivity(activeSessionRecords);
     if (flowActivityChanged && activeTab === 'workbench-tab' && payloadListView === 'flows') {
       renderPayloadList();
@@ -1508,6 +1898,15 @@ async function poll() {
     renderEndpointBuilder();
     if (activeTab === 'history-tab') renderHistory();
     const proxy = current.smithproxy || {};
+    const connectionState = proxy.state || 'unknown';
+    if (connectionState !== lastConnectionActivityState) {
+      addActivity('system', connectionState === 'connected' ? 'CONNECTED' : 'CONNECTION',
+        `Smithproxy API is ${connectionState}`,
+        connectionState === 'connected' ? 'Webhook and classification metadata can flow into Spider.' :
+          'Traffic visibility may be incomplete until the connection recovers.',
+        connectionState === 'connected' ? 'info' : 'warn');
+      lastConnectionActivityState = connectionState;
+    }
     const callback = current.last_callback || {};
     const callbackAge = callback.received_at_ms
       ? `${Math.max(0, Math.floor((Date.now() - callback.received_at_ms) / 1000))}s ago`
@@ -1755,21 +2154,88 @@ byId('reset-script').onclick = () => {
   loadScriptSlot(scriptSlot);
 };
 byId('clear-traffic-rules').onclick = () => {
+  if (trafficRules.length) addActivity('rule', 'RULES CLEARED', `${trafficRules.length} traffic rules removed`,
+    'Future traffic will use the default analysis behavior.');
   trafficRules = [];
   syncTrafficRules();
 };
-for (const button of document.querySelectorAll('#endpoint-menu button')) {
+byId('bypass-all').onclick = () => {
+  bypassAll = !bypassAll;
+  addActivity('rule', bypassAll ? 'BYPASS ON' : 'BYPASS OFF',
+    bypassAll ? 'Global bypass enabled' : 'Global bypass disabled',
+    bypassAll ? 'New payloads will be accepted without entering flow analysis.' :
+      'New payloads will again be evaluated by traffic rules and flow analysis.');
+  syncTrafficRules();
+};
+for (const button of document.querySelectorAll('#endpoint-menu button[data-mode]')) {
   button.onclick = () => {
-    classifyEndpoint(byId('endpoint-menu').dataset.address, button.dataset.mode);
+    classifyEndpoint(endpointMenuTarget, button.dataset.mode);
     byId('endpoint-menu').hidden = true;
   };
 }
+byId('aggregate-hostname').onclick = () => {
+  const suggested = suggestedHostnameSuffix(endpointMenuTarget?.value);
+  const value = prompt('Hostname suffix to aggregate', suggested);
+  if (value !== null) createEndpointAggregate('hostname-suffix', value);
+  byId('endpoint-menu').hidden = true;
+};
+byId('aggregate-network').onclick = () => {
+  const suggested = suggestedNetwork(endpointMenuTarget?.value);
+  const value = prompt('IPv4 network in CIDR notation', suggested);
+  if (value !== null) createEndpointAggregate('cidr', value);
+  byId('endpoint-menu').hidden = true;
+};
+byId('remove-aggregate').onclick = () => {
+  const aggregate = endpointMenuTarget;
+  if (aggregate && aggregate.kind !== 'address') {
+    endpointAggregates = endpointAggregates.filter(item => item.id !== aggregate.id);
+    trafficRules = trafficRules.filter(item => item.id !== aggregate.id);
+    aggregateMembers.delete(aggregate.id);
+    localStorage.setItem('spider-endpoint-aggregates', JSON.stringify(endpointAggregates));
+    addActivity('rule', 'AGGREGATE REMOVED', ruleLabel(aggregate),
+      'Its grouped addresses are visible individually again and no longer inherit its rule.');
+    syncTrafficRules();
+  }
+  byId('endpoint-menu').hidden = true;
+};
+byId('follow-flow').onclick = () => {
+  openFlowTab(flowMenuSession);
+  byId('flow-menu').hidden = true;
+};
+const activityDrawer = byId('activity-drawer');
+activityDrawer.ontoggle = () => {
+  if (activityDrawer.open) {
+    activityUnread = 0;
+    renderActivity();
+  }
+};
+byId('clear-activity').onclick = event => {
+  event.preventDefault();
+  event.stopPropagation();
+  activityRecords = [];
+  activityUnread = 0;
+  renderActivity();
+};
+for (const button of document.querySelectorAll('[data-activity-filter]')) {
+  button.onclick = event => {
+    event.preventDefault();
+    const key = button.dataset.activityFilter;
+    activityFilters[key] = !activityFilters[key];
+    button.setAttribute('aria-pressed', String(activityFilters[key]));
+    renderActivity();
+  };
+}
 document.addEventListener('click', event => {
-  const menu = byId('endpoint-menu');
-  if (!menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+  for (const id of ['endpoint-menu', 'flow-menu']) {
+    const menu = byId(id);
+    if (!menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+  }
 });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape') byId('endpoint-menu').hidden = true;
+  if (event.key === 'Escape') {
+    byId('endpoint-menu').hidden = true;
+    byId('flow-menu').hidden = true;
+  }
 });
 byId('payload-memory-limit').value = payloadMemoryLimit;
 byId('payload-record-limit').value = payloadRecordLimit;
@@ -1831,6 +2297,7 @@ byId('clear-history').onclick = async () => {
 loadScriptSlot(1);
 renderSessionGroupControls();
 renderTrafficRules();
+renderActivity();
 updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
 showTab('workbench-tab');

@@ -170,6 +170,30 @@ int main() {
     assert(!traffic.prepare(passed));
     assert(passed["decision"]["state"] == "passed");
 
+    const auto bypass_status = traffic.set_traffic_rules({
+        {"bypass_all", true}, {"rules", nlohmann::json::array()}});
+    assert(bypass_status["bypass_all"] == true);
+    auto bypassed = filter_event;
+    assert(!traffic.prepare(bypassed));
+    assert(bypassed["decision"]["state"] == "passed");
+    assert(bypassed["decision"]["reason"] == "bypass-all");
+
+    spider::DecisionBroker classified(std::chrono::seconds(1));
+    const auto classified_status = classified.set_traffic_rules({{"rules", nlohmann::json::array({
+        {{"id", "sift-youtube"}, {"kind", "sift"}, {"value", "app.youtube.video"},
+         {"mode", "pass"}},
+    })}});
+    assert(classified_status["errors"].empty());
+    auto before_classification = filter_event;
+    assert(!classified.prepare(before_classification));
+    assert(!before_classification.contains("decision"));
+    classified.observe({{"action", "connection-info"}, {"id", "filter-1"},
+                        {"details", {{"info", {{"classification", {{"sift",
+                            nlohmann::json::array({"app.youtube.video"})}}}}}}}});
+    auto after_classification = filter_event;
+    assert(!classified.prepare(after_classification));
+    assert(after_classification["decision"]["state"] == "passed");
+
     spider::SessionStore traffic_store(20);
     assert(spider::process_webhook(traffic_store, traffic, ignored).status == 200);
     assert(traffic_store.events_after(0)["events"].empty());
