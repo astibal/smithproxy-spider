@@ -1498,7 +1498,7 @@ function openFlowTab(sessionId, type = 'connection') {
     const followed = {...scope, id, evicted: 0,
       view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
       laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11,
-      cardLevels: new Map(), payloadCaps: {L: 0, R: 0}};
+      cardLevels: new Map(), payloadCaps: {L: 0, R: 0}, keepAll: false};
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
@@ -1578,7 +1578,7 @@ function renderFlowTab(scopeKey) {
   let displayBytes = 0;
   for (let index = retained.length - 1; index >= 0; --index) {
     const size = retained[index].cacheBytes || payloadSize(retained[index]);
-    if (records.length && displayBytes + size > flowViewLimitMiB * 1024 * 1024) break;
+    if (!followed.keepAll && records.length && displayBytes + size > flowViewLimitMiB * 1024 * 1024) break;
     displayBytes += size;
     records.unshift(retained[index]);
   }
@@ -1596,7 +1596,8 @@ function renderFlowTab(scopeKey) {
       '<button type="button" data-lane-width="1" title="Wider lanes">W+</button>' +
       '<button type="button" data-lane-font="-1" title="Smaller lane font">A−</button>' +
       '<button type="button" data-lane-font="1" title="Larger lane font">A+</button></span></div></div>' +
-      '<div class="flow-cache-toolbar"><label>View <input class="flow-view-limit" type="number" min="1" max="8192" step="1"> MiB</label>' +
+      '<div class="flow-cache-toolbar"><label class="flow-keep-all"><input type="checkbox" data-keep-all> Keep all</label>' +
+      '<label>View <input class="flow-view-limit" type="number" min="1" max="8192" step="1"> MiB</label>' +
       '<label>L bytes <select data-payload-cap="L"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
       '<label>R bytes <select data-payload-cap="R"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
       '<button type="button" class="danger-subtle" data-clear-flow>Clear flow cache</button></div>' +
@@ -1655,6 +1656,13 @@ function renderFlowTab(scopeKey) {
       for (const item of followedFlows.values()) item.renderedMode = null;
       for (const id of followedFlows.keys()) renderFlowTab(id);
     };
+    const keepAll = panel.querySelector('[data-keep-all]');
+    keepAll.checked = followed.keepAll;
+    keepAll.onchange = () => {
+      followed.keepAll = keepAll.checked;
+      followed.renderedMode = null;
+      renderFlowTab(scopeKey);
+    };
     for (const select of panel.querySelectorAll('[data-payload-cap]')) {
       const side = select.dataset.payloadCap;
       select.value = String(followed.payloadCaps[side]);
@@ -1675,6 +1683,8 @@ function renderFlowTab(scopeKey) {
   panel.querySelector('[data-lane-fit]').setAttribute('aria-pressed', String(followed.laneFit));
   panel.querySelector('[data-lane-fit]').textContent = followed.laneFit ? 'Fit: on' : 'Fit width';
   panel.classList.toggle('flow-expanded', followed.expanded);
+  panel.querySelector('[data-keep-all]').checked = followed.keepAll;
+  panel.querySelector('.flow-view-limit').disabled = followed.keepAll;
   panel.querySelector('.flow-view-limit').value = String(flowViewLimitMiB);
   panel.querySelector('.flow-follow-head small').textContent =
     scopeLabel(followed, records);
@@ -1692,7 +1702,7 @@ function renderFlowTab(scopeKey) {
   eviction.textContent = followed.evicted
     ? `=!= ${followed.evicted} earlier payloads were evicted from the browser cache.` : '';
   const windowGap = panel.querySelector('.flow-window');
-  windowGap.hidden = !omitted;
+  windowGap.hidden = !omitted || followed.keepAll;
   windowGap.textContent = omitted
     ? `=!= ${omitted} retained payloads are outside this ${flowViewLimitMiB} MiB live view window.` : '';
 
@@ -1805,11 +1815,29 @@ function laneResponseCandidates(records) {
   return result;
 }
 
+function lanePreviousDeltas(records) {
+  const previous = new Map(), result = new Map();
+  for (const record of records) {
+    const timestamp = Number(record.event.spider_received_at_ms);
+    const earlier = previous.get(record.event.id);
+    if (Number.isFinite(timestamp) && Number.isFinite(earlier)) {
+      result.set(String(record.revision), Math.max(0, timestamp - earlier));
+    }
+    if (Number.isFinite(timestamp)) previous.set(record.event.id, timestamp);
+  }
+  return result;
+}
+
 function laneDeltaLabel(delta) {
   if (!Number.isFinite(delta)) return 'Δ unknown';
   if (delta < 1000) return `Δ ${delta} ms`;
   if (delta < 60000) return `Δ ${(delta / 1000).toFixed(delta < 10000 ? 2 : 1)} s`;
   return `Δ ${Math.floor(delta / 60000)}m ${Math.floor((delta % 60000) / 1000)}s`;
+}
+
+function laneStepLabel(delta) {
+  if (delta === 0) return 'prev <1 ms';
+  return `prev ${laneDeltaLabel(delta).replace('Δ ', '+')}`;
 }
 
 function renderLaneCardPayload(card, bytes, level) {
@@ -1830,7 +1858,7 @@ function renderLaneCardPayload(card, bytes, level) {
   card.classList.toggle('truncated', remaining > 0);
   const button = card.querySelector('.lane-card-expand');
   if (button) {
-    button.textContent = level === 0 ? 'More' : level === 1 ? 'Full' : 'Collapse';
+    button.textContent = level === 0 ? 'Expand payload' : level === 1 ? 'Show all' : 'Collapse';
     button.title = level === 2 ? 'Collapse payload preview' :
       `Show ${level === 0 ? 'a larger preview' : 'the complete payload'}`;
   }
@@ -1838,8 +1866,18 @@ function renderLaneCardPayload(card, bytes, level) {
 
 function decorateLaneResponses(stream, records, followed) {
   const candidates = laneResponseCandidates(records);
-  for (const badge of stream.querySelectorAll('.lane-delta,.lane-pending')) badge.remove();
+  const previousDeltas = lanePreviousDeltas(records);
+  for (const badge of stream.querySelectorAll('.lane-step-delta,.lane-delta,.lane-pending')) badge.remove();
   for (const card of stream.querySelectorAll('.lane-card')) card.classList.remove('response-start', 'response-end', 'response-pending');
+  for (const [revision, delta] of previousDeltas) {
+    const card = stream.querySelector(`.lane-card[data-revision="${revision}"]`);
+    if (!card) continue;
+    const badge = document.createElement('span');
+    badge.className = 'lane-step-delta'; badge.textContent = laneStepLabel(delta);
+    badge.title = 'Time since the previous payload received by Spider in this connection.';
+    const head = card.querySelector('.lane-card-head');
+    head?.insertBefore(badge, head.querySelector('.lane-card-expand'));
+  }
   for (const [revision, link] of candidates.starts) {
     const card = stream.querySelector(`.lane-card[data-revision="${revision}"]`);
     if (card) card.classList.add('response-start');
@@ -1849,7 +1887,8 @@ function decorateLaneResponses(stream, records, followed) {
     const badge = document.createElement('span');
     badge.className = 'lane-delta'; badge.textContent = laneDeltaLabel(link.delta);
     badge.title = 'Spider receive-time delta for a candidate L→R direction transition; not wire RTT.';
-    response.querySelector('.lane-card-head')?.append(badge);
+    const head = response.querySelector('.lane-card-head');
+    head?.insertBefore(badge, head.querySelector('.lane-card-expand'));
   }
   for (const revision of candidates.pending) {
     const card = stream.querySelector(`.lane-card[data-revision="${revision}"]`);
@@ -1858,7 +1897,8 @@ function decorateLaneResponses(stream, records, followed) {
     const badge = document.createElement('span');
     badge.className = 'lane-pending'; badge.textContent = '× no response yet';
     badge.title = 'No later R payload has been observed for this L direction run.';
-    card.querySelector('.lane-card-head')?.append(badge);
+    const head = card.querySelector('.lane-card-head');
+    head?.insertBefore(badge, head.querySelector('.lane-card-expand'));
   }
   cancelAnimationFrame(followed.connectorFrame || 0);
   followed.connectorFrame = requestAnimationFrame(() => {
