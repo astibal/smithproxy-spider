@@ -278,7 +278,7 @@ path = pathlib.Path(sys.argv[1])
 host = sys.argv[2]
 text = path.read_text()
 text = text.replace("spider_engine_url", "sift_url").replace("spider_engine", "sift")
-webhook = re.search(r"(\bwebhook\s*=\s*\{)(.*?)(\n\s*\};)", text, re.S)
+webhook = re.search(r"(\bwebhook\s*=\s*\{)(.*?)(\n\s*\}(?:;)?)", text, re.S)
 if webhook is None:
     raise SystemExit("test config has no settings.webhook block")
 body = webhook.group(2)
