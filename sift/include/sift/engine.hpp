@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <chrono>
+#include <deque>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -61,11 +62,13 @@ private:
     std::uint64_t inspection_last_ns_{};
     std::uint64_t inspection_min_ns_{std::numeric_limits<std::uint64_t>::max()};
     std::uint64_t inspection_max_ns_{};
+    std::deque<std::uint64_t> inspection_recent_ns_;
     std::uint64_t engine_delay_samples_{};
     std::uint64_t engine_delay_total_ns_{};
     std::uint64_t engine_delay_last_ns_{};
     std::uint64_t engine_delay_min_ns_{std::numeric_limits<std::uint64_t>::max()};
     std::uint64_t engine_delay_max_ns_{};
+    std::deque<std::uint64_t> engine_delay_recent_ns_;
 };
 
 [[nodiscard]] nlohmann::json verdict_json(const Verdict& verdict);

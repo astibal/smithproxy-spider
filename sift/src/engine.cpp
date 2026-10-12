@@ -19,6 +19,23 @@ constexpr std::array fixed_signatures{
     FixedSignature{"protocol.ssh.banner", "SSH-"},
 };
 
+constexpr std::size_t timing_median_window = 4096;
+
+void append_timing_sample(std::deque<std::uint64_t>& samples, const std::uint64_t value) {
+    if (samples.size() == timing_median_window) samples.pop_front();
+    samples.push_back(value);
+}
+
+double median_us(const std::deque<std::uint64_t>& samples) {
+    if (samples.empty()) return 0.0;
+    std::vector<std::uint64_t> ordered(samples.begin(), samples.end());
+    const auto middle = ordered.begin() + static_cast<std::ptrdiff_t>(ordered.size() / 2);
+    std::nth_element(ordered.begin(), middle, ordered.end());
+    if (ordered.size() % 2 != 0) return static_cast<double>(*middle) / 1000.0;
+    const auto lower = *std::max_element(ordered.begin(), middle);
+    return (static_cast<double>(lower) + static_cast<double>(*middle)) / 2000.0;
+}
+
 } // namespace
 
 Verdict Runtime::inspect(const std::string_view session, const char side,
@@ -61,6 +78,7 @@ Verdict Runtime::inspect(const std::string_view session, const char side,
     inspection_last_ns_ = elapsed;
     inspection_min_ns_ = std::min(inspection_min_ns_, elapsed);
     inspection_max_ns_ = std::max(inspection_max_ns_, elapsed);
+    append_timing_sample(inspection_recent_ns_, elapsed);
     return verdict;
 }
 
@@ -72,6 +90,7 @@ void Runtime::record_engine_delay(const std::chrono::nanoseconds elapsed) {
     engine_delay_last_ns_ = value;
     engine_delay_min_ns_ = std::min(engine_delay_min_ns_, value);
     engine_delay_max_ns_ = std::max(engine_delay_max_ns_, value);
+    append_timing_sample(engine_delay_recent_ns_, value);
 }
 
 void Runtime::close(const std::string_view session) {
@@ -114,11 +133,15 @@ nlohmann::json Runtime::status() const {
                                          {"last", ns_to_us(inspection_last_ns_)},
                                          {"min", inspection_samples_ == 0 ? 0.0 : ns_to_us(inspection_min_ns_)},
                                          {"max", ns_to_us(inspection_max_ns_)},
+                                         {"median", median_us(inspection_recent_ns_)},
+                                         {"median_samples", inspection_recent_ns_.size()},
                                          {"average", average_inspection}}},
                     {"engine_delay_us", {{"samples", engine_delay_samples_},
                                           {"last", ns_to_us(engine_delay_last_ns_)},
                                           {"min", engine_delay_samples_ == 0 ? 0.0 : ns_to_us(engine_delay_min_ns_)},
                                           {"max", ns_to_us(engine_delay_max_ns_)},
+                                          {"median", median_us(engine_delay_recent_ns_)},
+                                          {"median_samples", engine_delay_recent_ns_.size()},
                                           {"average", average_engine_delay}}},
                     {"round_trip_us", nullptr},
                     {"round_trip_status", "requires Smithproxy/broker telemetry"}}}

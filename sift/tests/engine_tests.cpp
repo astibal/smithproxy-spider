@@ -35,6 +35,10 @@ int main() {
           "engine delay timing samples missing");
     check(timed_stats.at("timing").at("engine_delay_us").at("last") == 125.0,
           "engine delay timing value is wrong");
+    check(timed_stats.at("timing").at("engine_delay_us").at("median") == 125.0,
+          "engine delay median is wrong");
+    check(timed_stats.at("timing").at("inspection_us").at("median_samples") == 2,
+          "inspection median sample count is wrong");
 
     runtime.close("flow-1");
     const auto closed_stats = runtime.status();
