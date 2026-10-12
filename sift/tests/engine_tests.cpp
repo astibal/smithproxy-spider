@@ -27,18 +27,18 @@ int main() {
     check(live_stats.at("traffic").at("payloads") == 2, "payloads not counted");
     check(live_stats.at("signatures").at("by_name").at("protocol.http2.preface") == 1,
           "signature count missing");
-    check(live_stats.at("timing").at("inspection_us").at("samples") == 2,
-          "inspection timing samples missing");
-    runtime.record_engine_delay(std::chrono::microseconds(125));
+    check(live_stats.at("timing").at("engine_delay_us").at("samples") == 2,
+          "engine timing samples missing");
+    runtime.record_total_delay(std::chrono::microseconds(125));
     const auto timed_stats = runtime.status();
-    check(timed_stats.at("timing").at("engine_delay_us").at("samples") == 1,
-          "engine delay timing samples missing");
-    check(timed_stats.at("timing").at("engine_delay_us").at("last") == 125.0,
-          "engine delay timing value is wrong");
-    check(timed_stats.at("timing").at("engine_delay_us").at("median") == 125.0,
-          "engine delay median is wrong");
-    check(timed_stats.at("timing").at("inspection_us").at("median_samples") == 2,
-          "inspection median sample count is wrong");
+    check(timed_stats.at("timing").at("total_delay_us").at("samples") == 1,
+          "total delay timing samples missing");
+    check(timed_stats.at("timing").at("total_delay_us").at("last") == 125.0,
+          "total delay timing value is wrong");
+    check(timed_stats.at("timing").at("total_delay_us").at("median") == 125.0,
+          "total delay median is wrong");
+    check(timed_stats.at("timing").at("engine_delay_us").at("median_samples") == 2,
+          "engine median sample count is wrong");
 
     runtime.close("flow-1");
     const auto closed_stats = runtime.status();

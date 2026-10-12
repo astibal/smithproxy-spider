@@ -29,7 +29,7 @@ class Runtime {
 public:
     [[nodiscard]] Verdict inspect(std::string_view session, char side,
                                   std::string_view payload);
-    void record_engine_delay(std::chrono::nanoseconds elapsed);
+    void record_total_delay(std::chrono::nanoseconds elapsed);
     void close(std::string_view session);
     [[nodiscard]] nlohmann::json status() const;
 
@@ -57,18 +57,18 @@ private:
     std::uint64_t last_payload_size_{};
     std::uint64_t min_payload_size_{std::numeric_limits<std::uint64_t>::max()};
     std::uint64_t max_payload_size_{};
-    std::uint64_t inspection_samples_{};
-    std::uint64_t inspection_total_ns_{};
-    std::uint64_t inspection_last_ns_{};
-    std::uint64_t inspection_min_ns_{std::numeric_limits<std::uint64_t>::max()};
-    std::uint64_t inspection_max_ns_{};
-    std::deque<std::uint64_t> inspection_recent_ns_;
     std::uint64_t engine_delay_samples_{};
     std::uint64_t engine_delay_total_ns_{};
     std::uint64_t engine_delay_last_ns_{};
     std::uint64_t engine_delay_min_ns_{std::numeric_limits<std::uint64_t>::max()};
     std::uint64_t engine_delay_max_ns_{};
     std::deque<std::uint64_t> engine_delay_recent_ns_;
+    std::uint64_t total_delay_samples_{};
+    std::uint64_t total_delay_total_ns_{};
+    std::uint64_t total_delay_last_ns_{};
+    std::uint64_t total_delay_min_ns_{std::numeric_limits<std::uint64_t>::max()};
+    std::uint64_t total_delay_max_ns_{};
+    std::deque<std::uint64_t> total_delay_recent_ns_;
 };
 
 [[nodiscard]] nlohmann::json verdict_json(const Verdict& verdict);

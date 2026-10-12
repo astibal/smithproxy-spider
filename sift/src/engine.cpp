@@ -40,7 +40,7 @@ double median_us(const std::deque<std::uint64_t>& samples) {
 
 Verdict Runtime::inspect(const std::string_view session, const char side,
                          const std::string_view payload) {
-    const auto inspection_started = std::chrono::steady_clock::now();
+    const auto engine_started = std::chrono::steady_clock::now();
     std::scoped_lock guard(lock_);
     auto [flow_it, inserted] = flows_.try_emplace(std::string(session));
     if (inserted) ++flows_seen_;
@@ -72,25 +72,25 @@ Verdict Runtime::inspect(const std::string_view session, const char side,
     if (!verdict.matches.empty()) ++matched_payloads_;
     ++accepted_;
     const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now() - inspection_started).count());
-    ++inspection_samples_;
-    inspection_total_ns_ += elapsed;
-    inspection_last_ns_ = elapsed;
-    inspection_min_ns_ = std::min(inspection_min_ns_, elapsed);
-    inspection_max_ns_ = std::max(inspection_max_ns_, elapsed);
-    append_timing_sample(inspection_recent_ns_, elapsed);
+        std::chrono::steady_clock::now() - engine_started).count());
+    ++engine_delay_samples_;
+    engine_delay_total_ns_ += elapsed;
+    engine_delay_last_ns_ = elapsed;
+    engine_delay_min_ns_ = std::min(engine_delay_min_ns_, elapsed);
+    engine_delay_max_ns_ = std::max(engine_delay_max_ns_, elapsed);
+    append_timing_sample(engine_delay_recent_ns_, elapsed);
     return verdict;
 }
 
-void Runtime::record_engine_delay(const std::chrono::nanoseconds elapsed) {
+void Runtime::record_total_delay(const std::chrono::nanoseconds elapsed) {
     const auto value = static_cast<std::uint64_t>(elapsed.count());
     std::scoped_lock guard(lock_);
-    ++engine_delay_samples_;
-    engine_delay_total_ns_ += value;
-    engine_delay_last_ns_ = value;
-    engine_delay_min_ns_ = std::min(engine_delay_min_ns_, value);
-    engine_delay_max_ns_ = std::max(engine_delay_max_ns_, value);
-    append_timing_sample(engine_delay_recent_ns_, value);
+    ++total_delay_samples_;
+    total_delay_total_ns_ += value;
+    total_delay_last_ns_ = value;
+    total_delay_min_ns_ = std::min(total_delay_min_ns_, value);
+    total_delay_max_ns_ = std::max(total_delay_max_ns_, value);
+    append_timing_sample(total_delay_recent_ns_, value);
 }
 
 void Runtime::close(const std::string_view session) {
@@ -112,10 +112,10 @@ nlohmann::json Runtime::status() const {
     const auto ns_to_us = [](const std::uint64_t value) {
         return static_cast<double>(value) / 1000.0;
     };
-    const auto average_inspection = inspection_samples_ == 0 ? 0.0
-        : ns_to_us(inspection_total_ns_) / static_cast<double>(inspection_samples_);
     const auto average_engine_delay = engine_delay_samples_ == 0 ? 0.0
         : ns_to_us(engine_delay_total_ns_) / static_cast<double>(engine_delay_samples_);
+    const auto average_total_delay = total_delay_samples_ == 0 ? 0.0
+        : ns_to_us(total_delay_total_ns_) / static_cast<double>(total_delay_samples_);
     return {
         {"service", "sx-siftd"}, {"engine", "bootstrap-ng"}, {"uptime_ms", uptime},
         {"flows", {{"active", flows_.size()}, {"seen", flows_seen_},
@@ -129,20 +129,20 @@ nlohmann::json Runtime::status() const {
         {"signatures", {{"matches", matches_}, {"matched_payloads", matched_payloads_},
                         {"by_name", std::move(signatures)}}},
         {"decisions", {{"accept", accepted_}, {"replace", 0}, {"discard", 0}}},
-        {"timing", {{"inspection_us", {{"samples", inspection_samples_},
-                                         {"last", ns_to_us(inspection_last_ns_)},
-                                         {"min", inspection_samples_ == 0 ? 0.0 : ns_to_us(inspection_min_ns_)},
-                                         {"max", ns_to_us(inspection_max_ns_)},
-                                         {"median", median_us(inspection_recent_ns_)},
-                                         {"median_samples", inspection_recent_ns_.size()},
-                                         {"average", average_inspection}}},
-                    {"engine_delay_us", {{"samples", engine_delay_samples_},
+        {"timing", {{"engine_delay_us", {{"samples", engine_delay_samples_},
                                           {"last", ns_to_us(engine_delay_last_ns_)},
                                           {"min", engine_delay_samples_ == 0 ? 0.0 : ns_to_us(engine_delay_min_ns_)},
                                           {"max", ns_to_us(engine_delay_max_ns_)},
                                           {"median", median_us(engine_delay_recent_ns_)},
                                           {"median_samples", engine_delay_recent_ns_.size()},
                                           {"average", average_engine_delay}}},
+                    {"total_delay_us", {{"samples", total_delay_samples_},
+                                         {"last", ns_to_us(total_delay_last_ns_)},
+                                         {"min", total_delay_samples_ == 0 ? 0.0 : ns_to_us(total_delay_min_ns_)},
+                                         {"max", ns_to_us(total_delay_max_ns_)},
+                                         {"median", median_us(total_delay_recent_ns_)},
+                                         {"median_samples", total_delay_recent_ns_.size()},
+                                         {"average", average_total_delay}}},
                     {"round_trip_us", nullptr},
                     {"round_trip_status", "requires Smithproxy/broker telemetry"}}}
     };

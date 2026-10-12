@@ -14,9 +14,10 @@ Spider server -- replay/SXBN001 ------> sx-siftd
 ```
 
 Runtime counters are available as JSON from `GET /api/stats`. The existing
-timing section reports both matcher-only `inspection_us` and content request
-`engine_delay_us` (request decoded through verdict produced). Network and broker
-latency is deliberately not included. Timing medians use a bounded rolling
+timing section reports both runtime `engine_delay_us` (flow management and
+signature search) and content request `total_delay_us` (request decoded through
+verdict produced). Network and broker latency is deliberately not included.
+Timing medians use a bounded rolling
 window of the latest 4096 samples; lifetime minimum, maximum and average remain
 available alongside it.
 `/api/status` endpoint returns the same snapshot, while `/api/health` remains

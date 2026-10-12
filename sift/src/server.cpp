@@ -117,7 +117,7 @@ private:
         const auto side = side_text.empty() ? 'L' : side_text.front();
         auto reply = verdict_json(runtime_.inspect(
             info.value("session", event.value("id", "")), side, payload));
-        runtime_.record_engine_delay(std::chrono::steady_clock::now() - started);
+        runtime_.record_total_delay(std::chrono::steady_clock::now() - started);
         return reply;
     }
 
