@@ -1536,6 +1536,49 @@ function flowDisplayBytes(followed, side, bytes) {
   return cap && bytes.length > cap ? bytes.subarray(0, cap) : bytes;
 }
 
+function flowLaneColor(followed, sessionId) {
+  if (!followed.laneOrder.includes(sessionId)) followed.laneOrder.push(sessionId);
+  return `hsl(${(followed.laneOrder.indexOf(sessionId) * 67) % 360} 62% 62%)`;
+}
+
+function renderFlowStreamPayload(chunk, bytes, level) {
+  const limits = [640, 8192, bytes.length];
+  const limit = Math.min(bytes.length, limits[level] ?? limits[0]);
+  const content = chunk.querySelector('pre');
+  content.replaceChildren();
+  appendMixedAscii(content, bytes.subarray(0, limit));
+  const remaining = bytes.length - limit;
+  if (remaining) {
+    const omitted = document.createElement('span');
+    omitted.className = 'lane-card-omitted';
+    omitted.textContent = ` … +${formatBytes(remaining)}`;
+    content.append(omitted);
+  }
+  chunk.classList.toggle('stream-medium', level === 1);
+  chunk.classList.toggle('stream-full', level === 2);
+  chunk.classList.toggle('truncated', remaining > 0);
+  const button = chunk.querySelector('.flow-stream-expand');
+  if (button) button.textContent = level === 0 ? 'Expand payload' : level === 1 ? 'Show all' : 'Collapse';
+}
+
+function renderFlowStreamLegend(stream, records, followed) {
+  const laneIds = [...new Set(records.map(record => record.event.id))];
+  let legend = stream.querySelector('.flow-stream-legend');
+  const key = laneIds.join('|');
+  if (legend?.dataset.key === key) return;
+  legend?.remove();
+  legend = document.createElement('div');
+  legend.className = 'flow-stream-legend'; legend.dataset.key = key;
+  for (const laneId of laneIds) {
+    const item = document.createElement('span');
+    item.style.setProperty('--flow-color', flowLaneColor(followed, laneId));
+    item.textContent = `${followed.laneOrder.indexOf(laneId) + 1} · ${laneLabel(laneId)}`;
+    item.title = laneId;
+    legend.append(item);
+  }
+  stream.prepend(legend);
+}
+
 function clearFollowedFlow(followed) {
   const removed = payloadRecords.filter(record => scopeMatches(followed, record));
   if (!removed.length) return;
@@ -1740,6 +1783,7 @@ function renderFlowTab(scopeKey) {
     renderLaneBoard(stream, records, followed, scopeKey);
     return;
   }
+  if (followed.view === 'stream') renderFlowStreamLegend(stream, records, followed);
   const wanted = new Set(records.map(record => String(record.revision)));
   for (const chunk of stream.querySelectorAll('[data-revision]')) {
     if (!wanted.has(chunk.dataset.revision)) chunk.remove();
@@ -1765,8 +1809,20 @@ function renderFlowTab(scopeKey) {
       `of ${formatBytes(completeBytes.length)}`);
     if (followed.view === 'stream') {
       const content = document.createElement('pre');
-      appendMixedAscii(content, bytes);
+      chunk.style.setProperty('--flow-color', flowLaneColor(followed, record.event.id));
+      chunk.title = laneLabel(record.event.id);
+      direction.textContent = `${side}·${followed.laneOrder.indexOf(record.event.id) + 1}`;
+      const expand = document.createElement('button');
+      expand.type = 'button'; expand.className = 'flow-stream-expand';
+      expand.onclick = () => {
+        const current = followed.cardLevels.get(record.revision) || 0;
+        const next = (current + 1) % 3;
+        followed.cardLevels.set(record.revision, next);
+        renderFlowStreamPayload(chunk, bytes, next);
+      };
+      metadata.append(document.createElement('br'), expand);
       chunk.append(direction, metadata, content);
+      renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0);
     } else {
       const summary = document.createElement('summary');
       summary.append(direction, metadata);
