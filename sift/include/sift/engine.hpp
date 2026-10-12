@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include <hs/hs.h>
 
 namespace sift {
 
@@ -28,6 +29,11 @@ struct Verdict {
 
 class Runtime {
 public:
+    Runtime();
+    ~Runtime();
+    Runtime(const Runtime&) = delete;
+    Runtime& operator=(const Runtime&) = delete;
+
     [[nodiscard]] Verdict inspect(std::string_view session, char side,
                                   std::string_view payload);
     void record_total_delay(std::chrono::nanoseconds elapsed);
@@ -39,10 +45,18 @@ private:
         std::string left;
         std::string right;
         std::unordered_set<std::string> matches;
+        std::unordered_set<std::size_t> candidates;
+        hs_stream_t* left_scanner{};
+        hs_stream_t* right_scanner{};
     };
+
+    void close_scanners(Flow& flow);
 
     mutable std::mutex lock_;
     std::unordered_map<std::string, Flow> flows_;
+    hs_database_t* left_database_{};
+    hs_database_t* right_database_{};
+    hs_scratch_t* scratch_{};
     const std::chrono::steady_clock::time_point started_{std::chrono::steady_clock::now()};
     std::unordered_map<std::string, std::uint64_t> signature_matches_;
     std::uint64_t flows_seen_{};
@@ -56,6 +70,8 @@ private:
     std::uint64_t right_payloads_{};
     std::uint64_t right_bytes_{};
     std::uint64_t accepted_{};
+    std::uint64_t hyperscan_scans_{};
+    std::uint64_t hyperscan_candidates_{};
     std::uint64_t last_payload_size_{};
     std::uint64_t min_payload_size_{std::numeric_limits<std::uint64_t>::max()};
     std::uint64_t max_payload_size_{};

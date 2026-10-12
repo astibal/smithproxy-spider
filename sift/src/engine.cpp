@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <hs/hs.h>
+#include <stdexcept>
+#include <vector>
 
 namespace sift {
 namespace {
@@ -90,6 +92,82 @@ constexpr std::array bootstrap_signatures{
     BootstrapSignature{"protocol.memcached.ascii", memcached_ascii},
 };
 
+struct ScanPattern {
+    std::string_view expression;
+    unsigned rule;
+    char side;
+};
+
+// Rule IDs intentionally match bootstrap_signatures indexes. Hyperscan emits
+// these IDs as cheap candidates; the full matcher above remains authoritative.
+constexpr std::array scan_patterns{
+    ScanPattern{R"(^(OPTIONS|GET|HEAD|POST|PUT|DELETE|CONNECT|PATCH|PROPFIND|PROPPATCH|TRACE|UPDATE) )", 0, 'L'},
+    ScanPattern{R"(^HTTP/[0-9])", 1, 'R'},
+    ScanPattern{R"(^PRI \* HTTP/2\.0\x0d\x0a\x0d\x0aSM\x0d\x0a\x0d\x0a)", 2, 'L'},
+    ScanPattern{R"(^\x16\x03[\x00-\x0f]..\x01)", 3, 'L'},
+    ScanPattern{R"(^\x16\x03[\x00-\x0f]..\x02)", 4, 'R'},
+    ScanPattern{R"((^|\x0a)SSH-[12]\.)", 5, 'E'},
+    ScanPattern{R"(^....\xffSMB)", 6, 'E'},
+    ScanPattern{R"(^....\xfeSMB)", 7, 'E'},
+    ScanPattern{R"(^....\xfdSMB)", 8, 'E'},
+    ScanPattern{R"(^\x00\x00\x00\x08\x04\xd2\x16\x2f)", 9, 'L'},
+    ScanPattern{R"(^[SN])", 9, 'R'},
+    ScanPattern{R"(^RFB )", 10, 'E'},
+    ScanPattern{R"(^(REGISTER|INVITE|BYE|OPTIONS) )", 11, 'L'},
+    ScanPattern{R"(^SIP/2\.0)", 11, 'R'},
+    ScanPattern{R"(^\x13BitTorrent protocol)", 12, 'E'},
+    ScanPattern{R"(^AMQP\x00\x00\x09\x01)", 13, 'L'},
+    ScanPattern{R"(^AMQP\x00\x01\x00\x00)", 14, 'L'},
+    ScanPattern{R"(^AMQP\x03\x01\x00\x00)", 15, 'L'},
+    ScanPattern{R"(^\x12\x34\x00\x01\x0a)", 16, 'L'},
+    ScanPattern{R"(^AB\x00\x01\x09)", 17, 'R'},
+    ScanPattern{R"(^(get|gets|set|add|replace|append|prepend|cas|delete|incr|decr|touch) )", 18, 'L'},
+    ScanPattern{R"(^(stats|version)\x0d)", 18, 'L'},
+    ScanPattern{R"(^flush_all)", 18, 'L'},
+};
+
+hs_database_t* compile_database(const char side) {
+    std::vector<const char*> expressions;
+    std::vector<unsigned> flags;
+    std::vector<unsigned> ids;
+    for (const auto& pattern : scan_patterns) {
+        if (pattern.side != side && pattern.side != 'E') continue;
+        expressions.push_back(pattern.expression.data());
+        flags.push_back(HS_FLAG_DOTALL | HS_FLAG_SINGLEMATCH);
+        ids.push_back(pattern.rule);
+    }
+    hs_database_t* database{};
+    hs_compile_error_t* error{};
+    const auto result = hs_compile_multi(
+        expressions.data(), flags.data(), ids.data(),
+        static_cast<unsigned>(expressions.size()), HS_MODE_STREAM, nullptr,
+        &database, &error);
+    if (result != HS_SUCCESS) {
+        const std::string message = error && error->message
+            ? error->message : "unknown Hyperscan compile error";
+        if (error) hs_free_compile_error(error);
+        throw std::runtime_error("cannot compile Hyperscan database: " + message);
+    }
+    return database;
+}
+
+struct ScanContext {
+    std::unordered_set<std::size_t>& candidates;
+    std::uint64_t emitted{};
+};
+
+int record_candidate(const unsigned id, unsigned long long, unsigned long long,
+                     unsigned, void* context) {
+    auto& scan = *static_cast<ScanContext*>(context);
+    if (scan.candidates.emplace(id).second) ++scan.emitted;
+    return 0;
+}
+
+int discard_candidate(unsigned, unsigned long long, unsigned long long,
+                      unsigned, void*) {
+    return 0;
+}
+
 constexpr std::size_t timing_median_window = 4096;
 
 void append_timing_sample(std::deque<std::uint64_t>& samples, const std::uint64_t value) {
@@ -109,14 +187,60 @@ double median_us(const std::deque<std::uint64_t>& samples) {
 
 } // namespace
 
+Runtime::Runtime() {
+    try {
+        left_database_ = compile_database('L');
+        right_database_ = compile_database('R');
+        if (hs_alloc_scratch(left_database_, &scratch_) != HS_SUCCESS ||
+            hs_alloc_scratch(right_database_, &scratch_) != HS_SUCCESS)
+            throw std::runtime_error("cannot allocate Hyperscan scratch space");
+    } catch (...) {
+        if (scratch_) hs_free_scratch(scratch_);
+        if (left_database_) hs_free_database(left_database_);
+        if (right_database_) hs_free_database(right_database_);
+        throw;
+    }
+}
+
+Runtime::~Runtime() {
+    std::scoped_lock guard(lock_);
+    for (auto& [_, flow] : flows_) close_scanners(flow);
+    if (scratch_) hs_free_scratch(scratch_);
+    if (left_database_) hs_free_database(left_database_);
+    if (right_database_) hs_free_database(right_database_);
+}
+
+void Runtime::close_scanners(Flow& flow) {
+    if (flow.left_scanner) {
+        hs_close_stream(flow.left_scanner, scratch_, discard_candidate, nullptr);
+        flow.left_scanner = nullptr;
+    }
+    if (flow.right_scanner) {
+        hs_close_stream(flow.right_scanner, scratch_, discard_candidate, nullptr);
+        flow.right_scanner = nullptr;
+    }
+}
+
 Verdict Runtime::inspect(const std::string_view session, const char side,
                          const std::string_view payload) {
     const auto engine_started = std::chrono::steady_clock::now();
     std::scoped_lock guard(lock_);
     auto [flow_it, inserted] = flows_.try_emplace(std::string(session));
     if (inserted) ++flows_seen_;
-    auto& stream = side == 'R' || side == 'w' ? flow_it->second.right : flow_it->second.left;
+    const auto is_right = side == 'R' || side == 'w';
+    auto& flow = flow_it->second;
+    auto& stream = is_right ? flow.right : flow.left;
+    auto*& scanner = is_right ? flow.right_scanner : flow.left_scanner;
+    auto* database = is_right ? right_database_ : left_database_;
+    if (scanner == nullptr && hs_open_stream(database, 0, &scanner) != HS_SUCCESS)
+        throw std::runtime_error("cannot open Hyperscan stream");
     stream.append(payload);
+    ScanContext scan{flow.candidates};
+    if (hs_scan_stream(scanner, payload.data(), static_cast<unsigned>(payload.size()),
+                       0, scratch_, record_candidate, &scan) != HS_SUCCESS)
+        throw std::runtime_error("Hyperscan stream scan failed");
+    ++hyperscan_scans_;
+    hyperscan_candidates_ += scan.emitted;
     ++payloads_;
     bytes_ += payload.size();
     last_payload_size_ = payload.size();
@@ -131,14 +255,23 @@ Verdict Runtime::inspect(const std::string_view session, const char side,
     }
 
     Verdict verdict;
-    for (const auto& signature : bootstrap_signatures) {
-        if (flow_it->second.matches.contains(std::string(signature.name)) ||
-            !signature.matches(flow_it->second.left, flow_it->second.right)) continue;
-        flow_it->second.matches.emplace(signature.name);
+    for (auto candidate = flow.candidates.begin(); candidate != flow.candidates.end();) {
+        const auto rule = *candidate;
+        const auto& signature = bootstrap_signatures.at(rule);
+        if (flow.matches.contains(std::string(signature.name))) {
+            candidate = flow.candidates.erase(candidate);
+            continue;
+        }
+        if (!signature.matches(flow.left, flow.right)) {
+            ++candidate;
+            continue;
+        }
+        flow.matches.emplace(signature.name);
         verdict.matches.push_back({std::string(signature.name), 0,
                                    stream.empty() ? 0 : stream.size() - 1});
         ++matches_;
         ++signature_matches_[std::string(signature.name)];
+        candidate = flow.candidates.erase(candidate);
     }
     if (!verdict.matches.empty()) ++matched_payloads_;
     ++accepted_;
@@ -166,7 +299,11 @@ void Runtime::record_total_delay(const std::chrono::nanoseconds elapsed) {
 
 void Runtime::close(const std::string_view session) {
     std::scoped_lock guard(lock_);
-    if (flows_.erase(std::string(session)) > 0) ++flows_closed_;
+    const auto found = flows_.find(std::string(session));
+    if (found == flows_.end()) return;
+    close_scanners(found->second);
+    flows_.erase(found);
+    ++flows_closed_;
 }
 
 nlohmann::json Runtime::status() const {
@@ -188,8 +325,11 @@ nlohmann::json Runtime::status() const {
     const auto average_total_delay = total_delay_samples_ == 0 ? 0.0
         : ns_to_us(total_delay_total_ns_) / static_cast<double>(total_delay_samples_);
     return {
-        {"service", "sx-siftd"}, {"engine", "bootstrap-ng"},
-        {"scanner", {{"name", "hyperscan"}, {"version", hs_version()}}},
+        {"service", "sx-siftd"}, {"engine", "bootstrap-hyperscan"},
+        {"scanner", {{"name", "hyperscan"}, {"version", hs_version()},
+                     {"mode", "stream"}, {"patterns", scan_patterns.size()},
+                     {"scans", hyperscan_scans_},
+                     {"candidates", hyperscan_candidates_}}},
         {"uptime_ms", uptime},
         {"flows", {{"active", flows_.size()}, {"seen", flows_seen_},
                    {"closed", flows_closed_}}},

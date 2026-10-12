@@ -6,6 +6,11 @@ the same webhook handshake and `SXBN001` `connection-content` requests as
 Sift requires Intel Hyperscan (`libhyperscan-dev` on Debian/Ubuntu); there is no
 silent `std::regex` fallback.
 
+The bootstrap engine compiles its cheap pattern gates into one Hyperscan
+database per direction. Each flow owns left and right streaming scanner state;
+Hyperscan emits candidate rule IDs and the stateful matchers perform the final
+multi-direction and structural checks.
+
 This first extraction deliberately lives beside Spider while Smithproxy keeps
 its legacy in-process signature engine. The compiled signature-pack runtime and
 the useful state model from the legacy engine will move here incrementally.
