@@ -1558,7 +1558,10 @@ function renderFlowStreamPayload(chunk, bytes, level) {
   chunk.classList.toggle('stream-full', level === 2);
   chunk.classList.toggle('truncated', remaining > 0);
   const button = chunk.querySelector('.flow-stream-expand');
-  if (button) button.textContent = level === 0 ? 'Expand payload' : level === 1 ? 'Show all' : 'Collapse';
+  if (button) {
+    button.textContent = remaining ? (level === 0 ? 'Expand payload' : 'Show all') : 'Collapse';
+    button.dataset.nextLevel = remaining ? String(Math.min(2, level + 1)) : '0';
+  }
 }
 
 function renderFlowStreamLegend(stream, records, followed) {
@@ -1812,15 +1815,16 @@ function renderFlowTab(scopeKey) {
       chunk.style.setProperty('--flow-color', flowLaneColor(followed, record.event.id));
       chunk.title = laneLabel(record.event.id);
       direction.textContent = `${side}·${followed.laneOrder.indexOf(record.event.id) + 1}`;
-      const expand = document.createElement('button');
-      expand.type = 'button'; expand.className = 'flow-stream-expand';
-      expand.onclick = () => {
-        const current = followed.cardLevels.get(record.revision) || 0;
-        const next = (current + 1) % 3;
-        followed.cardLevels.set(record.revision, next);
-        renderFlowStreamPayload(chunk, bytes, next);
-      };
-      metadata.append(document.createElement('br'), expand);
+      if (bytes.length > 640) {
+        const expand = document.createElement('button');
+        expand.type = 'button'; expand.className = 'flow-stream-expand';
+        expand.onclick = () => {
+          const next = Number(expand.dataset.nextLevel || 0);
+          followed.cardLevels.set(record.revision, next);
+          renderFlowStreamPayload(chunk, bytes, next);
+        };
+        metadata.append(document.createElement('br'), expand);
+      }
       chunk.append(direction, metadata, content);
       renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0);
     } else {
@@ -1956,8 +1960,9 @@ function renderLaneCardPayload(card, bytes, level) {
   card.classList.toggle('truncated', remaining > 0);
   const button = card.querySelector('.lane-card-expand');
   if (button) {
-    button.textContent = level === 0 ? 'Expand payload' : level === 1 ? 'Show all' : 'Collapse';
-    button.title = level === 2 ? 'Collapse payload preview' :
+    button.textContent = remaining ? (level === 0 ? 'Expand payload' : 'Show all') : 'Collapse';
+    button.dataset.nextLevel = remaining ? String(Math.min(2, level + 1)) : '0';
+    button.title = !remaining ? 'Collapse payload preview' :
       `Show ${level === 0 ? 'a larger preview' : 'the complete payload'}`;
   }
 }
@@ -2123,8 +2128,7 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
         const expand = document.createElement('button');
         expand.type = 'button'; expand.className = 'lane-card-expand';
         expand.onclick = () => {
-          const current = followed.cardLevels.get(record.revision) || 0;
-          const next = (current + 1) % 3;
+          const next = Number(expand.dataset.nextLevel || 0);
           followed.cardLevels.set(record.revision, next);
           renderLaneCardPayload(card, bytes, next);
           decorateLaneResponses(stream, records, followed);
