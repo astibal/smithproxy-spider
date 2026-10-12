@@ -256,7 +256,17 @@ function renderSessionBranch(target, items, dimensions, depth = 0, parentPath = 
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'session-key';
-      row.textContent = item.id;
+      const key = document.createElement('span');
+      key.textContent = item.id;
+      row.append(key);
+      const classifications = siftClassifications(item);
+      if (classifications.length) {
+        const summary = document.createElement('small');
+        summary.className = 'session-classification';
+        summary.textContent = classifications.map(classificationLabel).join(' › ');
+        summary.title = classifications.join('\n');
+        row.append(summary);
+      }
       row.title = resolvedSessionLabel(item.label) || item.id;
       row.onclick = () => pinSession(item);
       target.append(row);
@@ -1227,6 +1237,31 @@ function detailRow(label, value, extraClass = '') {
   return `<div class="detail-row ${extraClass}"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
 }
 
+function siftClassifications(item) {
+  const direct = item?.classification?.sift;
+  const event = item?.last_event?.details?.info?.classification?.sift;
+  const values = Array.isArray(direct) ? direct : Array.isArray(event) ? event : [];
+  return [...new Set(values.filter(value => typeof value === 'string' && value.trim()))].sort();
+}
+
+function classificationLabel(value) {
+  const parts = String(value).split('.');
+  const category = parts.shift() || 'sift';
+  const names = {http1: 'HTTP/1', http2: 'HTTP/2', http3: 'HTTP/3',
+    tls: 'TLS', ssh: 'SSH', smb1: 'SMB1', smb2: 'SMB2', smb3: 'SMB3',
+    youtube: 'YouTube'};
+  const body = parts.map(part => names[part] || part.replaceAll('-', ' ')).join(' · ');
+  const prefix = category === 'app' ? 'APP' : category === 'protocol' ? 'L7' : category.toUpperCase();
+  return `${prefix} ${body}`.trim();
+}
+
+function classificationChips(values) {
+  return `<div class="chips classification-chips">${values.map(value => {
+    const category = String(value).split('.')[0].replace(/[^a-z0-9_-]/gi, '');
+    return `<span class="classification-${category}" title="${escapeHtml(value)}">${escapeHtml(classificationLabel(value))}</span>`;
+  }).join('')}</div>`;
+}
+
 function renderSessionDetail(detail) {
   selectedSessionDetail = detail;
   const info = detail.last_event?.details?.info || {};
@@ -1235,6 +1270,7 @@ function renderSessionDetail(detail) {
   const urls = Array.isArray(l7.details) ? l7.details : [];
   const signatures = Array.isArray(l7.signatures) ? l7.signatures : [];
   const ja4h = Array.isArray(l7.ja4h) ? l7.ja4h : [];
+  const classifications = siftClassifications(detail);
   const eventTimeline = (detail.events || []).map(event => {
     const timestamp = formatTime(event.spider_received_at_ms);
     return `<details class="timeline-event"><summary><b>${escapeHtml(event.action || 'event')}</b><time>${escapeHtml(timestamp)}</time></summary><pre>${escapeHtml(JSON.stringify(event, null, 2))}</pre></details>`;
@@ -1257,6 +1293,7 @@ function renderSessionDetail(detail) {
     `</dl>` +
     (urls.length ? `<div class="detail-block"><h3>Requests</h3>${urls.map(url => `<code>${escapeHtml(url)}</code>`).join('')}</div>` : '') +
     (signatures.length ? `<div class="detail-block"><h3>Signatures</h3><div class="chips">${signatures.map(value => `<span>${escapeHtml(value)}</span>`).join('')}</div></div>` : '') +
+    (classifications.length ? `<div class="detail-block"><h3>Sift classification</h3>${classificationChips(classifications)}</div>` : '') +
     (ja4h.length ? `<div class="detail-block"><h3>JA4H</h3>${ja4h.map(value => `<code>${escapeHtml(value)}</code>`).join('')}</div>` : '') +
     `<div class="detail-block"><h3>Event timeline</h3>${eventTimeline || '<span class="empty">none</span>'}</div>` +
     `<details class="raw-detail"><summary>Raw JSON</summary><pre>${escapeHtml(JSON.stringify(detail, null, 2))}</pre></details>`;
@@ -1285,6 +1322,7 @@ function renderHistory() {
     row.className = `history-row ${item.state === 'completed' ? 'completed' : 'active'}${item.id === selectedSessionId ? ' selected' : ''}`;
     row.innerHTML = `<span><b>${escapeHtml(item.id)}</b><i>${escapeHtml(item.state)}</i></span>` +
       `<small>${escapeHtml(sessionSubtitle(item))}</small>` +
+      (siftClassifications(item).length ? classificationChips(siftClassifications(item)) : '') +
       `<time>${escapeHtml(formatTime(item.updated_at_ms))} · ${item.event_count} events</time>`;
     row.onclick = () => selectSession(item.id);
     historyList.append(row);

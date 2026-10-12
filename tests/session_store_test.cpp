@@ -54,7 +54,11 @@ int main() {
     assert(store.status()["last_callback"]["action"] == "connection-start");
     assert(store.status()["last_callback"]["received_at_ms"].get<std::int64_t>() > 0);
 
-    assert(spider::process_webhook(store, decisions, {{"action", "connection-info"}, {"id", "42"}}).status == 200);
+    assert(spider::process_webhook(store, decisions,
+        {{"action", "connection-info"}, {"id", "42"},
+         {"details", {{"info", {{"classification", {{"sift", {
+             "protocol.http2", "protocol.http2.prior-knowledge"}}}}}}}}}).status == 200);
+    assert(store.snapshot()["sessions"][0]["classification"]["sift"].size() == 2);
     assert(spider::process_webhook(store, decisions, {{"action", "connection-stop"}, {"id", "42"}}).status == 200);
     assert(store.snapshot()["sessions"].empty());
     assert(store.session_history()["sessions"].size() == 1);
@@ -62,6 +66,7 @@ int main() {
     const auto detail = store.session_detail("42");
     assert(detail.has_value());
     assert((*detail)["events"].size() == 3);
+    assert((*detail)["classification"]["sift"][0] == "protocol.http2");
     assert((*detail)["ended_at_ms"].get<std::int64_t>() > 0);
     assert(store.events_after(0)["events"].size() == 2);
 

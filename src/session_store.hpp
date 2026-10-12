@@ -24,6 +24,7 @@ struct Session {
     std::int64_t ended_at_ms{};
     nlohmann::json last_event;
     std::deque<nlohmann::json> events;
+    std::unordered_set<std::string> sift_classifications;
 };
 
 class SessionStore {

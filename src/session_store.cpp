@@ -32,6 +32,17 @@ bool preferred_hostname(const std::string& lhs, const std::string& rhs) {
     return std::tuple{hostname_levels(lhs), leaf_length(lhs), lhs.size(), lhs} <
            std::tuple{hostname_levels(rhs), leaf_length(rhs), rhs.size(), rhs};
 }
+
+const nlohmann::json* sift_classification_array(const nlohmann::json& event) {
+    const nlohmann::json* current = &event;
+    for (const auto* key : {"details", "info", "classification", "sift"}) {
+        if (!current->is_object()) return nullptr;
+        const auto found = current->find(key);
+        if (found == current->end()) return nullptr;
+        current = &*found;
+    }
+    return current->is_array() ? current : nullptr;
+}
 } // namespace
 
 SessionStore::SessionStore(const std::size_t history_limit,
@@ -103,6 +114,13 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event) {
             session.updated_at_ms = received_at_ms;
             session.last_event = stored_event;
             session.events.push_back(session.last_event);
+            if (const auto* classifications = sift_classification_array(event)) {
+                for (const auto& classification : *classifications) {
+                    if (classification.is_string() && !classification.get_ref<const std::string&>().empty()) {
+                        session.sift_classifications.insert(classification.get<std::string>());
+                    }
+                }
+            }
             while (session.events.size() > session_event_limit_) session.events.pop_front();
             prune_session_history();
         }
@@ -152,6 +170,9 @@ void SessionStore::set_event_sink(std::function<void(std::uint64_t, const nlohma
 }
 
 nlohmann::json SessionStore::session_json(const Session& session, const bool include_events) {
+    auto sift_classifications = std::vector<std::string>(
+        session.sift_classifications.begin(), session.sift_classifications.end());
+    std::ranges::sort(sift_classifications);
     auto result = nlohmann::json{
         {"id", session.id},
         {"label", session.label},
@@ -162,6 +183,7 @@ nlohmann::json SessionStore::session_json(const Session& session, const bool inc
         {"ended_at_ms", session.ended_at_ms},
         {"event_count", session.events.size()},
         {"last_event", session.last_event},
+        {"classification", {{"sift", std::move(sift_classifications)}}},
     };
     if (include_events) result["events"] = session.events;
     return result;
