@@ -1497,7 +1497,8 @@ function openFlowTab(sessionId, type = 'connection') {
   if (!followedFlows.has(scope.key)) {
     const followed = {...scope, id, evicted: 0,
       view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
-      laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11};
+      laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11,
+      cardLevels: new Map()};
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
@@ -1724,6 +1725,110 @@ function laneLabel(sessionId) {
   return strictConnectionLabel(flow?.label || sessionId);
 }
 
+function laneResponseCandidates(records) {
+  const result = {starts: new Map(), pending: new Set()};
+  const sessions = new Map();
+  for (const record of records) {
+    if (!sessions.has(record.event.id)) sessions.set(record.event.id, []);
+    sessions.get(record.event.id).push(record);
+  }
+  for (const laneRecords of sessions.values()) {
+    let pending = null;
+    for (const record of laneRecords) {
+      const side = record.event.details?.info?.side === 'R' ? 'R' : 'L';
+      if (side === 'L') {
+        pending = record;
+      } else if (pending) {
+        const started = Number(pending.event.spider_received_at_ms);
+        const ended = Number(record.event.spider_received_at_ms);
+        const link = {start: pending.revision, end: record.revision,
+          delta: Number.isFinite(started) && Number.isFinite(ended) ? Math.max(0, ended - started) : null};
+        result.starts.set(String(link.start), link);
+        pending = null;
+      }
+    }
+    if (pending) result.pending.add(String(pending.revision));
+  }
+  return result;
+}
+
+function laneDeltaLabel(delta) {
+  if (!Number.isFinite(delta)) return 'Δ unknown';
+  if (delta < 1000) return `Δ ${delta} ms`;
+  if (delta < 60000) return `Δ ${(delta / 1000).toFixed(delta < 10000 ? 2 : 1)} s`;
+  return `Δ ${Math.floor(delta / 60000)}m ${Math.floor((delta % 60000) / 1000)}s`;
+}
+
+function renderLaneCardPayload(card, bytes, level) {
+  const limits = [320, 4096, bytes.length];
+  const limit = Math.min(bytes.length, limits[level] ?? limits[0]);
+  const preview = card.querySelector('pre');
+  preview.replaceChildren();
+  appendMixedAscii(preview, bytes.subarray(0, limit));
+  const remaining = bytes.length - limit;
+  if (remaining) {
+    const omitted = document.createElement('span');
+    omitted.className = 'lane-card-omitted';
+    omitted.textContent = ` … +${formatBytes(remaining)}`;
+    preview.append(omitted);
+  }
+  card.classList.toggle('medium', level === 1);
+  card.classList.toggle('full', level === 2);
+  card.classList.toggle('truncated', remaining > 0);
+  const button = card.querySelector('.lane-card-expand');
+  if (button) {
+    button.textContent = level === 0 ? 'More' : level === 1 ? 'Full' : 'Collapse';
+    button.title = level === 2 ? 'Collapse payload preview' :
+      `Show ${level === 0 ? 'a larger preview' : 'the complete payload'}`;
+  }
+}
+
+function decorateLaneResponses(stream, records, followed) {
+  const candidates = laneResponseCandidates(records);
+  for (const badge of stream.querySelectorAll('.lane-delta,.lane-pending')) badge.remove();
+  for (const card of stream.querySelectorAll('.lane-card')) card.classList.remove('response-start', 'response-end', 'response-pending');
+  for (const [revision, link] of candidates.starts) {
+    const card = stream.querySelector(`.lane-card[data-revision="${revision}"]`);
+    if (card) card.classList.add('response-start');
+    const response = stream.querySelector(`.lane-card[data-revision="${link.end}"]`);
+    if (!response) continue;
+    response.classList.add('response-end');
+    const badge = document.createElement('span');
+    badge.className = 'lane-delta'; badge.textContent = laneDeltaLabel(link.delta);
+    badge.title = 'Spider receive-time delta for a candidate L→R direction transition; not wire RTT.';
+    response.querySelector('.lane-card-head')?.append(badge);
+  }
+  for (const revision of candidates.pending) {
+    const card = stream.querySelector(`.lane-card[data-revision="${revision}"]`);
+    if (!card) continue;
+    card.classList.add('response-pending');
+    const badge = document.createElement('span');
+    badge.className = 'lane-pending'; badge.textContent = '× no response yet';
+    badge.title = 'No later R payload has been observed for this L direction run.';
+    card.querySelector('.lane-card-head')?.append(badge);
+  }
+  cancelAnimationFrame(followed.connectorFrame || 0);
+  followed.connectorFrame = requestAnimationFrame(() => {
+    for (const connector of stream.querySelectorAll('.lane-response-link')) connector.remove();
+    const board = stream.getBoundingClientRect();
+    for (const [revision, link] of candidates.starts) {
+      const start = stream.querySelector(`.lane-card[data-revision="${revision}"]`);
+      const end = stream.querySelector(`.lane-card[data-revision="${link.end}"]`);
+      if (!start || !end) continue;
+      const a = start.getBoundingClientRect(), b = end.getBoundingClientRect();
+      const height = b.top - a.bottom;
+      if (height < 2) continue;
+      const connector = document.createElement('i');
+      connector.className = 'lane-response-link';
+      connector.style.left = `${a.left - board.left + 8}px`;
+      connector.style.top = `${a.bottom - board.top}px`;
+      connector.style.height = `${height}px`;
+      connector.title = 'Candidate L→R direction transition';
+      stream.append(connector);
+    }
+  });
+}
+
 function renderLaneBoard(stream, records, followed, scopeKey) {
   const workspace = stream.closest('.workspace');
   const previousScroll = workspace.scrollTop;
@@ -1800,14 +1905,30 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
       const card = document.createElement('article');
       const side = info.side === 'R' ? 'R' : 'L';
       card.className = `lane-card ${side}`;
+      card.dataset.revision = String(record.revision);
       card.style.gridColumn = String(visibleIndex + 1);
       card.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(record.event.id) * 67) % 360} 62% 62%)`);
+      const head = document.createElement('div');
+      head.className = 'lane-card-head';
       const meta = document.createElement('small');
       meta.textContent = `r${record.revision} · ${side} · ${formatBytes(bytes.length)}`;
       const preview = document.createElement('pre');
-      appendMixedAscii(preview, bytes.subarray(0, 320));
-      if (bytes.length > 320) preview.append(document.createTextNode(` … +${bytes.length - 320} B`));
-      card.append(meta, preview); row.append(card);
+      head.append(meta);
+      if (bytes.length > 320) {
+        const expand = document.createElement('button');
+        expand.type = 'button'; expand.className = 'lane-card-expand';
+        expand.onclick = () => {
+          const current = followed.cardLevels.get(record.revision) || 0;
+          const next = (current + 1) % 3;
+          followed.cardLevels.set(record.revision, next);
+          renderLaneCardPayload(card, bytes, next);
+          decorateLaneResponses(stream, records, followed);
+        };
+        head.append(expand);
+      }
+      card.append(head, preview);
+      renderLaneCardPayload(card, bytes, followed.cardLevels.get(record.revision) || 0);
+      row.append(card);
     } else if (hiddenIndex >= 0) {
       const tick = document.createElement('button');
       tick.className = 'lane-tick'; tick.style.gridColumn = String(visible.length + hiddenIndex + 1);
@@ -1820,6 +1941,7 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
     allTick.className = 'lane-all-tick'; allTick.style.gridColumn = String(visible.length + hidden.length + 1);
     row.append(allTick); stream.append(row);
   }
+  decorateLaneResponses(stream, records, followed);
   if (rebuild) requestAnimationFrame(() => { workspace.scrollTop = previousScroll; });
 }
 
