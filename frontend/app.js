@@ -13,6 +13,7 @@ let scriptLanguage = localStorage.getItem('spider-script-language') === 'javascr
 let pythonWorker = null, pythonWorkerReady = null, pythonRequestId = 0;
 const pythonRequests = new Map();
 const flowRecords = new Map();
+const liveSiftClassifications = new Map();
 let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flows' ? 'flows' : 'payloads';
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let replacementBase64 = null;
@@ -857,13 +858,40 @@ function renderPayload() {
     ? `${info.side || '?'} · ${payloadBytes.length} B · r${selectedPayload.revision}`
     : `${payloadBytes.length} B`;
   const inspection = payloadInspectionInfo(selectedPayload);
-  byId('workbench-info').textContent = inspection || 'no inspection metadata';
-  byId('workbench-info').className = inspection ? '' : 'empty';
+  renderWorkbenchInfo(inspection, selectedPayload);
   const pending = selectedPayload?.event?.decision?.state === 'pending' && !selectedPayload.decided;
   byId('accept-payload').disabled = !pending;
   byId('accept-session').disabled = !pending;
   byId('discard-payload').disabled = !pending;
   byId('replace-payload').disabled = !pending || replacementBase64 === null;
+}
+
+function workbenchSiftClassifications(record) {
+  const sessionId = record?.event?.id;
+  if (!sessionId) return [];
+  const live = liveSiftClassifications.get(sessionId);
+  if (live?.length) return live;
+  const session = activeSessionRecords.find(item => item.id === sessionId) ||
+    historyRecords.find(item => item.id === sessionId);
+  return siftClassifications(session);
+}
+
+function renderWorkbenchInfo(inspection, record) {
+  const target = byId('workbench-info');
+  const classifications = workbenchSiftClassifications(record);
+  if (!inspection && !classifications.length) {
+    target.textContent = 'no inspection metadata';
+    target.className = 'empty';
+    return;
+  }
+  target.className = 'workbench-info-line';
+  target.innerHTML = inspection
+    ? `<span class="inspection-summary">${escapeHtml(inspection)}</span>`
+    : '';
+  if (classifications.length) {
+    target.insertAdjacentHTML('beforeend',
+      `<b class="sift-label">Sift</b>${classificationChips(classifications)}`);
+  }
 }
 
 function payloadInspectionInfo(record) {
@@ -1031,6 +1059,11 @@ function ingestEvent(record) {
   revision = record.revision;
   eventRecords.push(summarizeEvent(record));
   if (record.event.action === 'hostname-info') ingestHostnameInfo(record.event);
+  const sift = record.event.details?.info?.classification?.sift;
+  if (Array.isArray(sift) && sift.length) {
+    liveSiftClassifications.set(record.event.id,
+      [...new Set(sift.filter(value => typeof value === 'string' && value.trim()))].sort());
+  }
   if (eventRecords.length > eventRecordLimit) eventRecords.splice(0, eventRecords.length - eventRecordLimit);
   const passed = record.event.decision?.state === 'passed';
   if (record.event.action === 'connection-content' && !passed &&
@@ -1050,7 +1083,8 @@ function ingestEvent(record) {
     if (flow) flow.active = false;
   }
   scheduleRender(true, (record.event.action === 'connection-content' && !passed) ||
-                       record.event.action === 'connection-stop');
+                       record.event.action === 'connection-stop' ||
+                       (record.event.action === 'connection-info' && Array.isArray(sift)));
 }
 
 function loadScriptSlot(number) {
@@ -1527,6 +1561,7 @@ function connect() {
   eventRecords = [];
   payloadRecords = [];
   flowRecords.clear();
+  liveSiftClassifications.clear();
   payloadCacheBytes = 0;
   payloadsDropped = 0;
   payloadBytesDropped = 0;
