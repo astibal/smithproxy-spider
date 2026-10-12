@@ -1,8 +1,10 @@
+pkg_check_modules(HYPERSCAN REQUIRED IMPORTED_TARGET libhs)
+
 add_library(sift_core
     src/engine.cpp
 )
 target_include_directories(sift_core PUBLIC include)
-target_link_libraries(sift_core PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(sift_core PUBLIC nlohmann_json::nlohmann_json PkgConfig::HYPERSCAN)
 target_compile_options(sift_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 
 add_executable(sx-siftd

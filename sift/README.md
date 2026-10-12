@@ -3,6 +3,8 @@
 `sx-siftd` is the local payload inspection and decision process. It accepts
 the same webhook handshake and `SXBN001` `connection-content` requests as
 `spider-server`, keeps per-session bidirectional state, and returns a verdict.
+Sift requires Intel Hyperscan (`libhyperscan-dev` on Debian/Ubuntu); there is no
+silent `std::regex` fallback.
 
 This first extraction deliberately lives beside Spider while Smithproxy keeps
 its legacy in-process signature engine. The compiled signature-pack runtime and

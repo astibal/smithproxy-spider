@@ -31,6 +31,8 @@ int main() {
     check(second.matches.front().signature == "protocol.http2.prior-knowledge", "wrong match");
 
     const auto live_stats = runtime.status();
+    check(live_stats.at("scanner").at("name") == "hyperscan",
+          "Hyperscan scanner metadata missing");
     check(live_stats.at("flows").at("active") == 1, "active flow not counted");
     check(live_stats.at("traffic").at("payloads") == 2, "payloads not counted");
     check(live_stats.at("signatures").at("by_name").at("protocol.http2.prior-knowledge") == 1,

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <hs/hs.h>
 
 namespace sift {
 namespace {
@@ -187,7 +188,9 @@ nlohmann::json Runtime::status() const {
     const auto average_total_delay = total_delay_samples_ == 0 ? 0.0
         : ns_to_us(total_delay_total_ns_) / static_cast<double>(total_delay_samples_);
     return {
-        {"service", "sx-siftd"}, {"engine", "bootstrap-ng"}, {"uptime_ms", uptime},
+        {"service", "sx-siftd"}, {"engine", "bootstrap-ng"},
+        {"scanner", {{"name", "hyperscan"}, {"version", hs_version()}}},
+        {"uptime_ms", uptime},
         {"flows", {{"active", flows_.size()}, {"seen", flows_seen_},
                    {"closed", flows_closed_}}},
         {"traffic", {{"payloads", payloads_}, {"bytes", bytes_},
