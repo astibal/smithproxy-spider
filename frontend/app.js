@@ -84,7 +84,7 @@ let endpointAggregates = [];
 try {
   const saved = JSON.parse(localStorage.getItem('spider-endpoint-aggregates') || '[]');
   if (Array.isArray(saved)) endpointAggregates = saved.filter(item => item &&
-    typeof item.id === 'string' && ['hostname-suffix', 'cidr'].includes(item.kind) &&
+    typeof item.id === 'string' && ['hostname-suffix', 'hostname-glob', 'cidr'].includes(item.kind) &&
     typeof item.value === 'string');
 } catch (_) {}
 let bypassAll = localStorage.getItem('spider-bypass-all') === 'true';
@@ -256,6 +256,7 @@ function renderActivity() {
 
 function ruleLabel(rule) {
   if (rule.kind === 'hostname-suffix') return `*.${rule.value}`;
+  if (rule.kind === 'hostname-glob') return rule.value;
   if (rule.kind === 'sift') return classificationLabel(rule.value);
   return rule.value;
 }
@@ -288,6 +289,11 @@ function renderTrafficRules() {
   byId('focus-indicator').hidden = !trafficRules.some(rule => rule.mode === 'focus');
   byId('bypass-indicator').hidden = !bypassAll;
   byId('bypass-all').setAttribute('aria-pressed', String(bypassAll));
+  const counts = {pass: 0, focus: 0, inspect: 0, ignore: 0};
+  for (const rule of trafficRules) ++counts[rule.mode];
+  const breakdown = Object.entries(counts).filter(([, count]) => count)
+    .map(([mode, count]) => `${mode.toUpperCase()} ${count}`).join(' · ');
+  byId('traffic-rules-summary').textContent = `Rules (${trafficRules.length})${breakdown ? ` · ${breakdown}` : ''}`;
   target.replaceChildren();
   if (!trafficRules.length) {
     target.textContent = 'right-click an endpoint or Sift label to classify it';
@@ -533,6 +539,13 @@ function hostnameMatchesSuffix(hostname, suffix) {
   return normalized === wanted || normalized.endsWith(`.${wanted}`);
 }
 
+function hostnameMatchesGlob(hostname, pattern) {
+  const expression = normalizeHostname(pattern)
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replaceAll('*', '[^.]*');
+  return new RegExp(`^${expression}$`, 'i').test(normalizeHostname(hostname));
+}
+
 function ipv4Number(value) {
   const parts = String(value).split('.');
   if (parts.length !== 4) return null;
@@ -555,8 +568,10 @@ function addressMatchesCidr(address, cidr) {
 function addressMatchesAggregate(address, aggregate) {
   if (aggregate.kind === 'cidr') return addressMatchesCidr(address, aggregate.value);
   const entry = reverseHostnames.get(address);
-  return aggregate.kind === 'hostname-suffix' && (entry?.candidates || [])
+  if (aggregate.kind === 'hostname-suffix') return (entry?.candidates || [])
     .some(hostname => hostnameMatchesSuffix(hostname, aggregate.value));
+  return aggregate.kind === 'hostname-glob' && (entry?.candidates || [])
+    .some(hostname => hostnameMatchesGlob(hostname, aggregate.value));
 }
 
 function aggregateMatchingAddresses(aggregate) {
@@ -614,7 +629,7 @@ function openEndpointMenu(event, target) {
   byId('aggregate-hostname').hidden = !aggregateActions ||
     !reverseHostnames.get(endpointMenuTarget?.value)?.preferred;
   byId('aggregate-network').hidden = !aggregateActions || ipv4Number(endpointMenuTarget?.value) === null;
-  byId('remove-aggregate').hidden = !['hostname-suffix', 'cidr'].includes(endpointMenuTarget?.kind);
+  byId('remove-aggregate').hidden = !['hostname-suffix', 'hostname-glob', 'cidr'].includes(endpointMenuTarget?.kind);
   menu.hidden = false;
   menu.style.left = `${Math.min(event.clientX, innerWidth - 140)}px`;
   menu.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
@@ -632,8 +647,13 @@ function suggestedNetwork(address) {
 }
 
 function createEndpointAggregate(kind, value) {
-  value = kind === 'hostname-suffix'
-    ? normalizeHostname(value).replace(/^\*\./, '') : String(value).trim();
+  value = String(value).trim();
+  if (kind === 'hostname-suffix') {
+    value = normalizeHostname(value);
+    const wildcardCount = [...value].filter(character => character === '*').length;
+    if (wildcardCount === 1 && value.startsWith('*.')) value = value.slice(2);
+    else if (wildcardCount) kind = 'hostname-glob';
+  }
   if (!value) return;
   if (kind === 'cidr' && !String(value).includes('/')) return;
   const id = `${kind}:${value}`;
