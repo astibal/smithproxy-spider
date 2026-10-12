@@ -1594,6 +1594,7 @@ function renderFlowTab(scopeKey) {
       '<span class="lane-layout-controls"><button type="button" data-lane-fit>Fit width</button>' +
       '<button type="button" data-lane-width="-1" title="Narrower lanes">W−</button>' +
       '<button type="button" data-lane-width="1" title="Wider lanes">W+</button>' +
+      '<label class="lane-width-slider" title="Uniform width of expanded lanes"><input type="range" min="120" max="640" step="10" data-lane-width-slider><output></output></label>' +
       '<button type="button" data-lane-font="-1" title="Smaller lane font">A−</button>' +
       '<button type="button" data-lane-font="1" title="Larger lane font">A+</button></span></div></div>' +
       '<div class="flow-cache-toolbar"><label class="flow-keep-all"><input type="checkbox" data-keep-all> Keep all</label>' +
@@ -1641,6 +1642,18 @@ function renderFlowTab(scopeKey) {
         renderFlowTab(scopeKey);
       };
     }
+    const laneWidthSlider = panel.querySelector('[data-lane-width-slider]');
+    laneWidthSlider.value = String(followed.laneWidth);
+    laneWidthSlider.oninput = () => {
+      const wasFit = followed.laneFit;
+      followed.laneFit = false;
+      followed.laneWidth = Number(laneWidthSlider.value);
+      if (wasFit) renderFlowTab(scopeKey);
+      else {
+        panel.querySelector('.flow-stream')?.style.setProperty('--lane-width', `${followed.laneWidth}px`);
+        panel.querySelector('.lane-width-slider output').value = `${followed.laneWidth}px`;
+      }
+    };
     for (const button of panel.querySelectorAll('[data-lane-font]')) {
       button.onclick = () => {
         followed.laneFont = Math.max(8, Math.min(18,
@@ -1689,6 +1702,8 @@ function renderFlowTab(scopeKey) {
   panel.querySelector('.lane-layout-controls').hidden = followed.view !== 'lanes';
   panel.querySelector('[data-lane-fit]').setAttribute('aria-pressed', String(followed.laneFit));
   panel.querySelector('[data-lane-fit]').textContent = followed.laneFit ? 'Fit: on' : 'Fit width';
+  panel.querySelector('[data-lane-width-slider]').value = String(followed.laneWidth);
+  panel.querySelector('.lane-width-slider output').value = `${followed.laneWidth}px`;
   panel.classList.toggle('flow-expanded', followed.expanded);
   panel.querySelector('[data-keep-all]').checked = followed.keepAll;
   panel.querySelector('.flow-view-limit').disabled = followed.keepAll;
@@ -1961,13 +1976,14 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
   followed.laneOrder = followed.laneOrder.filter(laneId => laneIds.includes(laneId));
   const visible = followed.laneOrder.filter(laneId => followed.visibleLanes.has(laneId));
   const hidden = followed.laneOrder.filter(laneId => !followed.visibleLanes.has(laneId));
-  const laneColumn = followed.laneFit ? 'minmax(0,1fr)' : `${followed.laneWidth}px`;
+  const laneColumn = followed.laneFit ? 'minmax(0,1fr)' : 'var(--lane-width)';
   const template = `104px ${visible.map(() => laneColumn).join(' ')} ` +
     `${hidden.map(() => '14px').join(' ')} 16px`;
   stream.className = 'flow-stream lane-board';
   stream.classList.toggle('fit-width', followed.laneFit);
+  stream.style.setProperty('--lane-width', `${followed.laneWidth}px`);
   stream.style.setProperty('--lane-font-size', `${followed.laneFont}px`);
-  const layoutKey = `${visible.join('|')}::${hidden.join('|')}::${followed.laneFit}:${followed.laneWidth}:${followed.laneFont}:${followed.timeMode}`;
+  const layoutKey = `${visible.join('|')}::${hidden.join('|')}::${followed.laneFit}:${followed.laneFont}:${followed.timeMode}`;
   const rebuild = stream.dataset.layoutKey !== layoutKey;
   if (rebuild) {
     stream.replaceChildren();
