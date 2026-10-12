@@ -166,6 +166,45 @@ sidebarResizer.onkeydown = event => {
   sidebar.style.width = `${Math.max(280, Math.min(window.innerWidth * .7,
     sidebar.getBoundingClientRect().width + change))}px`;
 };
+const sidebarTrafficPane = byId('sidebar-traffic-pane');
+function showSidebarTab(name) {
+  const selected = name === 'status' ? 'status' : 'traffic';
+  byId('sidebar-status-pane').hidden = selected !== 'status';
+  sidebarTrafficPane.hidden = selected !== 'traffic';
+  for (const button of document.querySelectorAll('[data-sidebar-tab]')) {
+    button.setAttribute('aria-selected', String(button.dataset.sidebarTab === selected));
+  }
+  localStorage.setItem('spider-sidebar-tab', selected);
+}
+for (const button of document.querySelectorAll('[data-sidebar-tab]')) {
+  button.onclick = () => showSidebarTab(button.dataset.sidebarTab);
+}
+function setSessionPaneHeight(height) {
+  const available = sidebarTrafficPane.getBoundingClientRect().height;
+  const maximum = Math.max(80, available - 230);
+  const value = Math.max(70, Math.min(maximum, height));
+  sidebarTrafficPane.style.setProperty('--session-pane-height', `${Math.round(value)}px`);
+  localStorage.setItem('spider-session-pane-height', String(Math.round(value)));
+}
+const trafficPanelResizer = byId('traffic-panel-resizer');
+trafficPanelResizer.onpointerdown = event => {
+  const sessionPanel = sidebarTrafficPane.querySelector('.session-panel');
+  const startY = event.clientY, startHeight = sessionPanel.getBoundingClientRect().height;
+  trafficPanelResizer.setPointerCapture(event.pointerId);
+  trafficPanelResizer.onpointermove = move => setSessionPaneHeight(startHeight + move.clientY - startY);
+  trafficPanelResizer.onpointerup = () => { trafficPanelResizer.onpointermove = null; };
+};
+trafficPanelResizer.onkeydown = event => {
+  if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+  event.preventDefault();
+  const height = sidebarTrafficPane.querySelector('.session-panel').getBoundingClientRect().height;
+  setSessionPaneHeight(height + (event.key === 'ArrowUp' ? -20 : 20));
+};
+const savedSessionPaneHeight = Number(localStorage.getItem('spider-session-pane-height'));
+if (savedSessionPaneHeight >= 70) {
+  sidebarTrafficPane.style.setProperty('--session-pane-height', `${savedSessionPaneHeight}px`);
+}
+showSidebarTab(localStorage.getItem('spider-sidebar-tab') || 'traffic');
 function formatEndpointTtl(seconds) {
   if (seconds < 60) return `${seconds} s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
@@ -1221,6 +1260,8 @@ function setPayloadMode(mode) {
   }
   localStorage.setItem('spider-payload-mode', payloadMode);
   renderPayload();
+  for (const followed of followedFlows.values()) followed.renderedMode = null;
+  for (const sessionId of followedFlows.keys()) renderFlowTab(sessionId);
 }
 
 function setCodeSize(next) {
@@ -1371,21 +1412,69 @@ function renderFlowTab(sessionId) {
     records.unshift(retained[index]);
   }
   const omitted = retained.length - records.length;
+  if (!panel.querySelector('.flow-stream')) {
+    panel.innerHTML = '<div class="flow-follow-head"><h2>Follow flow</h2><small></small>' +
+      '<span class="flow-follow-classifications"></span></div>' +
+      '<div class="flow-gap flow-eviction" hidden></div>' +
+      '<div class="flow-gap flow-window" hidden></div><div class="flow-stream"></div>';
+  }
   const flow = flowRecords.get(sessionId);
+  panel.querySelector('.flow-follow-head small').textContent =
+    resolvedSessionLabel(flow?.label || followed.label);
   const classification = workbenchSiftClassifications(records.at(-1));
-  panel.innerHTML = `<div class="flow-follow-head"><h2>Follow flow</h2>` +
-    `<small>${escapeHtml(resolvedSessionLabel(flow?.label || followed.label))}</small>` +
-    (classification.length ? classificationChips(classification) : '') + `</div>` +
-    (followed.evicted ? `<div class="flow-gap">=!= ${followed.evicted} earlier payloads were evicted from the browser cache.</div>` : '') +
-    (omitted ? `<div class="flow-gap">=!= ${omitted} retained payloads are outside this 2 MiB live view window.</div>` : '') +
-    `<div class="flow-stream">${records.map(record => {
-      const info = record.event.details?.info || {};
-      const bytes = decodeBase64(info.content);
-      const body = payloadMode === 'hex' ? encodeHex(bytes) : new TextDecoder().decode(bytes);
-      const side = info.side === 'R' ? 'R' : 'L';
-      return `<article class="flow-chunk ${side}"><b>${side}</b><small>r${record.revision}<br>${escapeHtml(formatBytes(bytes.length))}</small><pre>${escapeHtml(body)}</pre></article>`;
-    }).join('') || '<span class="empty">No retained payloads for this flow.</span>'}</div>`;
-  panel.scrollTop = panel.scrollHeight;
+  const classificationKey = JSON.stringify(classification);
+  if (followed.classificationKey !== classificationKey) {
+    panel.querySelector('.flow-follow-classifications').innerHTML =
+      classification.length ? classificationChips(classification) : '';
+    followed.classificationKey = classificationKey;
+  }
+  const eviction = panel.querySelector('.flow-eviction');
+  eviction.hidden = !followed.evicted;
+  eviction.textContent = followed.evicted
+    ? `=!= ${followed.evicted} earlier payloads were evicted from the browser cache.` : '';
+  const windowGap = panel.querySelector('.flow-window');
+  windowGap.hidden = !omitted;
+  windowGap.textContent = omitted
+    ? `=!= ${omitted} retained payloads are outside this 2 MiB live view window.` : '';
+
+  const stream = panel.querySelector('.flow-stream');
+  if (followed.renderedMode !== payloadMode) {
+    stream.replaceChildren();
+    followed.renderedMode = payloadMode;
+  }
+  const wanted = new Set(records.map(record => String(record.revision)));
+  for (const chunk of stream.querySelectorAll('.flow-chunk')) {
+    if (!wanted.has(chunk.dataset.revision)) chunk.remove();
+  }
+  const rendered = new Set([...stream.querySelectorAll('.flow-chunk')]
+    .map(chunk => chunk.dataset.revision));
+  for (const record of records) {
+    const recordRevision = String(record.revision);
+    if (rendered.has(recordRevision)) continue;
+    const info = record.event.details?.info || {};
+    const bytes = decodeBase64(info.content);
+    const body = payloadMode === 'hex' ? encodeHex(bytes) : new TextDecoder().decode(bytes);
+    const side = info.side === 'R' ? 'R' : 'L';
+    const chunk = document.createElement('article');
+    chunk.className = `flow-chunk ${side}`;
+    chunk.dataset.revision = recordRevision;
+    const direction = document.createElement('b');
+    direction.textContent = side;
+    const metadata = document.createElement('small');
+    metadata.append(`r${record.revision}`, document.createElement('br'), formatBytes(bytes.length));
+    const content = document.createElement('pre');
+    content.textContent = body;
+    chunk.append(direction, metadata, content);
+    stream.append(chunk);
+  }
+  const empty = stream.querySelector('.empty');
+  if (records.length) empty?.remove();
+  else if (!empty) {
+    const message = document.createElement('span');
+    message.className = 'empty';
+    message.textContent = 'No retained payloads for this flow.';
+    stream.append(message);
+  }
 }
 
 function updateFlowRecord(record) {
