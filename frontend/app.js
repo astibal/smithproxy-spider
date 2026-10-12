@@ -1149,8 +1149,9 @@ function trimPayloadCache() {
     }, 500);
     payloadBytesDropped += bytes;
     evictionTimes.push(Date.now());
-    const followed = followedFlows.get(removed.event.id);
-    if (followed) followed.evicted += 1;
+    for (const followed of followedFlows.values()) {
+      if (scopeMatches(followed, removed)) followed.evicted += 1;
+    }
     if (selectedPayload === removed) selectedPayload = null;
     const flow = flowRecords.get(removed.event.id);
     if (flow?.latest === removed) {
@@ -1355,13 +1356,22 @@ function renderPayloadList() {
   }
   list.className = 'payload-list';
   if (payloadListView === 'flows') {
+    const flowPeers = new Map();
+    for (const flow of flows) {
+      const connection = parseSessionLabel(flow.label);
+      if (!connection) continue;
+      const key = `${connection.sourceHost}|${connection.destinationHost}|${connection.destinationPort}`;
+      flowPeers.set(key, (flowPeers.get(key) || 0) + 1);
+    }
     for (const flow of flows) {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = `flow-row${selectedPayload?.event?.id === flow.id ? ' selected' : ''}` +
         `${flow.active ? '' : ' inactive'}`;
       const label = document.createElement('span');
-      label.textContent = resolvedSessionLabel(flow.label || flow.id);
+      const connection = parseSessionLabel(flow.label);
+      const peerKey = connection && `${connection.sourceHost}|${connection.destinationHost}|${connection.destinationPort}`;
+      label.textContent = flowListLabel(flow.label || flow.id, (flowPeers.get(peerKey) || 0) > 1);
       label.title = flow.label || flow.id;
       const left = document.createElement('span');
       left.className = 'flow-side';
@@ -1418,22 +1428,83 @@ function openFlowMenu(event, sessionId) {
   const menu = byId('flow-menu');
   menu.hidden = false;
   menu.style.left = `${Math.min(event.clientX, innerWidth - 210)}px`;
-  menu.style.top = `${Math.min(event.clientY, innerHeight - 70)}px`;
+  menu.style.top = `${Math.min(event.clientY, innerHeight - 130)}px`;
 }
 
-function openFlowTab(sessionId) {
+function strictConnectionLabel(label) {
+  const connection = parseSessionLabel(label);
+  if (!connection) return resolvedSessionLabel(label);
+  return `${resolvedAddress(connection.sourceHost)}:${connection.sourcePort} → ` +
+    `${resolvedAddress(connection.destinationHost)}:${connection.destinationPort}`;
+}
+
+function flowListLabel(label, showSourcePort = false) {
+  const connection = parseSessionLabel(label);
+  if (!connection) return resolvedSessionLabel(label);
+  if (!compactSessionLabels || showSourcePort) return strictConnectionLabel(label);
+  return `${resolvedAddress(connection.sourceHost)} → ` +
+    `${resolvedAddress(connection.destinationHost)}:${connection.destinationPort}`;
+}
+
+function flowScope(sessionId, type = 'connection') {
+  const flow = flowRecords.get(sessionId);
+  const label = flow?.label || payloadRecords.find(record => record.event.id === sessionId)
+    ?.event?.details?.info?.session || sessionId;
+  const connection = parseSessionLabel(label);
+  if (!connection || type === 'connection') return {
+    key: `connection:${sessionId}`, type: 'connection', sessionId, label,
+    title: `Conn :${connection?.sourcePort || '?'}`,
+  };
+  if (type === 'service') return {
+    key: `service:${connection.sourceHost}|${connection.destinationHost}|${connection.destinationPort}`,
+    type, sourceHost: connection.sourceHost, destinationHost: connection.destinationHost,
+    destinationPort: connection.destinationPort, label,
+    title: `Service ${resolvedAddress(connection.destinationHost)}:${connection.destinationPort}`,
+  };
+  return {
+    key: `client:${connection.sourceHost}`, type: 'client', sourceHost: connection.sourceHost,
+    label, title: `Client ${resolvedAddress(connection.sourceHost)}`,
+  };
+}
+
+function scopeMatches(scope, record) {
+  if (scope.type === 'connection') return record.event.id === scope.sessionId;
+  const connection = parseSessionLabel(record.event.details?.info?.session);
+  if (!connection || connection.sourceHost !== scope.sourceHost) return false;
+  return scope.type === 'client' ||
+    (connection.destinationHost === scope.destinationHost &&
+     connection.destinationPort === scope.destinationPort);
+}
+
+function scopeLabel(scope, records = []) {
+  if (scope.type === 'connection') return strictConnectionLabel(scope.label);
+  const count = new Set(records.map(record => record.event.id)).size;
+  if (scope.type === 'service') {
+    return `${resolvedAddress(scope.sourceHost)}:* → ${resolvedAddress(scope.destinationHost)}:` +
+      `${scope.destinationPort} · ${count} connection${count === 1 ? '' : 's'}`;
+  }
+  const destinations = new Set(records.map(record => {
+    const connection = parseSessionLabel(record.event.details?.info?.session);
+    return connection && `${connection.destinationHost}:${connection.destinationPort}`;
+  }).filter(Boolean)).size;
+  return `${resolvedAddress(scope.sourceHost)}:* → * · ${count} connections · ${destinations} destinations · live`;
+}
+
+function openFlowTab(sessionId, type = 'connection') {
   if (!sessionId) return;
-  const id = flowTabId(sessionId);
-  if (!followedFlows.has(sessionId)) {
-    const flow = flowRecords.get(sessionId);
-    followedFlows.set(sessionId, {id, evicted: 0, label: flow?.label || sessionId,
-      view: 'chunks', expanded: false, collapsed: false});
+  const scope = flowScope(sessionId, type);
+  const id = flowTabId(scope.key);
+  if (!followedFlows.has(scope.key)) {
+    const followed = {...scope, id, evicted: 0,
+      view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
+      laneOrder: [], visibleLanes: new Set()};
+    followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
     const label = document.createElement('span');
-    label.textContent = resolvedSessionLabel(flow?.label || sessionId);
+    label.textContent = scope.title;
     const close = document.createElement('i'); close.textContent = '×'; close.title = 'Close flow tab';
-    close.onclick = event => { event.stopPropagation(); closeFlowTab(sessionId); };
+    close.onclick = event => { event.stopPropagation(); closeFlowTab(scope.key); };
     button.append(label, close);
     button.onclick = () => showTab(id);
     byId('flow-tabs').append(button);
@@ -1441,28 +1512,28 @@ function openFlowTab(sessionId) {
     const panel = document.createElement('div');
     panel.id = id; panel.className = 'tab-panel flow-follow-panel'; panel.hidden = true;
     document.querySelector('.workspace').append(panel);
-    addActivity('system', 'FOLLOW', `${sessionId} opened in a flow tab`,
-      'New payloads for this flow will be appended while they remain in the browser cache.');
+    addActivity('system', 'FOLLOW', `${scope.title} opened`,
+      'Matching payloads will be appended live while they remain in the browser cache.');
   }
-  renderFlowTab(sessionId);
+  renderFlowTab(scope.key);
   showTab(id);
 }
 
-function closeFlowTab(sessionId) {
-  const followed = followedFlows.get(sessionId);
+function closeFlowTab(scopeKey) {
+  const followed = followedFlows.get(scopeKey);
   if (!followed) return;
   byId(followed.id)?.remove();
   document.querySelector(`[data-tab="${followed.id}"]`)?.remove();
-  followedFlows.delete(sessionId);
+  followedFlows.delete(scopeKey);
   byId('flow-tab-separator').hidden = followedFlows.size === 0;
   if (activeTab === followed.id) showTab('workbench-tab');
 }
 
-function renderFlowTab(sessionId) {
-  const followed = followedFlows.get(sessionId);
+function renderFlowTab(scopeKey) {
+  const followed = followedFlows.get(scopeKey);
   const panel = followed && byId(followed.id);
   if (!panel) return;
-  const retained = payloadRecords.filter(record => record.event.id === sessionId)
+  const retained = payloadRecords.filter(record => scopeMatches(followed, record))
     .sort((a, b) => a.revision - b.revision);
   const records = [];
   let displayBytes = 0;
@@ -1478,6 +1549,7 @@ function renderFlowTab(sessionId) {
       '<span class="flow-follow-classifications"></span><div class="flow-follow-controls">' +
       '<button type="button" data-flow-view="chunks" aria-pressed="true">Chunks</button>' +
       '<button type="button" data-flow-view="stream" aria-pressed="false">Stream</button>' +
+      '<button type="button" data-flow-view="lanes" aria-pressed="false">Lanes</button>' +
       '<button type="button" data-flow-expand="all">Expand all</button>' +
       '<button type="button" data-flow-expand="none">Collapse all</button></div></div>' +
       '<label class="flow-view-limit"><span>Flow view limit</span><input type="range" min="1" max="32" step="1"><output></output></label>' +
@@ -1487,7 +1559,7 @@ function renderFlowTab(sessionId) {
       button.onclick = () => {
         followed.view = button.dataset.flowView;
         followed.renderedMode = null;
-        renderFlowTab(sessionId);
+        renderFlowTab(scopeKey);
       };
     }
     panel.querySelector('[data-flow-expand="all"]').onclick = () => {
@@ -1526,9 +1598,10 @@ function renderFlowTab(sessionId) {
   panel.classList.toggle('flow-expanded', followed.expanded);
   panel.querySelector('.flow-view-limit input').value = String(flowViewLimitMiB);
   panel.querySelector('.flow-view-limit output').value = `${flowViewLimitMiB} MiB`;
-  const flow = flowRecords.get(sessionId);
   panel.querySelector('.flow-follow-head small').textContent =
-    resolvedSessionLabel(flow?.label || followed.label);
+    scopeLabel(followed, records);
+  panel.querySelector('.flow-follow-head h2').textContent = followed.type === 'client'
+    ? 'Client activity' : followed.type === 'service' ? 'Follow service' : 'Follow connection';
   const classification = workbenchSiftClassifications(records.at(-1));
   const classificationKey = JSON.stringify(classification);
   if (followed.classificationKey !== classificationKey) {
@@ -1546,10 +1619,15 @@ function renderFlowTab(sessionId) {
     ? `=!= ${omitted} retained payloads are outside this ${flowViewLimitMiB} MiB live view window.` : '';
 
   const stream = panel.querySelector('.flow-stream');
+  stream.className = followed.view === 'lanes' ? 'flow-stream lane-board' : 'flow-stream';
   const renderMode = `${followed.view}:${payloadMode}`;
   if (followed.renderedMode !== renderMode) {
     stream.replaceChildren();
     followed.renderedMode = renderMode;
+  }
+  if (followed.view === 'lanes') {
+    renderLaneBoard(stream, records, followed, scopeKey);
+    return;
   }
   const wanted = new Set(records.map(record => String(record.revision)));
   for (const chunk of stream.querySelectorAll('[data-revision]')) {
@@ -1611,6 +1689,96 @@ function renderFlowTab(sessionId) {
     message.textContent = 'No retained payloads for this flow.';
     stream.append(message);
   }
+}
+
+function laneLabel(sessionId) {
+  const flow = flowRecords.get(sessionId);
+  return strictConnectionLabel(flow?.label || sessionId);
+}
+
+function renderLaneBoard(stream, records, followed, scopeKey) {
+  const workspace = stream.closest('.workspace');
+  const previousScroll = workspace.scrollTop;
+  const laneIds = [...new Set(records.map(record => record.event.id))];
+  for (const laneId of laneIds) {
+    if (followed.laneOrder.includes(laneId)) continue;
+    followed.laneOrder.push(laneId);
+    if (followed.visibleLanes.size < 2) followed.visibleLanes.add(laneId);
+  }
+  followed.laneOrder = followed.laneOrder.filter(laneId => laneIds.includes(laneId));
+  const visible = followed.laneOrder.filter(laneId => followed.visibleLanes.has(laneId));
+  const hidden = followed.laneOrder.filter(laneId => !followed.visibleLanes.has(laneId));
+  const template = `${visible.map(() => 'minmax(250px,1fr)').join(' ')} ` +
+    `${hidden.map(() => '14px').join(' ')} 16px`;
+  stream.replaceChildren();
+  stream.className = 'flow-stream lane-board';
+  const header = document.createElement('div');
+  header.className = 'lane-row lane-header';
+  header.style.gridTemplateColumns = template;
+  for (let index = 0; index < visible.length; ++index) {
+    const laneId = visible[index];
+    const item = document.createElement('div');
+    item.className = 'lane-title'; item.draggable = true; item.dataset.lane = laneId;
+    item.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(laneId) * 67) % 360} 62% 62%)`);
+    const text = document.createElement('span'); text.textContent = laneLabel(laneId); text.title = laneId;
+    const collapse = document.createElement('button'); collapse.textContent = '→'; collapse.title = 'Collapse to activity rail';
+    collapse.onclick = () => { followed.visibleLanes.delete(laneId); renderFlowTab(scopeKey); };
+    item.append(text, collapse);
+    item.ondragstart = () => { followed.draggedLane = laneId; };
+    item.ondragover = event => event.preventDefault();
+    item.ondrop = event => {
+      event.preventDefault();
+      const from = followed.laneOrder.indexOf(followed.draggedLane);
+      const to = followed.laneOrder.indexOf(laneId);
+      if (from < 0 || to < 0 || from === to) return;
+      const [moved] = followed.laneOrder.splice(from, 1);
+      followed.laneOrder.splice(to, 0, moved);
+      renderFlowTab(scopeKey);
+    };
+    header.append(item);
+  }
+  for (const laneId of hidden) {
+    const rail = document.createElement('button');
+    rail.className = 'lane-rail-title'; rail.textContent = '│'; rail.title = `Expand ${laneLabel(laneId)}`;
+    rail.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(laneId) * 67) % 360} 62% 62%)`);
+    rail.onclick = () => { followed.visibleLanes.add(laneId); renderFlowTab(scopeKey); };
+    header.append(rail);
+  }
+  const all = document.createElement('span'); all.className = 'lane-all-title'; all.textContent = 'ALL';
+  header.append(all); stream.append(header);
+  for (const record of records) {
+    const row = document.createElement('div');
+    row.className = 'lane-row'; row.dataset.revision = String(record.revision);
+    row.style.gridTemplateColumns = template;
+    const visibleIndex = visible.indexOf(record.event.id);
+    const hiddenIndex = hidden.indexOf(record.event.id);
+    if (visibleIndex >= 0) {
+      const info = record.event.details?.info || {};
+      const bytes = decodeBase64(info.content);
+      const card = document.createElement('article');
+      const side = info.side === 'R' ? 'R' : 'L';
+      card.className = `lane-card ${side}`;
+      card.style.gridColumn = String(visibleIndex + 1);
+      card.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(record.event.id) * 67) % 360} 62% 62%)`);
+      const meta = document.createElement('small');
+      meta.textContent = `r${record.revision} · ${side} · ${formatBytes(bytes.length)}`;
+      const preview = document.createElement('pre');
+      appendMixedAscii(preview, bytes.subarray(0, 320));
+      if (bytes.length > 320) preview.append(document.createTextNode(` … +${bytes.length - 320} B`));
+      card.append(meta, preview); row.append(card);
+    } else if (hiddenIndex >= 0) {
+      const tick = document.createElement('button');
+      tick.className = 'lane-tick'; tick.style.gridColumn = String(visible.length + hiddenIndex + 1);
+      tick.title = `r${record.revision} · ${laneLabel(record.event.id)} · click to expand`;
+      tick.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(record.event.id) * 67) % 360} 62% 62%)`);
+      tick.onclick = () => { followed.visibleLanes.add(record.event.id); renderFlowTab(scopeKey); };
+      row.append(tick);
+    }
+    const allTick = document.createElement('i');
+    allTick.className = 'lane-all-tick'; allTick.style.gridColumn = String(visible.length + hidden.length + 1);
+    row.append(allTick); stream.append(row);
+  }
+  requestAnimationFrame(() => { workspace.scrollTop = previousScroll; });
 }
 
 function appendMixedAscii(target, bytes) {
@@ -2486,10 +2654,12 @@ byId('remove-aggregate').onclick = () => {
   }
   byId('endpoint-menu').hidden = true;
 };
-byId('follow-flow').onclick = () => {
-  openFlowTab(flowMenuSession);
-  byId('flow-menu').hidden = true;
-};
+for (const button of document.querySelectorAll('[data-follow-scope]')) {
+  button.onclick = () => {
+    openFlowTab(flowMenuSession, button.dataset.followScope);
+    byId('flow-menu').hidden = true;
+  };
+}
 const activityDrawer = byId('activity-drawer');
 activityDrawer.ontoggle = () => {
   if (activityDrawer.open) {
