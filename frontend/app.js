@@ -96,7 +96,7 @@ let bypassAll = localStorage.getItem('spider-bypass-all') === 'true';
 const aggregateMembers = new Map();
 let activityRecords = [], activitySequence = 0, activityUnread = 0;
 const activityFilters = {rule: true, sift: true, system: true};
-let flowViewLimitMiB = Math.max(1, Math.min(32,
+let flowViewLimitMiB = Math.max(1, Math.min(8192,
   Number(localStorage.getItem('spider-flow-view-limit-mib')) || 2));
 const eventFilters = {ping: false, sessions: false, status: true, other: false};
 const defaultJavascriptScript = `// api.bytes        Uint8Array with the original payload
@@ -1498,7 +1498,7 @@ function openFlowTab(sessionId, type = 'connection') {
     const followed = {...scope, id, evicted: 0,
       view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
       laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11,
-      cardLevels: new Map()};
+      cardLevels: new Map(), payloadCaps: {L: 0, R: 0}};
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
@@ -1530,6 +1530,44 @@ function closeFlowTab(scopeKey) {
   if (activeTab === followed.id) showTab('workbench-tab');
 }
 
+function flowDisplayBytes(followed, side, bytes) {
+  const cap = followed.payloadCaps?.[side] || 0;
+  if (cap === -1) return bytes.subarray(0, Math.ceil(bytes.length / 2));
+  return cap && bytes.length > cap ? bytes.subarray(0, cap) : bytes;
+}
+
+function clearFollowedFlow(followed) {
+  const removed = payloadRecords.filter(record => scopeMatches(followed, record));
+  if (!removed.length) return;
+  const removedSet = new Set(removed);
+  const affectedIds = new Set(removed.map(record => record.event.id));
+  payloadRecords = payloadRecords.filter(record => !removedSet.has(record));
+  payloadCacheBytes = payloadRecords.reduce((total, record) =>
+    total + (record.cacheBytes || payloadSize(record)), 0);
+  for (const id of affectedIds) flowRecords.delete(id);
+  for (const record of payloadRecords) {
+    if (affectedIds.has(record.event.id)) updateFlowRecord(record);
+  }
+  if (selectedPayload && removedSet.has(selectedPayload)) {
+    selectedPayload = payloadRecords.at(-1) || null;
+    if (selectedPayload) selectPayload(selectedPayload, followPayload);
+    else {
+      selectPayload(null);
+      payloadBytes = new Uint8Array();
+      replacementBase64 = null;
+      byId('payload-text').value = '';
+      byId('payload-hex').textContent = '';
+    }
+  }
+  followed.evicted = 0;
+  followed.cardLevels.clear();
+  followed.renderedMode = null;
+  updateCacheStats();
+  addActivity('system', 'FLOW CACHE', `${removed.length} payloads cleared from ${followed.title}`,
+    `${formatBytes(removed.reduce((sum, record) => sum + (record.cacheBytes || payloadSize(record)), 0))} released from the browser cache.`);
+  scheduleRender(false, true);
+}
+
 function renderFlowTab(scopeKey) {
   const followed = followedFlows.get(scopeKey);
   const panel = followed && byId(followed.id);
@@ -1558,7 +1596,10 @@ function renderFlowTab(scopeKey) {
       '<button type="button" data-lane-width="1" title="Wider lanes">W+</button>' +
       '<button type="button" data-lane-font="-1" title="Smaller lane font">A−</button>' +
       '<button type="button" data-lane-font="1" title="Larger lane font">A+</button></span></div></div>' +
-      '<label class="flow-view-limit"><span>Flow view limit</span><input type="range" min="1" max="32" step="1"><output></output></label>' +
+      '<div class="flow-cache-toolbar"><label>View <input class="flow-view-limit" type="number" min="1" max="8192" step="1"> MiB</label>' +
+      '<label>L bytes <select data-payload-cap="L"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
+      '<label>R bytes <select data-payload-cap="R"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
+      '<button type="button" class="danger-subtle" data-clear-flow>Clear flow cache</button></div>' +
       '<div class="flow-gap flow-eviction" hidden></div>' +
       '<div class="flow-gap flow-window" hidden></div><div class="flow-stream"></div>';
     for (const button of panel.querySelectorAll('[data-flow-view]')) {
@@ -1605,15 +1646,25 @@ function renderFlowTab(scopeKey) {
         renderFlowTab(scopeKey);
       };
     }
-    const limit = panel.querySelector('.flow-view-limit input');
+    const limit = panel.querySelector('.flow-view-limit');
     limit.value = String(flowViewLimitMiB);
-    panel.querySelector('.flow-view-limit output').value = `${flowViewLimitMiB} MiB`;
-    limit.oninput = () => {
-      flowViewLimitMiB = Number(limit.value);
+    limit.onchange = () => {
+      flowViewLimitMiB = Math.max(1, Math.min(8192, Number(limit.value) || 1));
+      limit.value = String(flowViewLimitMiB);
       localStorage.setItem('spider-flow-view-limit-mib', String(flowViewLimitMiB));
       for (const item of followedFlows.values()) item.renderedMode = null;
       for (const id of followedFlows.keys()) renderFlowTab(id);
     };
+    for (const select of panel.querySelectorAll('[data-payload-cap]')) {
+      const side = select.dataset.payloadCap;
+      select.value = String(followed.payloadCaps[side]);
+      select.onchange = () => {
+        followed.payloadCaps[side] = Number(select.value);
+        followed.renderedMode = null;
+        renderFlowTab(scopeKey);
+      };
+    }
+    panel.querySelector('[data-clear-flow]').onclick = () => clearFollowedFlow(followed);
   }
   for (const button of panel.querySelectorAll('[data-flow-view]')) {
     button.setAttribute('aria-pressed', String(button.dataset.flowView === followed.view));
@@ -1624,8 +1675,7 @@ function renderFlowTab(scopeKey) {
   panel.querySelector('[data-lane-fit]').setAttribute('aria-pressed', String(followed.laneFit));
   panel.querySelector('[data-lane-fit]').textContent = followed.laneFit ? 'Fit: on' : 'Fit width';
   panel.classList.toggle('flow-expanded', followed.expanded);
-  panel.querySelector('.flow-view-limit input').value = String(flowViewLimitMiB);
-  panel.querySelector('.flow-view-limit output').value = `${flowViewLimitMiB} MiB`;
+  panel.querySelector('.flow-view-limit').value = String(flowViewLimitMiB);
   panel.querySelector('.flow-follow-head small').textContent =
     scopeLabel(followed, records);
   panel.querySelector('.flow-follow-head h2').textContent = followed.type === 'client'
@@ -1668,8 +1718,9 @@ function renderFlowTab(scopeKey) {
     const recordRevision = String(record.revision);
     if (rendered.has(recordRevision)) continue;
     const info = record.event.details?.info || {};
-    const bytes = decodeBase64(info.content);
+    const completeBytes = decodeBase64(info.content);
     const side = info.side === 'R' ? 'R' : 'L';
+    const bytes = flowDisplayBytes(followed, side, completeBytes);
     const chunk = followed.view === 'stream'
       ? document.createElement('article') : document.createElement('details');
     chunk.className = `${followed.view === 'stream' ? 'flow-stream-chunk' : 'flow-chunk'} ${side}`;
@@ -1678,6 +1729,8 @@ function renderFlowTab(scopeKey) {
     direction.textContent = side;
     const metadata = document.createElement('small');
     metadata.append(`r${record.revision}`, document.createElement('br'), formatBytes(bytes.length));
+    if (bytes.length < completeBytes.length) metadata.append(document.createElement('br'),
+      `of ${formatBytes(completeBytes.length)}`);
     if (followed.view === 'stream') {
       const content = document.createElement('pre');
       appendMixedAscii(content, bytes);
@@ -1901,9 +1954,10 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
     const hiddenIndex = hidden.indexOf(record.event.id);
     if (visibleIndex >= 0) {
       const info = record.event.details?.info || {};
-      const bytes = decodeBase64(info.content);
-      const card = document.createElement('article');
       const side = info.side === 'R' ? 'R' : 'L';
+      const completeBytes = decodeBase64(info.content);
+      const bytes = flowDisplayBytes(followed, side, completeBytes);
+      const card = document.createElement('article');
       card.className = `lane-card ${side}`;
       card.dataset.revision = String(record.revision);
       card.style.gridColumn = String(visibleIndex + 1);
@@ -1911,7 +1965,8 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
       const head = document.createElement('div');
       head.className = 'lane-card-head';
       const meta = document.createElement('small');
-      meta.textContent = `r${record.revision} · ${side} · ${formatBytes(bytes.length)}`;
+      meta.textContent = `r${record.revision} · ${side} · ${formatBytes(bytes.length)}` +
+        (bytes.length < completeBytes.length ? ` / ${formatBytes(completeBytes.length)} (trimmed)` : '');
       const preview = document.createElement('pre');
       head.append(meta);
       if (bytes.length > 320) {
