@@ -1498,7 +1498,7 @@ function openFlowTab(sessionId, type = 'connection') {
     const followed = {...scope, id, evicted: 0,
       view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
       laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11,
-      cardLevels: new Map(), payloadCaps: {L: 0, R: 0}, keepAll: false};
+      cardLevels: new Map(), payloadCaps: {L: 0, R: 0}, keepAll: false, timeMode: 'elapsed'};
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
@@ -1600,6 +1600,7 @@ function renderFlowTab(scopeKey) {
       '<label>View <input class="flow-view-limit" type="number" min="1" max="8192" step="1"> MiB</label>' +
       '<label>L bytes <select data-payload-cap="L"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
       '<label>R bytes <select data-payload-cap="R"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
+      '<label>Time <select data-time-mode><option value="elapsed">elapsed</option><option value="local">local</option><option value="utc">UTC</option></select></label>' +
       '<button type="button" class="danger-subtle" data-clear-flow>Clear flow cache</button></div>' +
       '<div class="flow-gap flow-eviction" hidden></div>' +
       '<div class="flow-gap flow-window" hidden></div><div class="flow-stream"></div>';
@@ -1672,6 +1673,12 @@ function renderFlowTab(scopeKey) {
         renderFlowTab(scopeKey);
       };
     }
+    const timeMode = panel.querySelector('[data-time-mode]');
+    timeMode.value = followed.timeMode;
+    timeMode.onchange = () => {
+      followed.timeMode = timeMode.value;
+      renderFlowTab(scopeKey);
+    };
     panel.querySelector('[data-clear-flow]').onclick = () => clearFollowedFlow(followed);
   }
   for (const button of panel.querySelectorAll('[data-flow-view]')) {
@@ -1786,6 +1793,26 @@ function renderFlowTab(scopeKey) {
 function laneLabel(sessionId) {
   const flow = flowRecords.get(sessionId);
   return strictConnectionLabel(flow?.label || sessionId);
+}
+
+function laneTimeLabel(timestamp, mode, origin) {
+  if (!Number.isFinite(timestamp)) return '—';
+  if (mode === 'elapsed') {
+    const elapsed = Math.max(0, timestamp - origin);
+    if (elapsed < 60000) return `+${(elapsed / 1000).toFixed(3)}s`;
+    return `+${Math.floor(elapsed / 60000)}m${((elapsed % 60000) / 1000).toFixed(3).padStart(6, '0')}s`;
+  }
+  const date = new Date(timestamp);
+  if (mode === 'utc') return `${date.toISOString().slice(11, 23)}Z`;
+  return `${date.toLocaleTimeString([], {hour12: false})}.${String(date.getMilliseconds()).padStart(3, '0')}`;
+}
+
+function laneTimeTitle(record, origin) {
+  const timestamp = Number(record.event.spider_received_at_ms);
+  if (!Number.isFinite(timestamp)) return `r${record.revision} · receive timestamp unavailable`;
+  const date = new Date(timestamp);
+  return `r${record.revision} · elapsed ${laneTimeLabel(timestamp, 'elapsed', origin)}\n` +
+    `local ${date.toLocaleString()}.${String(date.getMilliseconds()).padStart(3, '0')}\nUTC ${date.toISOString()}`;
 }
 
 function laneResponseCandidates(records) {
@@ -1935,12 +1962,12 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
   const visible = followed.laneOrder.filter(laneId => followed.visibleLanes.has(laneId));
   const hidden = followed.laneOrder.filter(laneId => !followed.visibleLanes.has(laneId));
   const laneColumn = followed.laneFit ? 'minmax(0,1fr)' : `${followed.laneWidth}px`;
-  const template = `${visible.map(() => laneColumn).join(' ')} ` +
+  const template = `104px ${visible.map(() => laneColumn).join(' ')} ` +
     `${hidden.map(() => '14px').join(' ')} 16px`;
   stream.className = 'flow-stream lane-board';
   stream.classList.toggle('fit-width', followed.laneFit);
   stream.style.setProperty('--lane-font-size', `${followed.laneFont}px`);
-  const layoutKey = `${visible.join('|')}::${hidden.join('|')}::${followed.laneFit}:${followed.laneWidth}:${followed.laneFont}`;
+  const layoutKey = `${visible.join('|')}::${hidden.join('|')}::${followed.laneFit}:${followed.laneWidth}:${followed.laneFont}:${followed.timeMode}`;
   const rebuild = stream.dataset.layoutKey !== layoutKey;
   if (rebuild) {
     stream.replaceChildren();
@@ -1948,6 +1975,9 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
     const header = document.createElement('div');
     header.className = 'lane-row lane-header';
     header.style.gridTemplateColumns = template;
+    const timeTitle = document.createElement('span');
+    timeTitle.className = 'lane-time-title'; timeTitle.textContent = followed.timeMode;
+    header.append(timeTitle);
     for (const laneId of visible) {
       const item = document.createElement('div');
       item.className = 'lane-title'; item.draggable = true; item.dataset.lane = laneId;
@@ -1985,11 +2015,19 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
   }
   const rendered = new Set([...stream.querySelectorAll('.lane-row[data-revision]')]
     .map(row => row.dataset.revision));
+  const timeOrigin = Number(records[0]?.event.spider_received_at_ms) || 0;
   for (const record of records) {
     if (rendered.has(String(record.revision))) continue;
     const row = document.createElement('div');
     row.className = 'lane-row'; row.dataset.revision = String(record.revision);
     row.style.gridTemplateColumns = template;
+    const timestamp = Number(record.event.spider_received_at_ms);
+    const time = document.createElement('time');
+    time.className = 'lane-time';
+    time.textContent = laneTimeLabel(timestamp, followed.timeMode, timeOrigin);
+    time.title = laneTimeTitle(record, timeOrigin);
+    if (Number.isFinite(timestamp)) time.dateTime = new Date(timestamp).toISOString();
+    row.append(time);
     const visibleIndex = visible.indexOf(record.event.id);
     const hiddenIndex = hidden.indexOf(record.event.id);
     if (visibleIndex >= 0) {
@@ -2000,7 +2038,7 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
       const card = document.createElement('article');
       card.className = `lane-card ${side}`;
       card.dataset.revision = String(record.revision);
-      card.style.gridColumn = String(visibleIndex + 1);
+      card.style.gridColumn = String(visibleIndex + 2);
       card.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(record.event.id) * 67) % 360} 62% 62%)`);
       const head = document.createElement('div');
       head.className = 'lane-card-head';
@@ -2026,15 +2064,24 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
       row.append(card);
     } else if (hiddenIndex >= 0) {
       const tick = document.createElement('button');
-      tick.className = 'lane-tick'; tick.style.gridColumn = String(visible.length + hiddenIndex + 1);
+      tick.className = 'lane-tick'; tick.style.gridColumn = String(visible.length + hiddenIndex + 2);
       tick.title = `r${record.revision} · ${laneLabel(record.event.id)} · click to expand`;
       tick.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(record.event.id) * 67) % 360} 62% 62%)`);
       tick.onclick = () => { followed.visibleLanes.add(record.event.id); renderFlowTab(scopeKey); };
       row.append(tick);
     }
     const allTick = document.createElement('i');
-    allTick.className = 'lane-all-tick'; allTick.style.gridColumn = String(visible.length + hidden.length + 1);
+    allTick.className = 'lane-all-tick'; allTick.style.gridColumn = String(visible.length + hidden.length + 2);
     row.append(allTick); stream.append(row);
+  }
+  const recordsByRevision = new Map(records.map(record => [String(record.revision), record]));
+  for (const row of stream.querySelectorAll('.lane-row[data-revision]')) {
+    const record = recordsByRevision.get(row.dataset.revision);
+    const time = row.querySelector('.lane-time');
+    if (!record || !time) continue;
+    const timestamp = Number(record.event.spider_received_at_ms);
+    time.textContent = laneTimeLabel(timestamp, followed.timeMode, timeOrigin);
+    time.title = laneTimeTitle(record, timeOrigin);
   }
   decorateLaneResponses(stream, records, followed);
   if (rebuild) requestAnimationFrame(() => { workspace.scrollTop = previousScroll; });
