@@ -194,6 +194,19 @@ int main() {
     assert(!classified.prepare(after_classification));
     assert(after_classification["decision"]["state"] == "passed");
 
+    spider::DecisionBroker classified_glob(std::chrono::seconds(1));
+    const auto glob_status = classified_glob.set_traffic_rules({{"rules", nlohmann::json::array({
+        {{"id", "sift-http"}, {"kind", "sift-glob"}, {"value", "protocol.http*"},
+         {"mode", "pass"}},
+    })}});
+    assert(glob_status["errors"].empty());
+    classified_glob.observe({{"action", "connection-info"}, {"id", "filter-1"},
+                             {"details", {{"info", {{"classification", {{"sift",
+                                 nlohmann::json::array({"protocol.http2"})}}}}}}}});
+    auto globbed = filter_event;
+    assert(!classified_glob.prepare(globbed));
+    assert(globbed["decision"]["state"] == "passed");
+
     spider::SessionStore traffic_store(20);
     assert(spider::process_webhook(traffic_store, traffic, ignored).status == 200);
     assert(traffic_store.events_after(0)["events"].empty());

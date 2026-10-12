@@ -1,6 +1,7 @@
 #include "decision_broker.hpp"
 
 #include <algorithm>
+#include <fnmatch.h>
 #include <vector>
 
 namespace spider {
@@ -21,6 +22,10 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
     for (auto& rule : traffic_rules_) {
         const auto matches = rule.kind == "sift"
             ? session_classifications_[session].contains(rule.value)
+            : rule.kind == "sift-glob"
+            ? std::ranges::any_of(session_classifications_[session], [&](const auto& value) {
+                  return fnmatch(rule.value.c_str(), value.c_str(), FNM_CASEFOLD) == 0;
+              })
             : rule.filter && rule.filter->matches(event);
         if (matches) {
             matched = &rule;
@@ -182,17 +187,18 @@ nlohmann::json DecisionBroker::set_traffic_rules(const nlohmann::json& message) 
             const auto address = rule.value("address", "");
             const auto mode = rule.value("mode", "");
             std::string error;
-            auto filter = kind == "sift" ? std::optional<SessionFilter>{} : SessionFilter::compile(
+            const auto sift_rule = kind == "sift" || kind == "sift-glob";
+            auto filter = sift_rule ? std::optional<SessionFilter>{} : SessionFilter::compile(
                 "(src host " + address + " or dst host " + address + ")", error);
-            if ((kind == "sift" ? value.empty() : address.empty()) ||
+            if ((sift_rule ? value.empty() : address.empty()) ||
                 (mode != "pass" && mode != "focus" && mode != "inspect" &&
                                     mode != "ignore")) {
                 errors.push_back({{"address", address}, {"error", "invalid address or mode"}});
-            } else if (kind != "sift" && !filter) {
+            } else if (!sift_rule && !filter) {
                 errors.push_back({{"address", address}, {"error", error}});
             } else {
-                next.push_back({id.empty() ? mode + ":" + (kind == "sift" ? value : address) : id,
-                                kind, kind == "sift" ? value : address, address, mode,
+                next.push_back({id.empty() ? mode + ":" + (sift_rule ? value : address) : id,
+                                kind, sift_rule ? value : address, address, mode,
                                 std::move(filter)});
             }
         }

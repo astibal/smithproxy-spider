@@ -87,10 +87,17 @@ try {
     typeof item.id === 'string' && ['hostname-suffix', 'hostname-glob', 'cidr'].includes(item.kind) &&
     typeof item.value === 'string');
 } catch (_) {}
+let siftAggregates = [];
+try {
+  const saved = JSON.parse(localStorage.getItem('spider-sift-aggregates') || '[]');
+  if (Array.isArray(saved)) siftAggregates = saved.filter(value => typeof value === 'string' && value.trim());
+} catch (_) {}
 let bypassAll = localStorage.getItem('spider-bypass-all') === 'true';
 const aggregateMembers = new Map();
 let activityRecords = [], activitySequence = 0, activityUnread = 0;
 const activityFilters = {rule: true, sift: true, system: true};
+let flowViewLimitMiB = Math.max(1, Math.min(32,
+  Number(localStorage.getItem('spider-flow-view-limit-mib')) || 2));
 const eventFilters = {ping: false, sessions: false, status: true, other: false};
 const defaultJavascriptScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
@@ -297,14 +304,15 @@ function ruleLabel(rule) {
   if (rule.kind === 'hostname-suffix') return `*.${rule.value}`;
   if (rule.kind === 'hostname-glob') return rule.value;
   if (rule.kind === 'sift') return classificationLabel(rule.value);
+  if (rule.kind === 'sift-glob') return classificationGlobLabel(rule.value);
   return rule.value;
 }
 
 function expandedTrafficRules() {
   const expanded = [];
   for (const rule of trafficRules) {
-    if (rule.kind === 'sift') {
-      expanded.push({id: rule.id, kind: 'sift', value: rule.value, mode: rule.mode});
+    if (rule.kind === 'sift' || rule.kind === 'sift-glob') {
+      expanded.push({id: rule.id, kind: rule.kind, value: rule.value, mode: rule.mode});
       continue;
     }
     const addresses = rule.kind === 'address' ? [rule.value] : aggregateMatchingAddresses(rule);
@@ -668,7 +676,8 @@ function openEndpointMenu(event, target) {
   byId('aggregate-hostname').hidden = !aggregateActions ||
     !reverseHostnames.get(endpointMenuTarget?.value)?.preferred;
   byId('aggregate-network').hidden = !aggregateActions || ipv4Number(endpointMenuTarget?.value) === null;
-  byId('remove-aggregate').hidden = !['hostname-suffix', 'hostname-glob', 'cidr'].includes(endpointMenuTarget?.kind);
+  byId('aggregate-sift').hidden = endpointMenuTarget?.kind !== 'sift';
+  byId('remove-aggregate').hidden = !['hostname-suffix', 'hostname-glob', 'cidr', 'sift-glob'].includes(endpointMenuTarget?.kind);
   menu.hidden = false;
   menu.style.left = `${Math.min(event.clientX, innerWidth - 140)}px`;
   menu.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
@@ -704,6 +713,29 @@ function createEndpointAggregate(kind, value) {
   aggregateMembers.set(id, members);
   addActivity('rule', 'AGGREGATE', `${ruleLabel(aggregate)} created`,
     `${members.size} currently known ${members.size === 1 ? 'address' : 'addresses'} grouped; no traffic behavior is assigned yet.`);
+  renderEndpointBuilder();
+}
+
+function classificationGlobMatches(value, glob) {
+  const expression = '^' + String(glob).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*') + '$';
+  return new RegExp(expression, 'i').test(String(value));
+}
+
+function classificationGlobLabel(glob) {
+  const parts = String(glob).split('.');
+  const category = parts.shift();
+  const prefix = category === 'app' ? 'APP' : category === 'protocol' ? 'L7' : category?.toUpperCase();
+  return `${prefix || 'SIFT'} ${parts.join(' · ')}`.trim();
+}
+
+function createSiftAggregate(value) {
+  const glob = String(value || '').trim().toLowerCase();
+  if (!glob || siftAggregates.includes(glob)) return;
+  siftAggregates.push(glob);
+  localStorage.setItem('spider-sift-aggregates', JSON.stringify(siftAggregates));
+  const matches = [...observedSift.keys()].filter(value => classificationGlobMatches(value, glob));
+  addActivity('rule', 'AGGREGATE', `${classificationGlobLabel(glob)} created`,
+    `${matches.length} currently known Sift ${matches.length === 1 ? 'label' : 'labels'} grouped; no traffic behavior is assigned yet.`);
   renderEndpointBuilder();
 }
 
@@ -743,9 +775,20 @@ function normalizeHostname(value) {
 
 function observeSiftClassification(sessionId, classification) {
   if (!sessionId || !classification) return;
+  const firstSeen = !observedSift.has(classification);
   if (!observedSiftSessions.has(classification)) observedSiftSessions.set(classification, new Set());
   observedSiftSessions.get(classification).add(sessionId);
   observedSift.set(classification, observedSiftSessions.get(classification).size);
+  if (firstSeen) {
+    for (const glob of siftAggregates) {
+      if (!classificationGlobMatches(classification, glob)) continue;
+      const rule = trafficRules.find(item => item.id === `sift-glob:${glob}`);
+      addActivity('rule', 'MEMBER ADDED',
+        `${classificationLabel(classification)} joined ${classificationGlobLabel(glob)}`,
+        rule ? modeEffect(rule.mode) :
+          'The label is now grouped by this Sift aggregate; no traffic behavior is assigned.');
+    }
+  }
 }
 
 function ingestHostnameInfo(event) {
@@ -942,7 +985,25 @@ function renderEndpointBuilder() {
   siftTarget.replaceChildren();
   siftTarget.className = `endpoint-list sift-endpoints${observedSift.size ? '' : ' empty'}`;
   if (!observedSift.size) siftTarget.textContent = 'none';
+  const aggregatedSift = new Set();
+  for (const glob of siftAggregates) {
+    const matches = [...observedSift].filter(([classification]) =>
+      classificationGlobMatches(classification, glob));
+    matches.forEach(([classification]) => aggregatedSift.add(classification));
+    const target = {id: `sift-glob:${glob}`, kind: 'sift-glob', value: glob};
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'endpoint-choice aggregate';
+    const rule = trafficRules.find(item => item.id === target.id);
+    if (rule) button.dataset.ruleMode = rule.mode;
+    const label = document.createElement('span'); label.textContent = classificationGlobLabel(glob);
+    const count = document.createElement('small');
+    count.textContent = `${matches.length} labels · ${matches.reduce((sum, [, value]) => sum + value, 0)}`;
+    button.append(label, count);
+    button.oncontextmenu = event => openEndpointMenu(event, target);
+    siftTarget.append(button);
+  }
   for (const [classification, countValue] of [...observedSift]
+      .filter(([classification]) => !aggregatedSift.has(classification))
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'endpoint-choice';
@@ -957,7 +1018,6 @@ function renderEndpointBuilder() {
       {id, kind: 'sift', value: classification});
     siftTarget.append(button);
   }
-  attachEndpointScrollHint(siftTarget);
 
   const sourceTarget = byId('observed-sources');
   sourceTarget.replaceChildren();
@@ -1366,7 +1426,8 @@ function openFlowTab(sessionId) {
   const id = flowTabId(sessionId);
   if (!followedFlows.has(sessionId)) {
     const flow = flowRecords.get(sessionId);
-    followedFlows.set(sessionId, {id, evicted: 0, label: flow?.label || sessionId});
+    followedFlows.set(sessionId, {id, evicted: 0, label: flow?.label || sessionId,
+      view: 'chunks', expanded: false, collapsed: false});
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
     const label = document.createElement('span');
@@ -1405,19 +1466,66 @@ function renderFlowTab(sessionId) {
     .sort((a, b) => a.revision - b.revision);
   const records = [];
   let displayBytes = 0;
-  for (let index = retained.length - 1; index >= 0 && records.length < 250; --index) {
+  for (let index = retained.length - 1; index >= 0; --index) {
     const size = retained[index].cacheBytes || payloadSize(retained[index]);
-    if (records.length && displayBytes + size > 2 * 1024 * 1024) break;
+    if (records.length && displayBytes + size > flowViewLimitMiB * 1024 * 1024) break;
     displayBytes += size;
     records.unshift(retained[index]);
   }
   const omitted = retained.length - records.length;
   if (!panel.querySelector('.flow-stream')) {
     panel.innerHTML = '<div class="flow-follow-head"><h2>Follow flow</h2><small></small>' +
-      '<span class="flow-follow-classifications"></span></div>' +
+      '<span class="flow-follow-classifications"></span><div class="flow-follow-controls">' +
+      '<button type="button" data-flow-view="chunks" aria-pressed="true">Chunks</button>' +
+      '<button type="button" data-flow-view="stream" aria-pressed="false">Stream</button>' +
+      '<button type="button" data-flow-expand="all">Expand all</button>' +
+      '<button type="button" data-flow-expand="none">Collapse all</button></div></div>' +
+      '<label class="flow-view-limit"><span>Flow view limit</span><input type="range" min="1" max="32" step="1"><output></output></label>' +
       '<div class="flow-gap flow-eviction" hidden></div>' +
       '<div class="flow-gap flow-window" hidden></div><div class="flow-stream"></div>';
+    for (const button of panel.querySelectorAll('[data-flow-view]')) {
+      button.onclick = () => {
+        followed.view = button.dataset.flowView;
+        followed.renderedMode = null;
+        renderFlowTab(sessionId);
+      };
+    }
+    panel.querySelector('[data-flow-expand="all"]').onclick = () => {
+      followed.expanded = true;
+      followed.collapsed = false;
+      for (const chunk of panel.querySelectorAll('.flow-chunk')) {
+        chunk.open = true;
+        chunk.classList.add('expanded');
+      }
+      panel.classList.add('flow-expanded');
+    };
+    panel.querySelector('[data-flow-expand="none"]').onclick = () => {
+      followed.expanded = false;
+      followed.collapsed = true;
+      for (const chunk of panel.querySelectorAll('.flow-chunk')) {
+        chunk.open = false;
+        chunk.classList.remove('expanded');
+      }
+      panel.classList.remove('flow-expanded');
+    };
+    const limit = panel.querySelector('.flow-view-limit input');
+    limit.value = String(flowViewLimitMiB);
+    panel.querySelector('.flow-view-limit output').value = `${flowViewLimitMiB} MiB`;
+    limit.oninput = () => {
+      flowViewLimitMiB = Number(limit.value);
+      localStorage.setItem('spider-flow-view-limit-mib', String(flowViewLimitMiB));
+      for (const item of followedFlows.values()) item.renderedMode = null;
+      for (const id of followedFlows.keys()) renderFlowTab(id);
+    };
   }
+  for (const button of panel.querySelectorAll('[data-flow-view]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.flowView === followed.view));
+  }
+  panel.querySelector('[data-flow-expand="all"]').hidden = followed.view !== 'chunks';
+  panel.querySelector('[data-flow-expand="none"]').hidden = followed.view !== 'chunks';
+  panel.classList.toggle('flow-expanded', followed.expanded);
+  panel.querySelector('.flow-view-limit input').value = String(flowViewLimitMiB);
+  panel.querySelector('.flow-view-limit output').value = `${flowViewLimitMiB} MiB`;
   const flow = flowRecords.get(sessionId);
   panel.querySelector('.flow-follow-head small').textContent =
     resolvedSessionLabel(flow?.label || followed.label);
@@ -1435,36 +1543,64 @@ function renderFlowTab(sessionId) {
   const windowGap = panel.querySelector('.flow-window');
   windowGap.hidden = !omitted;
   windowGap.textContent = omitted
-    ? `=!= ${omitted} retained payloads are outside this 2 MiB live view window.` : '';
+    ? `=!= ${omitted} retained payloads are outside this ${flowViewLimitMiB} MiB live view window.` : '';
 
   const stream = panel.querySelector('.flow-stream');
-  if (followed.renderedMode !== payloadMode) {
+  const renderMode = `${followed.view}:${payloadMode}`;
+  if (followed.renderedMode !== renderMode) {
     stream.replaceChildren();
-    followed.renderedMode = payloadMode;
+    followed.renderedMode = renderMode;
   }
   const wanted = new Set(records.map(record => String(record.revision)));
-  for (const chunk of stream.querySelectorAll('.flow-chunk')) {
+  for (const chunk of stream.querySelectorAll('[data-revision]')) {
     if (!wanted.has(chunk.dataset.revision)) chunk.remove();
   }
-  const rendered = new Set([...stream.querySelectorAll('.flow-chunk')]
+  const rendered = new Set([...stream.querySelectorAll('[data-revision]')]
     .map(chunk => chunk.dataset.revision));
   for (const record of records) {
     const recordRevision = String(record.revision);
     if (rendered.has(recordRevision)) continue;
     const info = record.event.details?.info || {};
     const bytes = decodeBase64(info.content);
-    const body = payloadMode === 'hex' ? encodeHex(bytes) : new TextDecoder().decode(bytes);
     const side = info.side === 'R' ? 'R' : 'L';
-    const chunk = document.createElement('article');
-    chunk.className = `flow-chunk ${side}`;
+    const chunk = followed.view === 'stream'
+      ? document.createElement('article') : document.createElement('details');
+    chunk.className = `${followed.view === 'stream' ? 'flow-stream-chunk' : 'flow-chunk'} ${side}`;
     chunk.dataset.revision = recordRevision;
     const direction = document.createElement('b');
     direction.textContent = side;
     const metadata = document.createElement('small');
     metadata.append(`r${record.revision}`, document.createElement('br'), formatBytes(bytes.length));
-    const content = document.createElement('pre');
-    content.textContent = body;
-    chunk.append(direction, metadata, content);
+    if (followed.view === 'stream') {
+      const content = document.createElement('pre');
+      appendMixedAscii(content, bytes);
+      chunk.append(direction, metadata, content);
+    } else {
+      const summary = document.createElement('summary');
+      summary.append(direction, metadata);
+      const expand = document.createElement('button');
+      expand.type = 'button';
+      expand.className = 'flow-chunk-expand';
+      expand.textContent = '⤢';
+      expand.title = 'Toggle full payload height';
+      expand.onclick = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        chunk.open = true;
+        chunk.classList.toggle('expanded');
+      };
+      summary.append(expand);
+      const content = document.createElement('pre');
+      content.textContent = payloadMode === 'hex' ? encodeHex(bytes) : new TextDecoder().decode(bytes);
+      content.onwheel = event => {
+        if (event.shiftKey) return;
+        event.preventDefault();
+        byId(followed.id).closest('.workspace').scrollBy({top: event.deltaY});
+      };
+      chunk.open = !followed.collapsed;
+      chunk.classList.toggle('expanded', followed.expanded);
+      chunk.append(summary, content);
+    }
     stream.append(chunk);
   }
   const empty = stream.querySelector('.empty');
@@ -1475,6 +1611,34 @@ function renderFlowTab(sessionId) {
     message.textContent = 'No retained payloads for this flow.';
     stream.append(message);
   }
+}
+
+function appendMixedAscii(target, bytes) {
+  let text = '', binary = [];
+  const flushText = () => {
+    if (!text) return;
+    target.append(document.createTextNode(text));
+    text = '';
+  };
+  const flushBinary = () => {
+    if (!binary.length) return;
+    const span = document.createElement('span');
+    span.className = 'binary-run';
+    span.textContent = `[${binary.map(value => value.toString(16).padStart(2, '0')).join(' ')}]`;
+    target.append(span);
+    binary = [];
+  };
+  for (const value of bytes) {
+    if ((value >= 32 && value < 127) || value === 9 || value === 10 || value === 13) {
+      flushBinary();
+      text += String.fromCharCode(value);
+    } else {
+      flushText();
+      binary.push(value);
+    }
+  }
+  flushText();
+  flushBinary();
 }
 
 function updateFlowRecord(record) {
@@ -2294,9 +2458,24 @@ byId('aggregate-network').onclick = () => {
   if (value !== null) createEndpointAggregate('cidr', value);
   byId('endpoint-menu').hidden = true;
 };
+byId('aggregate-sift').onclick = () => {
+  const source = String(endpointMenuTarget?.value || '');
+  const parts = source.split('.');
+  const suggested = parts.length > 1 ? `${parts[0]}.${parts[1].replace(/\d+$/, '')}*` : `${source}*`;
+  const value = prompt('Sift label glob to aggregate', suggested);
+  if (value !== null) createSiftAggregate(value);
+  byId('endpoint-menu').hidden = true;
+};
 byId('remove-aggregate').onclick = () => {
   const aggregate = endpointMenuTarget;
-  if (aggregate && aggregate.kind !== 'address') {
+  if (aggregate?.kind === 'sift-glob') {
+    siftAggregates = siftAggregates.filter(value => value !== aggregate.value);
+    trafficRules = trafficRules.filter(item => item.id !== aggregate.id);
+    localStorage.setItem('spider-sift-aggregates', JSON.stringify(siftAggregates));
+    addActivity('rule', 'AGGREGATE REMOVED', ruleLabel(aggregate),
+      'Its Sift labels are visible individually again and no longer inherit its rule.');
+    syncTrafficRules();
+  } else if (aggregate && aggregate.kind !== 'address') {
     endpointAggregates = endpointAggregates.filter(item => item.id !== aggregate.id);
     trafficRules = trafficRules.filter(item => item.id !== aggregate.id);
     aggregateMembers.delete(aggregate.id);
