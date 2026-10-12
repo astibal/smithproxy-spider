@@ -269,6 +269,27 @@ EOF
     chmod 600 "$STATE_ENV"
 fi
 
+# Preserve test identity and user edits while migrating the development-only
+# decision daemon setting to its final Sift name. The namespace reaches the
+# host-side daemon through the veth peer address.
+python3 - "$CONFIG" "$HOST_ADDR" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+host = sys.argv[2]
+text = path.read_text()
+text = text.replace("spider_engine_url", "sift_url").replace("spider_engine", "sift")
+webhook = re.search(r"(\bwebhook\s*=\s*\{)(.*?)(\n\s*\};)", text, re.S)
+if webhook is None:
+    raise SystemExit("test config has no settings.webhook block")
+body = webhook.group(2)
+if not re.search(r"\bsift\s*=", body):
+    body += "\n        sift = TRUE;"
+if not re.search(r"\bsift_url\s*=", body):
+    body += f'\n        sift_url = "http://{host}:18081/webhook";'
+text = text[:webhook.start(2)] + body + text[webhook.end(2):]
+path.write_text(text)
+PY
+
 ip netns add "$NS"
 ip link add "$HOST_IF" type veth peer name eth0 netns "$NS"
 ip addr add "$HOST_ADDR/30" dev "$HOST_IF"
