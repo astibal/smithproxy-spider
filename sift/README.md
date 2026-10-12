@@ -13,4 +13,8 @@ Smithproxy -- second webhook/SXBN001 --> sx-siftd
 Spider server -- replay/SXBN001 ------> sx-siftd
 ```
 
+Runtime counters are available as JSON from `GET /api/stats`. The existing
+`/api/status` endpoint returns the same snapshot, while `/api/health` remains
+available for deployment health checks.
+
 Default endpoint: `http://127.0.0.1:18081/webhook`.

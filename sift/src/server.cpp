@@ -25,7 +25,8 @@ public:
     bool validPath(const char* path, const char* method) override {
         const std::string_view p(path);
         const std::string_view m(method);
-        return (m == "GET" && (p == "/api/health" || p == "/api/status")) ||
+        return (m == "GET" &&
+                (p == "/api/health" || p == "/api/status" || p == "/api/stats")) ||
                (m == "POST" && p == config_.path);
     }
 
@@ -56,7 +57,8 @@ public:
             status = 413;
             reply = {{"error", "request body too large"}};
         } else if (std::string_view(url) == "/api/health" ||
-                   std::string_view(url) == "/api/status") {
+                   std::string_view(url) == "/api/status" ||
+                   std::string_view(url) == "/api/stats") {
             reply = runtime_.status();
         } else {
             reply = process(state.request_data, status);
