@@ -1,5 +1,6 @@
 #include <sift/engine.hpp>
 
+#include <algorithm>
 #include <array>
 
 namespace sift {
@@ -22,13 +23,25 @@ constexpr std::array fixed_signatures{
 
 Verdict Runtime::inspect(const std::string_view session, const char side,
                          const std::string_view payload) {
+    const auto inspection_started = std::chrono::steady_clock::now();
     std::scoped_lock guard(lock_);
-    auto& flow = flows_[std::string(session)];
-    auto& stream = side == 'R' || side == 'w' ? flow.right : flow.left;
+    auto [flow_it, inserted] = flows_.try_emplace(std::string(session));
+    if (inserted) ++flows_seen_;
+    auto& stream = side == 'R' || side == 'w' ? flow_it->second.right : flow_it->second.left;
     const auto old_size = stream.size();
     stream.append(payload);
     ++payloads_;
     bytes_ += payload.size();
+    last_payload_size_ = payload.size();
+    min_payload_size_ = std::min(min_payload_size_, static_cast<std::uint64_t>(payload.size()));
+    max_payload_size_ = std::max(max_payload_size_, static_cast<std::uint64_t>(payload.size()));
+    if (side == 'R' || side == 'w') {
+        ++right_payloads_;
+        right_bytes_ += payload.size();
+    } else {
+        ++left_payloads_;
+        left_bytes_ += payload.size();
+    }
 
     Verdict verdict;
     for (const auto& signature : fixed_signatures) {
@@ -37,20 +50,62 @@ Verdict Runtime::inspect(const std::string_view session, const char side,
         verdict.matches.push_back({std::string(signature.name), position,
                                    position + signature.bytes.size() - 1});
         ++matches_;
+        ++signature_matches_[std::string(signature.name)];
     }
+    if (!verdict.matches.empty()) ++matched_payloads_;
+    ++accepted_;
+    const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - inspection_started).count());
+    ++inspection_samples_;
+    inspection_total_ns_ += elapsed;
+    inspection_last_ns_ = elapsed;
+    inspection_min_ns_ = std::min(inspection_min_ns_, elapsed);
+    inspection_max_ns_ = std::max(inspection_max_ns_, elapsed);
     return verdict;
 }
 
 void Runtime::close(const std::string_view session) {
     std::scoped_lock guard(lock_);
-    flows_.erase(std::string(session));
+    if (flows_.erase(std::string(session)) > 0) ++flows_closed_;
 }
 
 nlohmann::json Runtime::status() const {
     std::scoped_lock guard(lock_);
-    return {{"service", "sx-siftd"}, {"engine", "bootstrap-ng"},
-            {"flows", flows_.size()}, {"payloads", payloads_},
-            {"bytes", bytes_}, {"matches", matches_}};
+    auto signatures = nlohmann::json::object();
+    for (const auto& signature : fixed_signatures) {
+        const auto found = signature_matches_.find(std::string(signature.name));
+        signatures[signature.name] = found == signature_matches_.end() ? 0 : found->second;
+    }
+    const auto uptime = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started_).count();
+    const auto average_payload = payloads_ == 0 ? 0.0
+        : static_cast<double>(bytes_) / static_cast<double>(payloads_);
+    const auto ns_to_us = [](const std::uint64_t value) {
+        return static_cast<double>(value) / 1000.0;
+    };
+    const auto average_inspection = inspection_samples_ == 0 ? 0.0
+        : ns_to_us(inspection_total_ns_) / static_cast<double>(inspection_samples_);
+    return {
+        {"service", "sx-siftd"}, {"engine", "bootstrap-ng"}, {"uptime_ms", uptime},
+        {"flows", {{"active", flows_.size()}, {"seen", flows_seen_},
+                   {"closed", flows_closed_}}},
+        {"traffic", {{"payloads", payloads_}, {"bytes", bytes_},
+                     {"sides", {{"L", {{"payloads", left_payloads_}, {"bytes", left_bytes_}}},
+                                {"R", {{"payloads", right_payloads_}, {"bytes", right_bytes_}}}}}}},
+        {"payload_size_bytes", {{"last", last_payload_size_},
+                                {"min", payloads_ == 0 ? 0 : min_payload_size_},
+                                {"max", max_payload_size_}, {"average", average_payload}}},
+        {"signatures", {{"matches", matches_}, {"matched_payloads", matched_payloads_},
+                        {"by_name", std::move(signatures)}}},
+        {"decisions", {{"accept", accepted_}, {"replace", 0}, {"discard", 0}}},
+        {"timing", {{"inspection_us", {{"samples", inspection_samples_},
+                                         {"last", ns_to_us(inspection_last_ns_)},
+                                         {"min", inspection_samples_ == 0 ? 0.0 : ns_to_us(inspection_min_ns_)},
+                                         {"max", ns_to_us(inspection_max_ns_)},
+                                         {"average", average_inspection}}},
+                    {"round_trip_us", nullptr},
+                    {"round_trip_status", "requires Smithproxy/broker telemetry"}}}
+    };
 }
 
 nlohmann::json verdict_json(const Verdict& verdict) {

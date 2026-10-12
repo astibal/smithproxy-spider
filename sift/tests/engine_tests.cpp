@@ -22,8 +22,18 @@ int main() {
     check(second.matches.size() == 1, "fragmented HTTP/2 preface must match");
     check(second.matches.front().signature == "protocol.http2.preface", "wrong match");
 
+    const auto live_stats = runtime.status();
+    check(live_stats.at("flows").at("active") == 1, "active flow not counted");
+    check(live_stats.at("traffic").at("payloads") == 2, "payloads not counted");
+    check(live_stats.at("signatures").at("by_name").at("protocol.http2.preface") == 1,
+          "signature count missing");
+    check(live_stats.at("timing").at("inspection_us").at("samples") == 2,
+          "inspection timing samples missing");
+
     runtime.close("flow-1");
-    check(runtime.status().at("flows") == 0, "closed flow retained");
+    const auto closed_stats = runtime.status();
+    check(closed_stats.at("flows").at("active") == 0, "closed flow retained");
+    check(closed_stats.at("flows").at("closed") == 1, "closed flow not counted");
 
     const std::string metadata = R"({"action":"connection-content","id":"x","details":{"info":{"session":"x","side":"L","payload_length":8}}})";
     char prefix[26]{};

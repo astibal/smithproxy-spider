@@ -15,6 +15,9 @@ Spider server -- replay/SXBN001 ------> sx-siftd
 
 Runtime counters are available as JSON from `GET /api/stats`. The existing
 `/api/status` endpoint returns the same snapshot, while `/api/health` remains
-available for deployment health checks.
+available for deployment health checks. The snapshot includes flow lifecycle,
+directional traffic, payload sizes, per-signature matches, decisions, uptime,
+and inspection latency. End-to-end round-trip latency requires telemetry from
+Smithproxy and its communication broker and is therefore reported as pending.
 
 Default endpoint: `http://127.0.0.1:18081/webhook`.
