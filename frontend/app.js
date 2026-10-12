@@ -1497,7 +1497,7 @@ function openFlowTab(sessionId, type = 'connection') {
   if (!followedFlows.has(scope.key)) {
     const followed = {...scope, id, evicted: 0,
       view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
-      laneOrder: [], visibleLanes: new Set()};
+      laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11};
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
@@ -1551,7 +1551,12 @@ function renderFlowTab(scopeKey) {
       '<button type="button" data-flow-view="stream" aria-pressed="false">Stream</button>' +
       '<button type="button" data-flow-view="lanes" aria-pressed="false">Lanes</button>' +
       '<button type="button" data-flow-expand="all">Expand all</button>' +
-      '<button type="button" data-flow-expand="none">Collapse all</button></div></div>' +
+      '<button type="button" data-flow-expand="none">Collapse all</button>' +
+      '<span class="lane-layout-controls"><button type="button" data-lane-fit>Fit width</button>' +
+      '<button type="button" data-lane-width="-1" title="Narrower lanes">W−</button>' +
+      '<button type="button" data-lane-width="1" title="Wider lanes">W+</button>' +
+      '<button type="button" data-lane-font="-1" title="Smaller lane font">A−</button>' +
+      '<button type="button" data-lane-font="1" title="Larger lane font">A+</button></span></div></div>' +
       '<label class="flow-view-limit"><span>Flow view limit</span><input type="range" min="1" max="32" step="1"><output></output></label>' +
       '<div class="flow-gap flow-eviction" hidden></div>' +
       '<div class="flow-gap flow-window" hidden></div><div class="flow-stream"></div>';
@@ -1580,6 +1585,25 @@ function renderFlowTab(scopeKey) {
       }
       panel.classList.remove('flow-expanded');
     };
+    panel.querySelector('[data-lane-fit]').onclick = () => {
+      followed.laneFit = !followed.laneFit;
+      renderFlowTab(scopeKey);
+    };
+    for (const button of panel.querySelectorAll('[data-lane-width]')) {
+      button.onclick = () => {
+        followed.laneFit = false;
+        followed.laneWidth = Math.max(120, Math.min(640,
+          followed.laneWidth + Number(button.dataset.laneWidth) * 30));
+        renderFlowTab(scopeKey);
+      };
+    }
+    for (const button of panel.querySelectorAll('[data-lane-font]')) {
+      button.onclick = () => {
+        followed.laneFont = Math.max(8, Math.min(18,
+          followed.laneFont + Number(button.dataset.laneFont)));
+        renderFlowTab(scopeKey);
+      };
+    }
     const limit = panel.querySelector('.flow-view-limit input');
     limit.value = String(flowViewLimitMiB);
     panel.querySelector('.flow-view-limit output').value = `${flowViewLimitMiB} MiB`;
@@ -1595,6 +1619,9 @@ function renderFlowTab(scopeKey) {
   }
   panel.querySelector('[data-flow-expand="all"]').hidden = followed.view !== 'chunks';
   panel.querySelector('[data-flow-expand="none"]').hidden = followed.view !== 'chunks';
+  panel.querySelector('.lane-layout-controls').hidden = followed.view !== 'lanes';
+  panel.querySelector('[data-lane-fit]').setAttribute('aria-pressed', String(followed.laneFit));
+  panel.querySelector('[data-lane-fit]').textContent = followed.laneFit ? 'Fit: on' : 'Fit width';
   panel.classList.toggle('flow-expanded', followed.expanded);
   panel.querySelector('.flow-view-limit input').value = String(flowViewLimitMiB);
   panel.querySelector('.flow-view-limit output').value = `${flowViewLimitMiB} MiB`;
@@ -1623,6 +1650,7 @@ function renderFlowTab(scopeKey) {
   const renderMode = `${followed.view}:${payloadMode}`;
   if (followed.renderedMode !== renderMode) {
     stream.replaceChildren();
+    delete stream.dataset.layoutKey;
     followed.renderedMode = renderMode;
   }
   if (followed.view === 'lanes') {
@@ -1708,45 +1736,59 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
   followed.laneOrder = followed.laneOrder.filter(laneId => laneIds.includes(laneId));
   const visible = followed.laneOrder.filter(laneId => followed.visibleLanes.has(laneId));
   const hidden = followed.laneOrder.filter(laneId => !followed.visibleLanes.has(laneId));
-  const template = `${visible.map(() => 'minmax(250px,1fr)').join(' ')} ` +
+  const laneColumn = followed.laneFit ? 'minmax(0,1fr)' : `${followed.laneWidth}px`;
+  const template = `${visible.map(() => laneColumn).join(' ')} ` +
     `${hidden.map(() => '14px').join(' ')} 16px`;
-  stream.replaceChildren();
   stream.className = 'flow-stream lane-board';
-  const header = document.createElement('div');
-  header.className = 'lane-row lane-header';
-  header.style.gridTemplateColumns = template;
-  for (let index = 0; index < visible.length; ++index) {
-    const laneId = visible[index];
-    const item = document.createElement('div');
-    item.className = 'lane-title'; item.draggable = true; item.dataset.lane = laneId;
-    item.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(laneId) * 67) % 360} 62% 62%)`);
-    const text = document.createElement('span'); text.textContent = laneLabel(laneId); text.title = laneId;
-    const collapse = document.createElement('button'); collapse.textContent = '→'; collapse.title = 'Collapse to activity rail';
-    collapse.onclick = () => { followed.visibleLanes.delete(laneId); renderFlowTab(scopeKey); };
-    item.append(text, collapse);
-    item.ondragstart = () => { followed.draggedLane = laneId; };
-    item.ondragover = event => event.preventDefault();
-    item.ondrop = event => {
-      event.preventDefault();
-      const from = followed.laneOrder.indexOf(followed.draggedLane);
-      const to = followed.laneOrder.indexOf(laneId);
-      if (from < 0 || to < 0 || from === to) return;
-      const [moved] = followed.laneOrder.splice(from, 1);
-      followed.laneOrder.splice(to, 0, moved);
-      renderFlowTab(scopeKey);
-    };
-    header.append(item);
+  stream.classList.toggle('fit-width', followed.laneFit);
+  stream.style.setProperty('--lane-font-size', `${followed.laneFont}px`);
+  const layoutKey = `${visible.join('|')}::${hidden.join('|')}::${followed.laneFit}:${followed.laneWidth}:${followed.laneFont}`;
+  const rebuild = stream.dataset.layoutKey !== layoutKey;
+  if (rebuild) {
+    stream.replaceChildren();
+    stream.dataset.layoutKey = layoutKey;
+    const header = document.createElement('div');
+    header.className = 'lane-row lane-header';
+    header.style.gridTemplateColumns = template;
+    for (const laneId of visible) {
+      const item = document.createElement('div');
+      item.className = 'lane-title'; item.draggable = true; item.dataset.lane = laneId;
+      item.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(laneId) * 67) % 360} 62% 62%)`);
+      const text = document.createElement('span'); text.textContent = laneLabel(laneId); text.title = laneId;
+      const collapse = document.createElement('button'); collapse.textContent = '→'; collapse.title = 'Collapse to activity rail';
+      collapse.onclick = () => { followed.visibleLanes.delete(laneId); renderFlowTab(scopeKey); };
+      item.append(text, collapse);
+      item.ondragstart = () => { followed.draggedLane = laneId; };
+      item.ondragover = event => event.preventDefault();
+      item.ondrop = event => {
+        event.preventDefault();
+        const from = followed.laneOrder.indexOf(followed.draggedLane);
+        const to = followed.laneOrder.indexOf(laneId);
+        if (from < 0 || to < 0 || from === to) return;
+        const [moved] = followed.laneOrder.splice(from, 1);
+        followed.laneOrder.splice(to, 0, moved);
+        renderFlowTab(scopeKey);
+      };
+      header.append(item);
+    }
+    for (const laneId of hidden) {
+      const rail = document.createElement('button');
+      rail.className = 'lane-rail-title'; rail.textContent = '│'; rail.title = `Expand ${laneLabel(laneId)}`;
+      rail.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(laneId) * 67) % 360} 62% 62%)`);
+      rail.onclick = () => { followed.visibleLanes.add(laneId); renderFlowTab(scopeKey); };
+      header.append(rail);
+    }
+    const all = document.createElement('span'); all.className = 'lane-all-title'; all.textContent = 'ALL';
+    header.append(all); stream.append(header);
   }
-  for (const laneId of hidden) {
-    const rail = document.createElement('button');
-    rail.className = 'lane-rail-title'; rail.textContent = '│'; rail.title = `Expand ${laneLabel(laneId)}`;
-    rail.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(laneId) * 67) % 360} 62% 62%)`);
-    rail.onclick = () => { followed.visibleLanes.add(laneId); renderFlowTab(scopeKey); };
-    header.append(rail);
+  const wanted = new Set(records.map(record => String(record.revision)));
+  for (const row of stream.querySelectorAll('.lane-row[data-revision]')) {
+    if (!wanted.has(row.dataset.revision)) row.remove();
   }
-  const all = document.createElement('span'); all.className = 'lane-all-title'; all.textContent = 'ALL';
-  header.append(all); stream.append(header);
+  const rendered = new Set([...stream.querySelectorAll('.lane-row[data-revision]')]
+    .map(row => row.dataset.revision));
   for (const record of records) {
+    if (rendered.has(String(record.revision))) continue;
     const row = document.createElement('div');
     row.className = 'lane-row'; row.dataset.revision = String(record.revision);
     row.style.gridTemplateColumns = template;
@@ -1778,7 +1820,7 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
     allTick.className = 'lane-all-tick'; allTick.style.gridColumn = String(visible.length + hidden.length + 1);
     row.append(allTick); stream.append(row);
   }
-  requestAnimationFrame(() => { workspace.scrollTop = previousScroll; });
+  if (rebuild) requestAnimationFrame(() => { workspace.scrollTop = previousScroll; });
 }
 
 function appendMixedAscii(target, bytes) {
