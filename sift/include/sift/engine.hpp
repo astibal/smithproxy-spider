@@ -9,7 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace spider::engine {
+namespace sift {
 
 struct Match {
     std::string signature;
@@ -44,4 +44,4 @@ private:
 
 [[nodiscard]] nlohmann::json verdict_json(const Verdict& verdict);
 
-} // namespace spider::engine
+} // namespace sift

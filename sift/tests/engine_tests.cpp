@@ -1,4 +1,4 @@
-#include <spider/engine.hpp>
+#include <sift/engine.hpp>
 #include <binary_envelope.hpp>
 
 #include <cstdio>
@@ -15,7 +15,7 @@ void check(bool condition, const char* message) {
 }
 
 int main() {
-    spider::engine::Runtime runtime;
+    sift::Runtime runtime;
     auto first = runtime.inspect("flow-1", 'L', "PRI * HTTP/2.0\r\n");
     check(first.matches.empty(), "fragment must remain pending");
     auto second = runtime.inspect("flow-1", 'L', "\r\nSM\r\n\r\n");

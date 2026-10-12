@@ -1,6 +1,6 @@
-#include <spider/engine_server.hpp>
+#include <sift/engine_server.hpp>
 
-#include <spider/engine.hpp>
+#include <sift/engine.hpp>
 #include <binary_envelope.hpp>
 
 #include <lmhttpd.hpp>
@@ -9,7 +9,7 @@
 #include <memory>
 #include <string_view>
 
-namespace spider::engine {
+namespace sift {
 namespace {
 
 struct RequestState final : lmh::ConnectionState {
@@ -76,9 +76,9 @@ private:
     nlohmann::json process(const std::string& body, unsigned& status) {
         nlohmann::json event;
         std::string payload;
-        if (std::string_view(body).starts_with(sxbn_magic)) {
+        if (std::string_view(body).starts_with(spider::sxbn_magic)) {
             std::string error;
-            if (!decode_sxbn(body, event, payload, error)) {
+            if (!spider::decode_sxbn(body, event, payload, error)) {
                 status = 400;
                 return {{"error", error}};
             }
@@ -94,7 +94,7 @@ private:
         if (action == "info") {
             return {{"action", "info-response"},
                     {"protocols", {{"connection-content", {"sxbn-001"}}}},
-                    {"service", "sx-spiderd"}};
+                    {"service", "sx-siftd"}};
         }
         if (action == "connection-stop") {
             runtime_.close(event.value("id", ""));
@@ -130,4 +130,4 @@ int run_server(const ServerConfig& config, Runtime& runtime, std::atomic_bool& s
     return server.start() ? 0 : 1;
 }
 
-} // namespace spider::engine
+} // namespace sift

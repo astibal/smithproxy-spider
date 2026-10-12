@@ -48,7 +48,7 @@ target_link_libraries(smithproxy-spider PRIVATE spider_core PkgConfig::MICROHTTP
 target_compile_options(smithproxy-spider PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 
 include(CTest)
-add_subdirectory(engine)
+add_subdirectory(sift)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(spider_tests tests/session_store_test.cpp)

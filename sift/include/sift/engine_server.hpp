@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-namespace spider::engine {
+namespace sift {
 
 struct ServerConfig {
     std::string bind{"127.0.0.1"};
@@ -16,4 +16,4 @@ struct ServerConfig {
 class Runtime;
 int run_server(const ServerConfig& config, Runtime& runtime, std::atomic_bool& stop);
 
-} // namespace spider::engine
+} // namespace sift

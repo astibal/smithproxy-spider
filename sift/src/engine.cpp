@@ -1,8 +1,8 @@
-#include <spider/engine.hpp>
+#include <sift/engine.hpp>
 
 #include <array>
 
-namespace spider::engine {
+namespace sift {
 namespace {
 
 struct FixedSignature {
@@ -48,7 +48,7 @@ void Runtime::close(const std::string_view session) {
 
 nlohmann::json Runtime::status() const {
     std::scoped_lock guard(lock_);
-    return {{"service", "sx-spiderd"}, {"engine", "bootstrap-ng"},
+    return {{"service", "sx-siftd"}, {"engine", "bootstrap-ng"},
             {"flows", flows_.size()}, {"payloads", payloads_},
             {"bytes", bytes_}, {"matches", matches_}};
 }
@@ -60,7 +60,7 @@ nlohmann::json verdict_json(const Verdict& verdict) {
                            {"end", match.end}});
     }
     return {{"action", verdict.action}, {"matches", std::move(matches)},
-            {"engine", "sx-spiderd"}};
+            {"engine", "sx-siftd"}};
 }
 
-} // namespace spider::engine
+} // namespace sift

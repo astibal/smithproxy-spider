@@ -1,5 +1,5 @@
-#include <spider/engine.hpp>
-#include <spider/engine_server.hpp>
+#include <sift/engine.hpp>
+#include <sift/engine_server.hpp>
 
 #include <atomic>
 #include <charconv>
@@ -13,11 +13,11 @@ void stop_handler(int) { stop_requested.store(true); }
 }
 
 int main(int argc, char** argv) {
-    spider::engine::ServerConfig config;
+    sift::ServerConfig config;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
         if (arg == "--help") {
-            std::cout << "Usage: sx-spiderd [--bind ADDRESS] [--port N] [--path PATH]\n";
+            std::cout << "Usage: sx-siftd [--bind ADDRESS] [--port N] [--path PATH]\n";
             return 0;
         }
         if (arg == "--bind" && i + 1 < argc) config.bind = argv[++i];
@@ -41,8 +41,8 @@ int main(int argc, char** argv) {
 
     std::signal(SIGINT, stop_handler);
     std::signal(SIGTERM, stop_handler);
-    spider::engine::Runtime runtime;
-    std::cout << "sx-spiderd listening on http://" << config.bind << ':' << config.port
+    sift::Runtime runtime;
+    std::cout << "sx-siftd listening on http://" << config.bind << ':' << config.port
               << config.path << '\n';
-    return spider::engine::run_server(config, runtime, stop_requested);
+    return sift::run_server(config, runtime, stop_requested);
 }
