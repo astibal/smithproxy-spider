@@ -6,6 +6,8 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 TEST_ROOT=${SMITHPROXY_TEST_ROOT:-${HOME}/smithproxy-spider-test}
 STATE_DIR=${SMITHPROXY_TEST_STATE_DIR:-$TEST_ROOT/state}
 BUILD_DIR=${SPIDER_TEST_BUILD_DIR:-$TEST_ROOT/build/spider}
+SIFT_SOURCE_DIR=${SIFT_TEST_SOURCE_DIR:-$TEST_ROOT/src/sift}
+SIFT_BUILD_DIR=${SIFT_TEST_BUILD_DIR:-$TEST_ROOT/build/sift}
 SPIDER_PORT=${SPIDER_TEST_PORT:-18080}
 SIFT_PORT=${SIFT_TEST_PORT:-18081}
 UI_PORT=${SPIDER_TEST_UI_PORT:-15173}
@@ -79,6 +81,11 @@ if [[ ! -r "$STATE_DIR/state.env" ]]; then
     exit 1
 fi
 source "$STATE_DIR/state.env"
+if [[ ! -d "$SIFT_SOURCE_DIR/.git" ]]; then
+    echo "Missing standalone Sift checkout: $SIFT_SOURCE_DIR" >&2
+    echo "Clone https://github.com/astibal/sift.git there first." >&2
+    exit 1
+fi
 mkdir -p "$STATE_DIR"
 stop_process "$STATE_DIR/spider.pid"
 stop_process "$STATE_DIR/sift.pid"
@@ -86,8 +93,11 @@ stop_process "$STATE_DIR/frontend.pid"
 
 cmake -S "$ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$BUILD_DIR" -j"$(nproc)"
+cmake -S "$SIFT_SOURCE_DIR" -B "$SIFT_BUILD_DIR" \
+    -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+cmake --build "$SIFT_BUILD_DIR" -j"$(nproc)" --target siftd
 
-"$BUILD_DIR/sift/sx-siftd" --bind 0.0.0.0 --port "$SIFT_PORT" \
+"$SIFT_BUILD_DIR/siftd" --bind 0.0.0.0 --port "$SIFT_PORT" \
     >"$STATE_DIR/sift.log" 2>&1 &
 echo $! >"$STATE_DIR/sift.pid"
 

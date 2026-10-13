@@ -4,6 +4,7 @@ set -euo pipefail
 TEST_ROOT=${1:-${HOME}/smithproxy-spider-test}
 SMITHPROXY_REF=${2:-api-ng}
 SPIDER_REPOSITORY=${SPIDER_TEST_REPOSITORY:-https://github.com/astibal/smithproxy-spider.git}
+SIFT_REPOSITORY=${SIFT_TEST_REPOSITORY:-https://github.com/astibal/sift.git}
 
 if [[ ${EUID} -ne 0 ]]; then
     echo "Run as root; the test runners create a network namespace and firewall rules." >&2
@@ -21,6 +22,7 @@ fi
 
 mkdir -p "$TEST_ROOT/src" "$TEST_ROOT/build/spider" "$TEST_ROOT/build/smithproxy" "$TEST_ROOT/state"
 git clone --branch main --recurse-submodules "$SPIDER_REPOSITORY" "$TEST_ROOT/src/smithproxy-spider"
+git clone --branch main --recurse-submodules "$SIFT_REPOSITORY" "$TEST_ROOT/src/sift"
 
 SMITHPROXY_TEST_ROOT="$TEST_ROOT" \
     "$TEST_ROOT/src/smithproxy-spider/tools/run-test-smithproxy.sh" fetch "$SMITHPROXY_REF"
@@ -29,6 +31,7 @@ echo
 echo "Smithproxy Spider test workspace initialized:"
 echo "  root:             $TEST_ROOT"
 echo "  Spider source:    $TEST_ROOT/src/smithproxy-spider"
+echo "  Sift source:      $TEST_ROOT/src/sift"
 echo "  Smithproxy source: $TEST_ROOT/src/smithproxy ($SMITHPROXY_REF)"
 echo
 echo "Start it with:"
