@@ -1289,6 +1289,103 @@ function l7PayloadView(record, source = null) {
   return {state: 'body', ranges, encodings, bytes};
 }
 
+function contentAnnotations(record, sourceLength = null) {
+  const raw = record?.event?.details?.info?.content_annotations;
+  if (!Array.isArray(raw)) return [];
+  const limit = sourceLength === null ? Number.MAX_SAFE_INTEGER : sourceLength;
+  const result = [];
+  for (const item of raw) {
+    const start = Number(Array.isArray(item) ? item[0] : item?.start);
+    const end = Number(Array.isArray(item) ? item[1] : item?.end);
+    const kind = String(Array.isArray(item) ? item[2] : item?.kind || '').trim();
+    const attributes = Array.isArray(item) ? item[3] : item?.attributes;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 ||
+        end <= start || start >= limit || !kind) continue;
+    result.push({start, end: Math.min(end, limit), kind,
+      attributes: attributes && typeof attributes === 'object' && !Array.isArray(attributes)
+        ? attributes : {}});
+  }
+  return result.sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+function annotationLabel(annotation) {
+  return annotation.kind.replace(/^http1\./, 'H1 ').replace(/^h2\./, 'H2 ').replaceAll('_', ' ');
+}
+
+function annotationClass(annotation) {
+  return annotation?.kind.split('.').slice(0, 2).join('-').replace(/[^a-z0-9-]/gi, '-') || '';
+}
+
+function appendAnnotationRail(target, record, wireBytes) {
+  const annotations = contentAnnotations(record, wireBytes.length);
+  if (!annotations.length) return false;
+  const rail = document.createElement('div');
+  rail.className = 'content-annotation-rail';
+  rail.setAttribute('aria-label', `${annotations.length} content annotations`);
+  for (const annotation of annotations) {
+    const part = document.createElement('span');
+    const family = annotationClass(annotation);
+    part.className = `content-annotation ${family}`;
+    part.style.flexGrow = String(annotation.end - annotation.start);
+    const attributes = Object.entries(annotation.attributes)
+      .map(([key, value]) => `${key}=${value}`).join(' · ');
+    part.textContent = annotationLabel(annotation);
+    part.title = `${annotation.kind} [${annotation.start}, ${annotation.end})` +
+      (attributes ? `\n${attributes}` : '');
+    rail.append(part);
+  }
+  target.append(rail);
+  return true;
+}
+
+function appendAnnotatedPayload(target, bytes, annotations, mode) {
+  if (!annotations.length) return false;
+  const annotationAt = offset => annotations.find(item => offset >= item.start && offset < item.end);
+  const appendRun = (text, annotation) => {
+    if (!text) return;
+    if (!annotation) {
+      target.append(document.createTextNode(text));
+      return;
+    }
+    const span = document.createElement('span');
+    span.className = `annotation-bytes ${annotationClass(annotation)}`;
+    span.textContent = text;
+    span.title = `${annotation.kind} [${annotation.start}, ${annotation.end})`;
+    target.append(span);
+  };
+  const appendRange = (start, end, render) => {
+    let cursor = start;
+    while (cursor < end) {
+      const annotation = annotationAt(cursor);
+      let boundary = end;
+      if (annotation) boundary = Math.min(boundary, annotation.end);
+      else {
+        const next = annotations.find(item => item.start > cursor);
+        if (next) boundary = Math.min(boundary, next.start);
+      }
+      appendRun(render(cursor, boundary), annotation);
+      cursor = boundary;
+    }
+  };
+  if (mode !== 'hex') {
+    appendRange(0, bytes.length, (start, end) =>
+      new TextDecoder().decode(bytes.subarray(start, end)));
+    return true;
+  }
+  for (let offset = 0; offset < bytes.length; offset += 16) {
+    const end = Math.min(offset + 16, bytes.length);
+    target.append(document.createTextNode(`${offset.toString(16).padStart(8, '0')}  `));
+    appendRange(offset, end, (start, stop) => Array.from(bytes.subarray(start, stop),
+      value => value.toString(16).padStart(2, '0')).join(' ') + (stop < end ? ' ' : ''));
+    const used = (end - offset) * 3 - 1;
+    target.append(document.createTextNode(`${' '.repeat(Math.max(0, 47 - used))}  |`));
+    appendRange(offset, end, (start, stop) => Array.from(bytes.subarray(start, stop),
+      value => value >= 32 && value < 127 ? String.fromCharCode(value) : '.').join(''));
+    target.append(document.createTextNode(`|${end < bytes.length ? '\n' : ''}`));
+  }
+  return true;
+}
+
 function l7PayloadSummary(view) {
   if (view.state === 'unknown') return 'L7 location unknown';
   if (view.state === 'none') return 'no L7 body';
@@ -1604,6 +1701,53 @@ function scopeMatches(scope, record) {
      connection.destinationPort === scope.destinationPort);
 }
 
+function scopeMatchesEvent(scope, record) {
+  if (scope.type === 'connection') return record.event.id === scope.sessionId;
+  const explicit = record.event.details?.info?.session;
+  const label = explicit || flowRecords.get(record.event.id)?.label;
+  const connection = parseSessionLabel(label);
+  if (!connection || connection.sourceHost !== scope.sourceHost) return false;
+  return scope.type === 'client' ||
+    (connection.destinationHost === scope.destinationHost &&
+     connection.destinationPort === scope.destinationPort);
+}
+
+function renderFlowMessages(stream, followed) {
+  const records = eventRecords.filter(record => scopeMatchesEvent(followed, record))
+    .sort((a, b) => a.revision - b.revision);
+  stream.className = 'flow-stream flow-messages';
+  stream.replaceChildren();
+  for (const record of records) {
+    const message = document.createElement('details');
+    message.className = `flow-message ${eventCategory(record.event)}`;
+    message.dataset.revision = String(record.revision);
+    const summary = document.createElement('summary');
+    const action = document.createElement('b');
+    action.textContent = record.event.action || 'message';
+    const identity = document.createElement('span');
+    identity.textContent = `r${record.revision} · ${record.event.id || 'no connection id'}`;
+    const timestamp = Number(record.event.spider_received_at_ms);
+    const time = document.createElement('time');
+    time.textContent = Number.isFinite(timestamp)
+      ? new Date(timestamp).toLocaleTimeString([], {hour12: false}) : '—';
+    if (Number.isFinite(timestamp)) {
+      time.dateTime = new Date(timestamp).toISOString();
+      time.title = new Date(timestamp).toISOString();
+    }
+    summary.append(action, identity, time);
+    const json = document.createElement('pre');
+    json.textContent = JSON.stringify(record.event, null, 2);
+    message.append(summary, json);
+    stream.append(message);
+  }
+  if (!records.length) {
+    const empty = document.createElement('span');
+    empty.className = 'empty';
+    empty.textContent = 'No retained JSON messages for this flow.';
+    stream.append(empty);
+  }
+}
+
 function scopeLabel(scope, records = []) {
   if (scope.type === 'connection') return strictConnectionLabel(scope.label);
   const count = new Set(records.map(record => record.event.id)).size;
@@ -1627,7 +1771,8 @@ function openFlowTab(sessionId, type = 'connection') {
       view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
       laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11,
       cardLevels: new Map(), payloadCaps: {L: 0, R: 0}, keepAll: false, timeMode: 'elapsed',
-      l7Context: false};
+      l7Context: false, annotations: true};
+    followed.laneWidths = new Map();
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
@@ -1786,6 +1931,39 @@ function clearFollowedFlow(followed) {
   scheduleRender(false, true);
 }
 
+function exportFollowedFlow(followed, records) {
+  const packets = [];
+  for (const record of records) {
+    const info = record.event.details?.info || {};
+    const connection = parseSessionLabel(info.session);
+    if (!connection) continue;
+    packets.push({
+      sessionId: record.event.id,
+      sourceAddress: connection.sourceHost,
+      sourcePort: Number(connection.sourcePort),
+      destinationAddress: connection.destinationHost,
+      destinationPort: Number(connection.destinationPort),
+      side: info.side === 'R' ? 'R' : 'L',
+      payload: decodeBase64(info.content),
+      timestampMs: Number(record.event.spider_received_at_ms),
+    });
+  }
+  if (!packets.length) {
+    addActivity('system', 'PCAPNG', `Nothing exported from ${followed.title}`,
+      'No retained payload had a usable IP connection tuple.', 'warn');
+    return;
+  }
+  const bytes = SpiderPcapng.build(packets);
+  const filename = `spider-${followed.type}-${Date.now()}.pcapng`;
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([bytes], {type: 'application/x-pcapng'}));
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  addActivity('system', 'PCAPNG', `${filename} exported`,
+    `${packets.length} retained payload blocks from ${new Set(packets.map(packet => packet.sessionId)).size} synthetic TCP flow(s).`);
+}
+
 function renderFlowTab(scopeKey) {
   const followed = followedFlows.get(scopeKey);
   const panel = followed && byId(followed.id);
@@ -1807,11 +1985,14 @@ function renderFlowTab(scopeKey) {
       '<button type="button" data-flow-view="chunks" aria-pressed="true">Chunks</button>' +
       '<button type="button" data-flow-view="stream" aria-pressed="false">Stream</button>' +
       '<button type="button" data-flow-view="lanes" aria-pressed="false">Lanes</button>' +
+      '<button type="button" data-flow-view="messages" aria-pressed="false">Messages</button>' +
       '<span class="flow-scope-controls"><button type="button" data-flow-scope="wire">Wire</button>' +
       '<button type="button" data-flow-scope="l7">L7</button>' +
       '<label class="l7-context-toggle" title="Show 16 wire bytes immediately before and after each L7 body range"><input type="checkbox" data-l7-context> ±16 B context</label></span>' +
+      '<button type="button" data-flow-annotations title="Show Smithproxy protocol annotations over each payload">Annotations</button>' +
       '<button type="button" data-flow-expand="all">Expand all</button>' +
       '<button type="button" data-flow-expand="none">Collapse all</button>' +
+      '<button type="button" data-export-pcapng title="Export retained wire payloads as synthetic TCP traffic">PCAPNG</button>' +
       '<span class="lane-layout-controls"><button type="button" data-lane-fit>Fit width</button>' +
       '<button type="button" data-lane-width="-1" title="Narrower lanes">W−</button>' +
       '<button type="button" data-lane-width="1" title="Wider lanes">W+</button>' +
@@ -1846,6 +2027,16 @@ function renderFlowTab(scopeKey) {
       followed.renderedMode = null;
       renderFlowTab(scopeKey);
     };
+    panel.querySelector('[data-flow-annotations]').onclick = () => {
+      followed.annotations = !followed.annotations;
+      followed.renderedMode = null;
+      renderFlowTab(scopeKey);
+    };
+    panel.querySelector('[data-export-pcapng]').onclick = () => {
+      const exportRecords = payloadRecords.filter(record => scopeMatches(followed, record))
+        .sort((a, b) => a.revision - b.revision);
+      exportFollowedFlow(followed, exportRecords);
+    };
     panel.querySelector('[data-flow-expand="all"]').onclick = () => {
       followed.expanded = true;
       followed.collapsed = false;
@@ -1873,6 +2064,7 @@ function renderFlowTab(scopeKey) {
         followed.laneFit = false;
         followed.laneWidth = Math.max(120, Math.min(640,
           followed.laneWidth + Number(button.dataset.laneWidth) * 30));
+        followed.laneWidths?.clear();
         renderFlowTab(scopeKey);
       };
     }
@@ -1880,9 +2072,11 @@ function renderFlowTab(scopeKey) {
     laneWidthSlider.value = String(followed.laneWidth);
     laneWidthSlider.oninput = () => {
       const wasFit = followed.laneFit;
+      const hadCustomWidths = Boolean(followed.laneWidths?.size);
       followed.laneFit = false;
       followed.laneWidth = Number(laneWidthSlider.value);
-      if (wasFit) renderFlowTab(scopeKey);
+      followed.laneWidths?.clear();
+      if (wasFit || hadCustomWidths) renderFlowTab(scopeKey);
       else {
         panel.querySelector('.flow-stream')?.style.setProperty('--lane-width', `${followed.laneWidth}px`);
         panel.querySelector('.lane-width-slider output').value = `${followed.laneWidth}px`;
@@ -1931,15 +2125,22 @@ function renderFlowTab(scopeKey) {
   for (const button of panel.querySelectorAll('[data-flow-view]')) {
     button.setAttribute('aria-pressed', String(button.dataset.flowView === followed.view));
   }
+  const flowMessageCount = eventRecords.reduce((count, record) =>
+    count + (scopeMatchesEvent(followed, record) ? 1 : 0), 0);
+  panel.querySelector('[data-flow-view="messages"]').textContent = `Messages ${flowMessageCount}`;
   for (const button of panel.querySelectorAll('[data-flow-scope]')) {
     button.setAttribute('aria-pressed', String(button.dataset.flowScope === payloadScope));
   }
   const contextToggle = panel.querySelector('[data-l7-context]');
   contextToggle.checked = followed.l7Context;
   contextToggle.disabled = payloadScope !== 'l7';
+  panel.querySelector('[data-flow-annotations]').setAttribute(
+    'aria-pressed', String(followed.annotations));
   panel.querySelector('[data-flow-expand="all"]').hidden = followed.view !== 'chunks';
   panel.querySelector('[data-flow-expand="none"]').hidden = followed.view !== 'chunks';
   panel.querySelector('.lane-layout-controls').hidden = followed.view !== 'lanes';
+  panel.querySelector('.flow-scope-controls').hidden = followed.view === 'messages';
+  panel.querySelector('[data-flow-annotations]').hidden = followed.view === 'messages';
   panel.querySelector('[data-lane-fit]').setAttribute('aria-pressed', String(followed.laneFit));
   panel.querySelector('[data-lane-fit]').textContent = followed.laneFit ? 'Fit: on' : 'Fit width';
   panel.querySelector('[data-lane-width-slider]').value = String(followed.laneWidth);
@@ -1970,7 +2171,11 @@ function renderFlowTab(scopeKey) {
 
   const stream = panel.querySelector('.flow-stream');
   stream.className = followed.view === 'lanes' ? 'flow-stream lane-board' : 'flow-stream';
-  const renderMode = `${followed.view}:${payloadMode}:${payloadScope}:${followed.l7Context}`;
+  if (followed.view === 'messages') {
+    renderFlowMessages(stream, followed);
+    return;
+  }
+  const renderMode = `${followed.view}:${payloadMode}:${payloadScope}:${followed.l7Context}:${followed.annotations}`;
   if (followed.renderedMode !== renderMode) {
     stream.replaceChildren();
     delete stream.dataset.layoutKey;
@@ -2008,6 +2213,8 @@ function renderFlowTab(scopeKey) {
     metadata.append(document.createElement('br'), l7PayloadMarker(record, wireBytes));
     if (followed.view === 'stream') {
       const content = document.createElement('pre');
+      const payload = document.createElement('div');
+      payload.className = 'flow-payload-content';
       chunk.style.setProperty('--flow-color', flowLaneColor(followed, record.event.id));
       chunk.title = laneLabel(record.event.id);
       direction.textContent = `${side}·${followed.laneOrder.indexOf(record.event.id) + 1}`;
@@ -2022,7 +2229,9 @@ function renderFlowTab(scopeKey) {
         };
         metadata.append(document.createElement('br'), expand);
       }
-      chunk.append(direction, metadata, content);
+      if (followed.annotations) appendAnnotationRail(payload, record, wireBytes);
+      payload.append(content);
+      chunk.append(direction, metadata, payload);
       renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0,
         followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
     } else {
@@ -2043,7 +2252,12 @@ function renderFlowTab(scopeKey) {
       const content = document.createElement('pre');
       if (!(followed.l7Context && payloadScope === 'l7' &&
             appendL7Context(content, record, wireBytes, payloadMode, bytes.length))) {
-        content.textContent = payloadMode === 'hex' ? encodeHex(bytes) : new TextDecoder().decode(bytes);
+        const annotations = followed.annotations && payloadScope === 'wire'
+          ? contentAnnotations(record, bytes.length) : [];
+        if (!appendAnnotatedPayload(content, bytes, annotations, payloadMode)) {
+          content.textContent = payloadMode === 'hex'
+            ? encodeHex(bytes) : new TextDecoder().decode(bytes);
+        }
       }
       content.onwheel = event => {
         if (event.shiftKey) return;
@@ -2052,7 +2266,9 @@ function renderFlowTab(scopeKey) {
       };
       chunk.open = !followed.collapsed;
       chunk.classList.toggle('expanded', followed.expanded);
-      chunk.append(summary, content);
+      chunk.append(summary);
+      if (followed.annotations) appendAnnotationRail(chunk, record, wireBytes);
+      chunk.append(content);
     }
     stream.append(chunk);
   }
@@ -2231,6 +2447,7 @@ function decorateLaneResponses(stream, records, followed) {
 function renderLaneBoard(stream, records, followed, scopeKey) {
   const workspace = stream.closest('.workspace');
   const previousScroll = workspace.scrollTop;
+  if (!(followed.laneWidths instanceof Map)) followed.laneWidths = new Map();
   const laneIds = [...new Set(records.map(record => record.event.id))];
   for (const laneId of laneIds) {
     if (followed.laneOrder.includes(laneId)) continue;
@@ -2240,14 +2457,18 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
   followed.laneOrder = followed.laneOrder.filter(laneId => laneIds.includes(laneId));
   const visible = followed.laneOrder.filter(laneId => followed.visibleLanes.has(laneId));
   const hidden = followed.laneOrder.filter(laneId => !followed.visibleLanes.has(laneId));
-  const laneColumn = followed.laneFit ? 'minmax(0,1fr)' : 'var(--lane-width)';
-  const template = `104px ${visible.map(() => laneColumn).join(' ')} ` +
+  const makeTemplate = () => `104px ${visible.map(laneId => followed.laneFit
+    ? 'minmax(0,1fr)' : `${followed.laneWidths.get(laneId) || followed.laneWidth}px`).join(' ')} ` +
     `${hidden.map(() => '14px').join(' ')} 16px`;
+  let template = makeTemplate();
   stream.className = 'flow-stream lane-board';
   stream.classList.toggle('fit-width', followed.laneFit);
   stream.style.setProperty('--lane-width', `${followed.laneWidth}px`);
   stream.style.setProperty('--lane-font-size', `${followed.laneFont}px`);
-  const layoutKey = `${visible.join('|')}::${hidden.join('|')}::${followed.laneFit}:${followed.laneFont}:${followed.timeMode}`;
+  const makeLayoutKey = () => `${visible.join('|')}::${hidden.join('|')}::${followed.laneFit}:` +
+    `${followed.laneFont}:${followed.timeMode}:` +
+    visible.map(laneId => followed.laneWidths.get(laneId) || 0).join(',');
+  const layoutKey = makeLayoutKey();
   const rebuild = stream.dataset.layoutKey !== layoutKey;
   if (rebuild) {
     stream.replaceChildren();
@@ -2265,7 +2486,40 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
       const text = document.createElement('span'); text.textContent = laneLabel(laneId); text.title = laneId;
       const collapse = document.createElement('button'); collapse.textContent = '→'; collapse.title = 'Collapse to activity rail';
       collapse.onclick = () => { followed.visibleLanes.delete(laneId); renderFlowTab(scopeKey); };
-      item.append(text, collapse);
+      const resize = document.createElement('i');
+      resize.className = 'lane-resize'; resize.title = 'Drag to resize this lane';
+      resize.onpointerdown = event => {
+        event.preventDefault(); event.stopPropagation();
+        const titles = [...header.querySelectorAll('.lane-title')];
+        for (const title of titles) {
+          followed.laneWidths.set(title.dataset.lane,
+            Math.round(title.getBoundingClientRect().width));
+        }
+        followed.laneFit = false;
+        stream.classList.remove('fit-width');
+        stream.dataset.layoutKey = makeLayoutKey();
+        const startX = event.clientX;
+        const startWidth = followed.laneWidths.get(laneId) || followed.laneWidth;
+        resize.setPointerCapture(event.pointerId);
+        resize.classList.add('dragging');
+        resize.onpointermove = move => {
+          if (!resize.hasPointerCapture(move.pointerId)) return;
+          followed.laneWidths.set(laneId,
+            Math.max(120, Math.min(960, Math.round(startWidth + move.clientX - startX))));
+          template = makeTemplate();
+          for (const row of stream.querySelectorAll('.lane-row')) {
+            row.style.gridTemplateColumns = template;
+          }
+          stream.dataset.layoutKey = makeLayoutKey();
+        };
+        resize.onpointerup = move => {
+          resize.releasePointerCapture(move.pointerId);
+          resize.classList.remove('dragging');
+          resize.onpointermove = null; resize.onpointerup = null;
+          renderFlowTab(scopeKey);
+        };
+      };
+      item.append(text, collapse, resize);
       item.ondragstart = () => { followed.draggedLane = laneId; };
       item.ondragover = event => event.preventDefault();
       item.ondrop = event => {
@@ -2340,7 +2594,9 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
         };
         head.append(expand);
       }
-      card.append(head, preview);
+      card.append(head);
+      if (followed.annotations) appendAnnotationRail(card, record, wireBytes);
+      card.append(preview);
       renderLaneCardPayload(card, bytes, followed.cardLevels.get(record.revision) || 0,
         followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
       row.append(card);

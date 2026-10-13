@@ -58,6 +58,11 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration_chain.py
                      $<TARGET_FILE:smithproxy-spider>)
     set_tests_properties(spider_chain_test PROPERTIES TIMEOUT 15)
+    find_program(NODE_EXECUTABLE node)
+    if(NODE_EXECUTABLE)
+        add_test(NAME spider_pcapng_test
+                 COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/pcapng_test.js)
+    endif()
 endif()
 
 install(TARGETS smithproxy-spider RUNTIME DESTINATION bin)
