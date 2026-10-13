@@ -187,7 +187,7 @@ int main() {
     auto before_classification = filter_event;
     assert(!classified.prepare(before_classification));
     assert(!before_classification.contains("decision"));
-    classified.observe({{"action", "connection-info"}, {"id", "filter-1"},
+    classified.observe({{"action", "connection-info"}, {"id", "filter-session"},
                         {"details", {{"info", {{"classification", {{"sift",
                             nlohmann::json::array({"app.youtube.video"})}}}}}}}});
     auto after_classification = filter_event;
@@ -200,13 +200,18 @@ int main() {
          {"mode", "pass"}},
     })}});
     assert(glob_status["errors"].empty());
-    classified_glob.observe({{"action", "connection-info"}, {"id", "filter-1"},
+    classified_glob.observe({{"action", "connection-info"}, {"id", "filter-session"},
                              {"details", {{"info", {{"classification", {{"sift",
                                  nlohmann::json::array({"protocol.http2"})}}}}}}}});
     auto globbed = filter_event;
     assert(!classified_glob.prepare(globbed));
     assert(globbed["decision"]["state"] == "passed");
 
+    const auto restored_traffic_status = traffic.set_traffic_rules({{"rules", nlohmann::json::array({
+        {{"address", "1.1.1.1"}, {"mode", "ignore"}},
+        {{"address", "192.168.99.1"}, {"mode", "focus"}},
+    })}});
+    assert(restored_traffic_status["errors"].empty());
     spider::SessionStore traffic_store(20);
     assert(spider::process_webhook(traffic_store, traffic, ignored).status == 200);
     assert(traffic_store.events_after(0)["events"].empty());
