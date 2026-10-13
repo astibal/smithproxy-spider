@@ -10,12 +10,21 @@ const bytesToBase64 = bytes => {
 
 self.onmessage = ({data}) => {
   const logs = [];
+  const l7Bytes = Uint8Array.from(data.l7?.bytes || []);
+  const l7 = Object.freeze({
+    state: data.l7?.state || 'unavailable',
+    ranges: Object.freeze((data.l7?.ranges || []).map(range => Object.freeze([...range]))),
+    encodings: Object.freeze([...(data.l7?.encodings || [])]),
+    bytes: l7Bytes,
+    text: new TextDecoder().decode(l7Bytes),
+  });
   const api = Object.freeze({
     bytes: Uint8Array.from(data.bytes),
     text: new TextDecoder().decode(Uint8Array.from(data.bytes)),
     side: data.side,
     sessionId: data.sessionId,
     sessionLabel: data.sessionLabel,
+    l7,
     print: (...values) => logs.push(values.map(value =>
       typeof value === 'string' ? value : JSON.stringify(value)).join(' ')),
   });

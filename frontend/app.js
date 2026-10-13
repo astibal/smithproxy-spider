@@ -17,6 +17,7 @@ const liveSiftClassifications = new Map();
 const followedFlows = new Map();
 let flowMenuSession = null;
 let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flows' ? 'flows' : 'payloads';
+let payloadScope = localStorage.getItem('spider-payload-scope') === 'l7' ? 'l7' : 'wire';
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let replacementBase64 = null;
 let activeTab = 'workbench-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
@@ -101,6 +102,7 @@ let flowViewLimitMiB = Math.max(1, Math.min(8192,
 const eventFilters = {ping: false, sessions: false, status: true, other: false};
 const defaultJavascriptScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
+// api.l7           detected body state, ranges, encodings, bytes, and text
 // api.side         "L" (client) or "R" (server)
 // api.sessionId    Smithproxy session identifier
 // api.sessionLabel endpoints and detected protocol
@@ -114,6 +116,10 @@ return undefined;
 `;
 const defaultPythonScript = `# api.bytes          original payload as bytes
 # api.text           UTF-8 decoded view
+# api.l7_bytes       concatenated detected L7 body ranges
+# api.l7_ranges      (start, end) offsets into api.bytes
+# api.l7_encodings   positional Content-Encoding values
+# api.l7_state       "body", "none", "unknown", or "unavailable"
 # api.side           "L" (client) or "R" (server)
 # api.session_id     Smithproxy session identifier
 # api.session_label  endpoints and detected protocol
@@ -1233,29 +1239,143 @@ function decodeBase64(value) {
   return Uint8Array.from(binary, char => char.charCodeAt(0));
 }
 
-function encodeHex(bytes) {
+function encodeHex(bytes, baseOffset = 0) {
   const rows = [];
   for (let offset = 0; offset < bytes.length; offset += 16) {
     const row = bytes.subarray(offset, offset + 16);
     const hex = Array.from(row, value => value.toString(16).padStart(2, '0')).join(' ').padEnd(47);
     const ascii = Array.from(row, value => value >= 32 && value < 127 ? String.fromCharCode(value) : '.').join('');
-    rows.push(`${offset.toString(16).padStart(8, '0')}  ${hex}  |${ascii}|`);
+    rows.push(`${(baseOffset + offset).toString(16).padStart(8, '0')}  ${hex}  |${ascii}|`);
   }
   return rows.join('\n');
 }
 
+function l7PayloadView(record, source = null) {
+  const info = record?.event?.details?.info;
+  if (source === null) source = decodeBase64(info?.content);
+  if (!info || !Array.isArray(info.L7_payload_start) ||
+      !Array.isArray(info.L7_payload_end) ||
+      info.L7_payload_start.length !== info.L7_payload_end.length ||
+      !info.L7_payload_start.length) {
+    return {state: 'unavailable', ranges: [], encodings: [], bytes: new Uint8Array()};
+  }
+  const starts = info.L7_payload_start.map(Number);
+  const ends = info.L7_payload_end.map(Number);
+  if (starts.some(value => value === -1) || ends.some(value => value === -1)) {
+    return {state: 'unknown', ranges: [], encodings: [], bytes: new Uint8Array()};
+  }
+  if (starts.length === 1 && starts[0] === 0 && ends[0] === 0) {
+    return {state: 'none', ranges: [], encodings: [], bytes: new Uint8Array()};
+  }
+  const ranges = [];
+  for (let index = 0; index < starts.length; ++index) {
+    const start = starts[index], end = ends[index];
+    if (!Number.isInteger(start) || !Number.isInteger(end) ||
+        start < 0 || end < start || end > source.length) {
+      return {state: 'invalid', ranges: [], encodings: [], bytes: new Uint8Array()};
+    }
+    ranges.push({start, end});
+  }
+  const length = ranges.reduce((total, range) => total + range.end - range.start, 0);
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const range of ranges) {
+    const part = source.subarray(range.start, range.end);
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  const supplied = Array.isArray(info.L7_encoding) ? info.L7_encoding : [];
+  const encodings = ranges.map((_, index) => String(supplied[index] || '').trim());
+  return {state: 'body', ranges, encodings, bytes};
+}
+
+function l7PayloadSummary(view) {
+  if (view.state === 'unknown') return 'L7 location unknown';
+  if (view.state === 'none') return 'no L7 body';
+  if (view.state === 'invalid') return 'invalid L7 ranges';
+  if (view.state === 'unavailable') return 'no L7 metadata';
+  const encodings = [...new Set(view.encodings.filter(Boolean))];
+  const ranges = `${view.ranges.length} ${view.ranges.length === 1 ? 'range' : 'ranges'}`;
+  return `L7 ${formatBytes(view.bytes.length)} · ${ranges}` +
+    (encodings.length ? ` · ${encodings.join(', ')}` : '');
+}
+
+function l7PayloadMarker(record, source = null) {
+  const view = l7PayloadView(record, source);
+  const marker = document.createElement('span');
+  marker.className = `l7-marker ${view.state}`;
+  if (view.state === 'body') marker.textContent = `L7 ${formatBytes(view.bytes.length)}`;
+  else if (view.state === 'none') marker.textContent = 'NO BODY';
+  else if (view.state === 'unknown') marker.textContent = 'L7 ?';
+  else if (view.state === 'invalid') marker.textContent = 'L7 !';
+  else marker.textContent = 'L7 —';
+  const ranges = view.ranges.map((range, index) =>
+    `[${range.start}, ${range.end})${view.encodings[index] ? ` ${view.encodings[index]}` : ''}`);
+  marker.title = ranges.length ? ranges.join(', ') : l7PayloadSummary(view);
+  marker.tabIndex = 0;
+  marker.setAttribute('role', 'button');
+  marker.setAttribute('aria-label', `Show ${l7PayloadSummary(view)}`);
+  const showL7 = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (record) selectPayload(record, false);
+    setPayloadScope('l7');
+  };
+  marker.onclick = showL7;
+  marker.onkeydown = event => {
+    if (event.key === 'Enter' || event.key === ' ') showL7(event);
+  };
+  return marker;
+}
+
+function flowPayloadBytes(record, wireBytes) {
+  return payloadScope === 'l7' ? l7PayloadView(record, wireBytes).bytes : wireBytes;
+}
+
+function setPayloadScope(scope) {
+  payloadScope = scope === 'l7' ? 'l7' : 'wire';
+  localStorage.setItem('spider-payload-scope', payloadScope);
+  renderPayload();
+  for (const followed of followedFlows.values()) followed.renderedMode = null;
+  for (const id of followedFlows.keys()) renderFlowTab(id);
+}
+
+function scriptL7Metadata(record, source) {
+  const view = l7PayloadView(record, source);
+  return {
+    state: view.state,
+    ranges: view.ranges.map(range => [range.start, range.end]),
+    encodings: view.encodings,
+    bytes: Array.from(view.bytes),
+  };
+}
+
 function renderPayload() {
-  if (payloadMode === 'hex') byId('payload-hex').textContent = encodeHex(payloadBytes);
-  else byId('payload-text').value = new TextDecoder().decode(payloadBytes);
+  const l7 = l7PayloadView(selectedPayload, payloadBytes);
+  const shownBytes = payloadScope === 'l7' ? l7.bytes : payloadBytes;
+  if (payloadMode === 'hex') byId('payload-hex').textContent = encodeHex(shownBytes);
+  else byId('payload-text').value = new TextDecoder().decode(shownBytes);
+  byId('payload-text').readOnly = payloadScope === 'l7';
+  byId('payload-text').title = payloadScope === 'l7'
+    ? 'L7 view is derived from wire content and is read-only' : '';
+  for (const button of document.querySelectorAll('#payload-scope button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.scope === payloadScope));
+    if (button.dataset.scope === 'l7') {
+      const ranges = l7.ranges.map((range, index) =>
+        `[${range.start}, ${range.end})${l7.encodings[index] ? ` ${l7.encodings[index]}` : ''}`);
+      button.title = ranges.length ? ranges.join(', ') : l7PayloadSummary(l7);
+    }
+  }
+  byId('payload-viewer').dataset.l7State = payloadScope === 'l7' ? l7.state : '';
   const info = selectedPayload?.event?.details?.info || {};
   byId('workbench-source').textContent = selectedPayload
     ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${resolvedSessionLabel(info.session || selectedPayload.event.id)}`
     : `${payloadBytes.length} B sample`;
   byId('workbench-source').className = '';
-  byId('payload-view-title').textContent = `${payloadMode.toUpperCase()} payload`;
+  byId('payload-view-title').textContent = `${payloadMode.toUpperCase()} ${payloadScope === 'l7' ? 'L7 body' : 'wire payload'}`;
   byId('payload-view-status').textContent = selectedPayload
-    ? `${info.side || '?'} · ${payloadBytes.length} B · r${selectedPayload.revision}`
-    : `${payloadBytes.length} B`;
+    ? `${info.side || '?'} · ${payloadScope === 'l7' ? l7PayloadSummary(l7) : formatBytes(payloadBytes.length)} · r${selectedPayload.revision}`
+    : `${shownBytes.length} B`;
   const inspection = payloadInspectionInfo(selectedPayload);
   renderWorkbenchInfo(inspection, selectedPayload);
   const pending = selectedPayload?.event?.decision?.state === 'pending' && !selectedPayload.decided;
@@ -1303,6 +1423,7 @@ function payloadInspectionInfo(record) {
   }
   const layer = String(info.payload_layer || '').trim();
   if (layer) labels.push(`${layer.toUpperCase()} payload`);
+  if (Array.isArray(info.L7_payload_start)) labels.push(l7PayloadSummary(l7PayloadView(record)));
   if (info.l7?.app) labels.push(String(info.l7.app));
   if (record.inspectResult) labels.push(`INSPECT ${record.inspectResult}`);
   if (record.event.decision?.state === 'pending' && !record.decided) labels.push('awaiting decision');
@@ -1375,10 +1496,14 @@ function renderPayloadList() {
       label.title = flow.label || flow.id;
       const left = document.createElement('span');
       left.className = 'flow-side';
-      left.textContent = `L ${flow.L.count} · ${formatBytes(flow.L.bytes)}`;
+      left.innerHTML = `L ${flow.L.count} · ${escapeHtml(formatBytes(flow.L.bytes))}` +
+        `<small>${flow.L.l7Payloads ? `L7 ${escapeHtml(formatBytes(flow.L.l7Bytes))}` :
+          flow.L.l7Unknown ? 'L7 ?' : 'no L7 body'}</small>`;
       const right = document.createElement('span');
       right.className = 'flow-side';
-      right.textContent = `R ${flow.R.count} · ${formatBytes(flow.R.bytes)}`;
+      right.innerHTML = `R ${flow.R.count} · ${escapeHtml(formatBytes(flow.R.bytes))}` +
+        `<small>${flow.R.l7Payloads ? `L7 ${escapeHtml(formatBytes(flow.R.l7Bytes))}` :
+          flow.R.l7Unknown ? 'L7 ?' : 'no L7 body'}</small>`;
       row.append(label, left, right);
       row.onclick = () => {
         if (!flow.latest) return;
@@ -1394,15 +1519,18 @@ function renderPayloadList() {
   for (let index = payloadRecords.length - 1; index >= 0; --index) {
     const record = payloadRecords[index];
     const info = record.event.details?.info || {};
-    const size = Math.floor((info.content?.length || 0) * 3 / 4);
+    const size = decodedPayloadSize(info.content);
     const row = document.createElement('button');
     row.type = 'button';
     row.className = `payload-row${record === selectedPayload ? ' selected' : ''}` +
       `${record.event.decision?.state === 'pending' && !record.decided ? ' pending' : ''}` +
       `${record.decided ? ' decided' : ''}`;
     row.innerHTML = `<span>r${record.revision}</span><b>${escapeHtml(info.side || '?')}</b>` +
-      `<span>${escapeHtml(formatBytes(size) || `${size} B`)}</span>` +
-      `<span>${escapeHtml(resolvedSessionLabel(info.session || record.event.id || 'unlabelled'))}</span>`;
+      `<span>${escapeHtml(formatBytes(size) || `${size} B`)}</span>`;
+    row.append(l7PayloadMarker(record));
+    const session = document.createElement('span');
+    session.textContent = resolvedSessionLabel(info.session || record.event.id || 'unlabelled');
+    row.append(session);
     row.onclick = () => {
       selectPayload(record, false);
       pinSession(record, false);
@@ -1498,7 +1626,8 @@ function openFlowTab(sessionId, type = 'connection') {
     const followed = {...scope, id, evicted: 0,
       view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
       laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11,
-      cardLevels: new Map(), payloadCaps: {L: 0, R: 0}, keepAll: false, timeMode: 'elapsed'};
+      cardLevels: new Map(), payloadCaps: {L: 0, R: 0}, keepAll: false, timeMode: 'elapsed',
+      l7Context: false};
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
@@ -1536,17 +1665,60 @@ function flowDisplayBytes(followed, side, bytes) {
   return cap && bytes.length > cap ? bytes.subarray(0, cap) : bytes;
 }
 
+function appendL7Context(target, record, wireBytes, mode, bodyLimit) {
+  const view = l7PayloadView(record, wireBytes);
+  if (view.state !== 'body') return false;
+  let remaining = bodyLimit;
+  for (const [index, range] of view.ranges.entries()) {
+    if (remaining <= 0) break;
+    const shownEnd = Math.min(range.end, range.start + remaining);
+    const previousEnd = index ? view.ranges[index - 1].end : 0;
+    const nextStart = view.ranges[index + 1]?.start ?? wireBytes.length;
+    // Context is non-payload wire data adjacent to this range. A short chunk
+    // delimiter must not make the 16-byte window spill into a neighbouring body.
+    const beforeStart = Math.max(previousEnd, range.start - 16);
+    const afterEnd = shownEnd === range.end ? Math.min(nextStart, range.end + 16) : range.end;
+    const block = document.createElement('span');
+    block.className = 'l7-context-range';
+    const appendPart = (kind, bytes, offset, label) => {
+      if (!bytes.length) return;
+      const part = document.createElement('span');
+      part.className = `l7-context-${kind}`;
+      const caption = document.createElement('i');
+      caption.textContent = label;
+      part.append(caption);
+      if (mode === 'hex') part.append(document.createTextNode(`${encodeHex(bytes, offset)}\n`));
+      else {
+        appendMixedAscii(part, bytes);
+        part.append(document.createTextNode('\n'));
+      }
+      block.append(part);
+    };
+    appendPart('neighbor', wireBytes.subarray(beforeStart, range.start), beforeStart,
+      `wire before [${beforeStart}, ${range.start})`);
+    appendPart('body', wireBytes.subarray(range.start, shownEnd), range.start,
+      `L7 body ${index + 1} [${range.start}, ${range.end})`);
+    if (shownEnd === range.end) appendPart('neighbor', wireBytes.subarray(range.end, afterEnd), range.end,
+      `wire after [${range.end}, ${afterEnd})`);
+    target.append(block);
+    remaining -= shownEnd - range.start;
+  }
+  return true;
+}
+
 function flowLaneColor(followed, sessionId) {
   if (!followed.laneOrder.includes(sessionId)) followed.laneOrder.push(sessionId);
   return `hsl(${(followed.laneOrder.indexOf(sessionId) * 67) % 360} 62% 62%)`;
 }
 
-function renderFlowStreamPayload(chunk, bytes, level) {
+function renderFlowStreamPayload(chunk, bytes, level, context = null) {
   const limits = [640, 8192, bytes.length];
   const limit = Math.min(bytes.length, limits[level] ?? limits[0]);
   const content = chunk.querySelector('pre');
   content.replaceChildren();
-  appendMixedAscii(content, bytes.subarray(0, limit));
+  if (!context || !appendL7Context(content, context.record, context.wireBytes, 'ascii', limit)) {
+    appendMixedAscii(content, bytes.subarray(0, limit));
+  }
   const remaining = bytes.length - limit;
   if (remaining) {
     const omitted = document.createElement('span');
@@ -1630,11 +1802,14 @@ function renderFlowTab(scopeKey) {
   }
   const omitted = retained.length - records.length;
   if (!panel.querySelector('.flow-stream')) {
-    panel.innerHTML = '<div class="flow-follow-head"><h2>Follow flow</h2><small></small>' +
+    panel.innerHTML = '<div class="flow-follow-toolbar"><div class="flow-follow-head"><h2>Follow flow</h2><small></small>' +
       '<span class="flow-follow-classifications"></span><div class="flow-follow-controls">' +
       '<button type="button" data-flow-view="chunks" aria-pressed="true">Chunks</button>' +
       '<button type="button" data-flow-view="stream" aria-pressed="false">Stream</button>' +
       '<button type="button" data-flow-view="lanes" aria-pressed="false">Lanes</button>' +
+      '<span class="flow-scope-controls"><button type="button" data-flow-scope="wire">Wire</button>' +
+      '<button type="button" data-flow-scope="l7">L7</button>' +
+      '<label class="l7-context-toggle" title="Show 16 wire bytes immediately before and after each L7 body range"><input type="checkbox" data-l7-context> ±16 B context</label></span>' +
       '<button type="button" data-flow-expand="all">Expand all</button>' +
       '<button type="button" data-flow-expand="none">Collapse all</button>' +
       '<span class="lane-layout-controls"><button type="button" data-lane-fit>Fit width</button>' +
@@ -1648,9 +1823,14 @@ function renderFlowTab(scopeKey) {
       '<label>L bytes <select data-payload-cap="L"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
       '<label>R bytes <select data-payload-cap="R"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
       '<label>Time <select data-time-mode><option value="elapsed">elapsed</option><option value="local">local</option><option value="utc">UTC</option></select></label>' +
-      '<button type="button" class="danger-subtle" data-clear-flow>Clear flow cache</button></div>' +
+      '<button type="button" class="danger-subtle" data-clear-flow>Clear flow cache</button></div></div>' +
       '<div class="flow-gap flow-eviction" hidden></div>' +
       '<div class="flow-gap flow-window" hidden></div><div class="flow-stream"></div>';
+    const toolbar = panel.querySelector('.flow-follow-toolbar');
+    const updateToolbarHeight = () => panel.style.setProperty(
+      '--flow-toolbar-height', `${toolbar.getBoundingClientRect().height}px`);
+    new ResizeObserver(updateToolbarHeight).observe(toolbar);
+    requestAnimationFrame(updateToolbarHeight);
     for (const button of panel.querySelectorAll('[data-flow-view]')) {
       button.onclick = () => {
         followed.view = button.dataset.flowView;
@@ -1658,6 +1838,14 @@ function renderFlowTab(scopeKey) {
         renderFlowTab(scopeKey);
       };
     }
+    for (const button of panel.querySelectorAll('[data-flow-scope]')) {
+      button.onclick = () => setPayloadScope(button.dataset.flowScope);
+    }
+    panel.querySelector('[data-l7-context]').onchange = event => {
+      followed.l7Context = event.target.checked;
+      followed.renderedMode = null;
+      renderFlowTab(scopeKey);
+    };
     panel.querySelector('[data-flow-expand="all"]').onclick = () => {
       followed.expanded = true;
       followed.collapsed = false;
@@ -1743,6 +1931,12 @@ function renderFlowTab(scopeKey) {
   for (const button of panel.querySelectorAll('[data-flow-view]')) {
     button.setAttribute('aria-pressed', String(button.dataset.flowView === followed.view));
   }
+  for (const button of panel.querySelectorAll('[data-flow-scope]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.flowScope === payloadScope));
+  }
+  const contextToggle = panel.querySelector('[data-l7-context]');
+  contextToggle.checked = followed.l7Context;
+  contextToggle.disabled = payloadScope !== 'l7';
   panel.querySelector('[data-flow-expand="all"]').hidden = followed.view !== 'chunks';
   panel.querySelector('[data-flow-expand="none"]').hidden = followed.view !== 'chunks';
   panel.querySelector('.lane-layout-controls').hidden = followed.view !== 'lanes';
@@ -1776,7 +1970,7 @@ function renderFlowTab(scopeKey) {
 
   const stream = panel.querySelector('.flow-stream');
   stream.className = followed.view === 'lanes' ? 'flow-stream lane-board' : 'flow-stream';
-  const renderMode = `${followed.view}:${payloadMode}`;
+  const renderMode = `${followed.view}:${payloadMode}:${payloadScope}:${followed.l7Context}`;
   if (followed.renderedMode !== renderMode) {
     stream.replaceChildren();
     delete stream.dataset.layoutKey;
@@ -1797,7 +1991,8 @@ function renderFlowTab(scopeKey) {
     const recordRevision = String(record.revision);
     if (rendered.has(recordRevision)) continue;
     const info = record.event.details?.info || {};
-    const completeBytes = decodeBase64(info.content);
+    const wireBytes = decodeBase64(info.content);
+    const completeBytes = flowPayloadBytes(record, wireBytes);
     const side = info.side === 'R' ? 'R' : 'L';
     const bytes = flowDisplayBytes(followed, side, completeBytes);
     const chunk = followed.view === 'stream'
@@ -1810,6 +2005,7 @@ function renderFlowTab(scopeKey) {
     metadata.append(`r${record.revision}`, document.createElement('br'), formatBytes(bytes.length));
     if (bytes.length < completeBytes.length) metadata.append(document.createElement('br'),
       `of ${formatBytes(completeBytes.length)}`);
+    metadata.append(document.createElement('br'), l7PayloadMarker(record, wireBytes));
     if (followed.view === 'stream') {
       const content = document.createElement('pre');
       chunk.style.setProperty('--flow-color', flowLaneColor(followed, record.event.id));
@@ -1821,12 +2017,14 @@ function renderFlowTab(scopeKey) {
         expand.onclick = () => {
           const next = Number(expand.dataset.nextLevel || 0);
           followed.cardLevels.set(record.revision, next);
-          renderFlowStreamPayload(chunk, bytes, next);
+          renderFlowStreamPayload(chunk, bytes, next,
+            followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
         };
         metadata.append(document.createElement('br'), expand);
       }
       chunk.append(direction, metadata, content);
-      renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0);
+      renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0,
+        followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
     } else {
       const summary = document.createElement('summary');
       summary.append(direction, metadata);
@@ -1843,7 +2041,10 @@ function renderFlowTab(scopeKey) {
       };
       summary.append(expand);
       const content = document.createElement('pre');
-      content.textContent = payloadMode === 'hex' ? encodeHex(bytes) : new TextDecoder().decode(bytes);
+      if (!(followed.l7Context && payloadScope === 'l7' &&
+            appendL7Context(content, record, wireBytes, payloadMode, bytes.length))) {
+        content.textContent = payloadMode === 'hex' ? encodeHex(bytes) : new TextDecoder().decode(bytes);
+      }
       content.onwheel = event => {
         if (event.shiftKey) return;
         event.preventDefault();
@@ -1942,12 +2143,14 @@ function laneStepLabel(delta) {
   return `prev ${laneDeltaLabel(delta).replace('Δ ', '+')}`;
 }
 
-function renderLaneCardPayload(card, bytes, level) {
+function renderLaneCardPayload(card, bytes, level, context = null) {
   const limits = [320, 4096, bytes.length];
   const limit = Math.min(bytes.length, limits[level] ?? limits[0]);
   const preview = card.querySelector('pre');
   preview.replaceChildren();
-  appendMixedAscii(preview, bytes.subarray(0, limit));
+  if (!context || !appendL7Context(preview, context.record, context.wireBytes, 'ascii', limit)) {
+    appendMixedAscii(preview, bytes.subarray(0, limit));
+  }
   const remaining = bytes.length - limit;
   if (remaining) {
     const omitted = document.createElement('span');
@@ -2110,7 +2313,8 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
     if (visibleIndex >= 0) {
       const info = record.event.details?.info || {};
       const side = info.side === 'R' ? 'R' : 'L';
-      const completeBytes = decodeBase64(info.content);
+      const wireBytes = decodeBase64(info.content);
+      const completeBytes = flowPayloadBytes(record, wireBytes);
       const bytes = flowDisplayBytes(followed, side, completeBytes);
       const card = document.createElement('article');
       card.className = `lane-card ${side}`;
@@ -2123,20 +2327,22 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
       meta.textContent = `r${record.revision} · ${side} · ${formatBytes(bytes.length)}` +
         (bytes.length < completeBytes.length ? ` / ${formatBytes(completeBytes.length)} (trimmed)` : '');
       const preview = document.createElement('pre');
-      head.append(meta);
+      head.append(meta, l7PayloadMarker(record, wireBytes));
       if (bytes.length > 320) {
         const expand = document.createElement('button');
         expand.type = 'button'; expand.className = 'lane-card-expand';
         expand.onclick = () => {
           const next = Number(expand.dataset.nextLevel || 0);
           followed.cardLevels.set(record.revision, next);
-          renderLaneCardPayload(card, bytes, next);
+          renderLaneCardPayload(card, bytes, next,
+            followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
           decorateLaneResponses(stream, records, followed);
         };
         head.append(expand);
       }
       card.append(head, preview);
-      renderLaneCardPayload(card, bytes, followed.cardLevels.get(record.revision) || 0);
+      renderLaneCardPayload(card, bytes, followed.cardLevels.get(record.revision) || 0,
+        followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
       row.append(card);
     } else if (hiddenIndex >= 0) {
       const tick = document.createElement('button');
@@ -2198,12 +2404,20 @@ function updateFlowRecord(record) {
   if (!flow) {
     flow = {id: event.id, label: info.session || event.id, active: true,
             lastRevision: record.revision, latest: record,
-            L: {count: 0, bytes: 0}, R: {count: 0, bytes: 0}};
+            L: {count: 0, bytes: 0, l7Bytes: 0, l7Payloads: 0, l7Unknown: 0},
+            R: {count: 0, bytes: 0, l7Bytes: 0, l7Payloads: 0, l7Unknown: 0}};
     flowRecords.set(event.id, flow);
   }
   const side = info.side === 'R' ? 'R' : 'L';
   flow[side].count += 1;
   flow[side].bytes += decodedPayloadSize(info.content);
+  const l7 = l7PayloadView(record);
+  if (l7.state === 'body') {
+    flow[side].l7Bytes += l7.bytes.length;
+    flow[side].l7Payloads += 1;
+  } else if (l7.state !== 'none') {
+    flow[side].l7Unknown += 1;
+  }
   flow.label = info.session || flow.label;
   flow.lastRevision = record.revision;
   flow.latest = record;
@@ -2312,6 +2526,7 @@ function executeJavascriptScript(record) {
       resolve({ok: false, logs: [], error: event.message || 'Script worker failed.'});
     };
     worker.postMessage({script: byId('script-editor').value, bytes: Array.from(bytes),
+      l7: scriptL7Metadata(record, bytes),
       side: info.side || '', sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
   });
 }
@@ -2368,6 +2583,7 @@ async function executePythonScript(record) {
     pythonRequests.set(id, {resolve, timeout});
     pythonWorker.postMessage({id, script: byId('script-editor').value,
       content: info.content || '', side: info.side || '',
+      l7: scriptL7Metadata(record, decodeBase64(info.content)),
       sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
   });
 }
@@ -2901,9 +3117,13 @@ byId('accept-session').onclick = () => decideSelected('accept-session');
 byId('replace-payload').onclick = () => decideSelected('replace');
 byId('discard-payload').onclick = () => decideSelected('discard');
 byId('payload-text').oninput = event => {
+  if (payloadScope === 'l7') return;
   payloadBytes = new TextEncoder().encode(event.target.value);
   if (payloadMode === 'hex') byId('payload-hex').textContent = encodeHex(payloadBytes);
 };
+for (const button of document.querySelectorAll('#payload-scope button')) {
+  button.onclick = () => setPayloadScope(button.dataset.scope);
+}
 for (const button of document.querySelectorAll('#payload-modes button')) {
   button.onclick = () => setPayloadMode(button.dataset.mode);
 }

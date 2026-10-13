@@ -3,7 +3,7 @@ import {loadPyodide} from 'https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodid
 const pyodideReady = loadPyodide();
 
 const harness = String.raw`
-import base64, textwrap, traceback
+import base64, json, textwrap, traceback
 
 logs = []
 
@@ -14,6 +14,11 @@ class Api:
         self.side = _spider_side
         self.session_id = _spider_session_id
         self.session_label = _spider_session_label
+        l7 = json.loads(_spider_l7)
+        self.l7_state = l7.get("state", "unavailable")
+        self.l7_ranges = [tuple(value) for value in l7.get("ranges", [])]
+        self.l7_encodings = list(l7.get("encodings", []))
+        self.l7_bytes = bytes(l7.get("bytes", []))
 
     def print(self, *values):
         logs.append(" ".join(str(value) for value in values))
@@ -61,6 +66,7 @@ try {
       pyodide.globals.set('_spider_side', data.side);
       pyodide.globals.set('_spider_session_id', data.sessionId);
       pyodide.globals.set('_spider_session_label', data.sessionLabel);
+      pyodide.globals.set('_spider_l7', JSON.stringify(data.l7 || {}));
       const proxy = await pyodide.runPythonAsync(harness);
       const result = proxy.toJs({dict_converter: Object.fromEntries});
       proxy.destroy();
