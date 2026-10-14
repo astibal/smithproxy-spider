@@ -53,6 +53,10 @@ int main() {
     assert(store.status()["active_sessions"] == 1);
     assert(store.status()["last_callback"]["action"] == "connection-start");
     assert(store.status()["last_callback"]["received_at_ms"].get<std::int64_t>() > 0);
+    const auto initial_diagnostics = store.diagnostics();
+    assert(initial_diagnostics["callbacks"]["received"] == 1);
+    assert(initial_diagnostics["callbacks"]["by_action"]["connection-start"] == 1);
+    assert(initial_diagnostics["event_history"]["retained"] == 1);
 
     assert(spider::process_webhook(store, decisions,
         {{"action", "connection-info"}, {"id", "42"},
@@ -69,6 +73,7 @@ int main() {
     assert((*detail)["classification"]["sift"][0] == "protocol.http2");
     assert((*detail)["ended_at_ms"].get<std::int64_t>() > 0);
     assert(store.events_after(0)["events"].size() == 2);
+    assert(store.diagnostics()["event_history"]["evicted"] == 1);
 
     store.apply({{"action", "spider-smithproxy-status"}, {"state", "connected"}});
     assert(store.status()["ready"] == true);
@@ -115,6 +120,7 @@ int main() {
     }
     assert(ring.session_history()["sessions"].size() == 2);
     assert(!ring.session_detail("1").has_value());
+    assert(ring.diagnostics()["sessions"]["sessions_evicted"] == 1);
     ring.apply({{"action", "connection-start"}, {"id", "active"}});
     assert(ring.clear_completed_sessions() == 2);
     assert(ring.snapshot()["sessions"].size() == 1);

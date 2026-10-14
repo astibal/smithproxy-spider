@@ -15,6 +15,7 @@
 #include <cstring>
 #include <memory>
 #include <string_view>
+#include <chrono>
 
 namespace spider {
 namespace {
@@ -46,6 +47,7 @@ public:
         const std::string_view m(method);
         return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/ready" ||
                                p == "/api/status" || p == "/api/sessions" ||
+                               p == "/api/diagnostics" ||
                                p == "/api/hostnames" ||
                                p == "/api/session-history" || p == "/api/session" ||
                                p == "/api/events" || p == "/api/events/ws")) ||
@@ -76,6 +78,8 @@ public:
         }
 
         if (state.response_sent) return MHD_YES;
+        ++requests_total_;
+        last_request_at_ms_.store(unix_time_ms(), std::memory_order_relaxed);
         if (std::string_view(method) == "GET" && std::string_view(url) == "/api/events/ws") {
             state.response_sent = true;
             return websocket_.queue_upgrade(connection);
@@ -85,6 +89,12 @@ public:
             response = json_response(413, {{"error", "request body too large"}});
         } else {
             response = route(connection, url, method, state.request_data);
+        }
+        response_bytes_.fetch_add(response.body.size(), std::memory_order_relaxed);
+        if (std::string_view(method) == "POST" && std::string_view(url) == callback_path()) {
+            ++callback_requests_;
+            callback_bytes_.fetch_add(state.request_data.size(), std::memory_order_relaxed);
+            if (response.status >= 400) ++callback_errors_;
         }
         return send(connection, state, std::move(response));
     }
@@ -98,6 +108,11 @@ private:
 
     static Response json_response(const unsigned status, const nlohmann::json& body) {
         return {status, "application/json", body.dump()};
+    }
+
+    static std::int64_t unix_time_ms() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
     }
 
     bool authenticated(MHD_Connection* connection) const {
@@ -134,6 +149,22 @@ private:
         }
         if (!authenticated(connection)) return json_response(401, {{"error", "unauthorized"}});
         if (method == "GET" && url == "/api/status") return json_response(200, store_.status());
+        if (method == "GET" && url == "/api/diagnostics") {
+            return json_response(200, {
+                {"service", "smithproxy-spider"},
+                {"generated_at_ms", unix_time_ms()},
+                {"http", {{"requests", requests_total_.load(std::memory_order_relaxed)},
+                          {"response_bytes", response_bytes_.load(std::memory_order_relaxed)},
+                          {"last_request_at_ms", last_request_at_ms_.load(std::memory_order_relaxed)}}},
+                {"callback_transport", {
+                    {"requests", callback_requests_.load(std::memory_order_relaxed)},
+                    {"bytes", callback_bytes_.load(std::memory_order_relaxed)},
+                    {"errors", callback_errors_.load(std::memory_order_relaxed)},
+                }},
+                {"store", store_.diagnostics()},
+                {"websocket", websocket_.diagnostics()},
+            });
+        }
         if (method == "GET" && url == "/api/ready") {
             auto status = store_.status();
             return json_response(status.value("ready", false) ? 200U : 503U, status);
@@ -202,6 +233,12 @@ private:
     SmithproxyManager& smithproxy_;
     DecisionBroker& decisions_;
     WebSocketHub& websocket_;
+    std::atomic_uint64_t requests_total_{};
+    std::atomic_uint64_t response_bytes_{};
+    std::atomic_uint64_t callback_requests_{};
+    std::atomic_uint64_t callback_bytes_{};
+    std::atomic_uint64_t callback_errors_{};
+    std::atomic_int64_t last_request_at_ms_{};
 
     [[nodiscard]] std::string callback_path() const {
         return config_.callback_token.empty() ? "/webhook" : "/webhook/" + config_.callback_token;

@@ -78,7 +78,10 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event) {
         std::scoped_lock lock(mutex_);
         rev = ++revision_;
         history_.push_back({rev, stored_event});
-        while (history_.size() > history_limit_) history_.pop_front();
+        while (history_.size() > history_limit_) {
+            history_.pop_front();
+            ++history_evicted_;
+        }
 
         if (action == "hostname-info") apply_hostname_info(event);
 
@@ -90,6 +93,8 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event) {
             last_callback_at_ms_ = received_at_ms;
             last_callback_action_ = action;
             last_callback_source_ = event.value("source", "");
+            ++callbacks_by_action_[action.empty() ? "<empty>" : action];
+            ++callbacks_by_source_[last_callback_source_.empty() ? "<empty>" : last_callback_source_];
         }
 
         if (!id.empty()) {
@@ -121,7 +126,10 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event) {
                     }
                 }
             }
-            while (session.events.size() > session_event_limit_) session.events.pop_front();
+            while (session.events.size() > session_event_limit_) {
+                session.events.pop_front();
+                ++session_events_evicted_;
+            }
             prune_session_history();
         }
         sink = event_sink_;
@@ -202,6 +210,7 @@ void SessionStore::prune_session_history() {
         if (removable == session_order_.end()) break;
         sessions_.erase(*removable);
         session_order_.erase(removable);
+        ++sessions_evicted_;
         --completed_count;
     }
 }
@@ -223,6 +232,47 @@ nlohmann::json SessionStore::status() const {
             {"action", last_callback_action_},
             {"source", last_callback_source_},
         }},
+    };
+}
+
+nlohmann::json SessionStore::diagnostics() const {
+    std::scoped_lock lock(mutex_);
+    std::size_t active{};
+    std::size_t completed{};
+    std::size_t observed{};
+    for (const auto& [_, session] : sessions_) {
+        if (session.state == "completed") ++completed;
+        else if (session.state == "active") ++active;
+        else ++observed;
+    }
+    nlohmann::json actions = nlohmann::json::object();
+    for (const auto& [name, count] : callbacks_by_action_) actions[name] = count;
+    nlohmann::json sources = nlohmann::json::object();
+    for (const auto& [name, count] : callbacks_by_source_) sources[name] = count;
+    return {
+        {"revision", revision_},
+        {"callbacks", {
+            {"received", callback_count_},
+            {"last_revision", last_callback_revision_},
+            {"last_received_at_ms", last_callback_at_ms_},
+            {"by_action", std::move(actions)},
+            {"by_source", std::move(sources)},
+        }},
+        {"event_history", {
+            {"retained", history_.size()}, {"limit", history_limit_},
+            {"evicted", history_evicted_},
+            {"oldest_revision", history_.empty() ? 0 : history_.front().revision},
+            {"newest_revision", history_.empty() ? 0 : history_.back().revision},
+        }},
+        {"sessions", {
+            {"retained", sessions_.size()}, {"active", active},
+            {"observed", observed}, {"completed", completed},
+            {"completed_limit", session_history_limit_},
+            {"sessions_evicted", sessions_evicted_},
+            {"events_per_session_limit", session_event_limit_},
+            {"session_events_evicted", session_events_evicted_},
+        }},
+        {"hostnames", {{"revision", hostname_revision_}, {"addresses", reverse_hostnames_.size()}}},
     };
 }
 

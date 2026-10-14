@@ -41,6 +41,7 @@ public:
     std::size_t clear_completed_sessions();
     [[nodiscard]] nlohmann::json events_after(std::uint64_t revision) const;
     [[nodiscard]] nlohmann::json status() const;
+    [[nodiscard]] nlohmann::json diagnostics() const;
     [[nodiscard]] nlohmann::json reverse_hostnames() const;
     [[nodiscard]] std::uint64_t revision() const;
 
@@ -77,6 +78,11 @@ private:
         std::unordered_map<std::string, HostnameObservation>> reverse_hostnames_;
     std::uint64_t hostname_revision_{};
     std::uint64_t revision_{};
+    std::uint64_t history_evicted_{};
+    std::uint64_t session_events_evicted_{};
+    std::uint64_t sessions_evicted_{};
+    std::unordered_map<std::string, std::uint64_t> callbacks_by_action_;
+    std::unordered_map<std::string, std::uint64_t> callbacks_by_source_;
     std::function<void(std::uint64_t, const nlohmann::json&)> event_sink_;
 };
 

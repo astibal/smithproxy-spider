@@ -100,6 +100,7 @@ GET  /                     service identity
 GET  /api/health           unprotected liveness endpoint
 GET  /api/ready            Smithproxy readiness (200/503)
 GET  /api/status           connection and callback counters
+GET  /api/diagnostics      callback, store, replay and WebSocket data-path counters
 POST /api/config/smithproxy runtime Smithproxy URL and credentials
 GET  /api/sessions         active sessions
 GET  /api/session-history  active and recently completed sessions

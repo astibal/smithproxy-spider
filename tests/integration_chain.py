@@ -85,6 +85,12 @@ def main():
                     assert status["last_callback"]["action"] == "ping"
                     assert status["last_callback"]["received_at_ms"] > 0
                     assert ready["ready"] is True
+                    diagnostics = get_json(
+                        f"http://127.0.0.1:{spider_port}/api/diagnostics", "frontend-key")
+                    assert diagnostics["service"] == "smithproxy-spider"
+                    assert diagnostics["store"]["callbacks"]["received"] >= 1
+                    assert diagnostics["websocket"]["stream"]["events_published"] >= 1
+                    assert diagnostics["callback_transport"]["requests"] >= 1
                     history = get_json(
                         f"http://127.0.0.1:{spider_port}/api/session-history", "frontend-key")
                     assert history["sessions"] == []

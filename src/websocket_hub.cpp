@@ -9,12 +9,18 @@
 #include <cstring>
 #include <limits>
 #include <thread>
+#include <chrono>
 
 #include <sys/socket.h>
 #include <poll.h>
 
 namespace spider {
 namespace {
+
+std::int64_t unix_time_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
 
 bool send_all(const int socket, const unsigned char* data, std::size_t size) {
     while (size > 0) {
@@ -136,6 +142,8 @@ void WebSocketHub::upgrade(void* cls, MHD_Connection*, void*, const char* extra_
     {
         std::scoped_lock lock(hub.mutex_);
         ++hub.client_threads_;
+        ++hub.connections_total_;
+        hub.last_connect_at_ms_ = unix_time_ms();
         hub.clients_.push_back(client);
     }
     std::thread([&hub, client, initial = std::move(initial)]() mutable {
@@ -151,16 +159,21 @@ void WebSocketHub::upgrade(void* cls, MHD_Connection*, void*, const char* extra_
 void WebSocketHub::publish(const std::uint64_t revision, const nlohmann::json& event) {
     const auto wire = nlohmann::json{{"type", "event"}, {"revision", revision}, {"event", event}}.dump();
     std::scoped_lock lock(mutex_);
+    ++events_published_;
+    publish_bytes_ += wire.size();
+    last_publish_at_ms_ = unix_time_ms();
     replay_.push_back({revision, wire});
     replay_bytes_ += wire.size();
     while (replay_.size() > max_replay_events_ || replay_bytes_ > max_replay_bytes_) {
         replay_bytes_ -= replay_.front().wire.size();
         replay_.pop_front();
+        ++events_evicted_;
     }
     std::erase_if(clients_, [&](const auto& weak) {
         const auto client = weak.lock();
         if (!client) return true;
         if (client->active.load() && !client->send_text(wire)) {
+            ++send_failures_;
             ::shutdown(client->socket, SHUT_RDWR);
         }
         return false;
@@ -170,8 +183,11 @@ void WebSocketHub::publish(const std::uint64_t revision, const nlohmann::json& e
 void WebSocketHub::subscribe(const std::shared_ptr<Client>& client, std::uint64_t after,
                              const bool tail) {
     std::scoped_lock lock(mutex_);
+    ++subscriptions_total_;
+    last_subscribe_at_ms_ = unix_time_ms();
     if (tail && !replay_.empty()) after = replay_.back().revision;
     if (!replay_.empty() && after + 1 < replay_.front().revision) {
+        ++gaps_total_;
         client->send_text(nlohmann::json{{"type", "gap"}, {"requested_after", after},
                           {"oldest_available", replay_.front().revision}}.dump());
     }
@@ -184,6 +200,10 @@ void WebSocketHub::subscribe(const std::shared_ptr<Client>& client, std::uint64_
 }
 
 void WebSocketHub::handle_message(const std::shared_ptr<Client>& client, const std::string_view message) {
+    {
+        std::scoped_lock lock(mutex_);
+        ++client_messages_;
+    }
     const auto json = nlohmann::json::parse(message, nullptr, false);
     if (json.is_discarded() || !json.is_object()) return;
     if (json.value("type", "") == "subscribe") {
@@ -259,12 +279,43 @@ void WebSocketHub::remove_client(const std::shared_ptr<Client>& client) {
             const auto current = weak.lock();
             return !current || current == client;
         });
+        ++disconnects_total_;
+        last_disconnect_at_ms_ = unix_time_ms();
         empty = std::none_of(clients_.begin(), clients_.end(), [](const auto& weak) {
             const auto current = weak.lock();
             return current && current->active.load();
         });
     }
     if (empty && empty_handler_) empty_handler_();
+}
+
+nlohmann::json WebSocketHub::diagnostics() const {
+    std::scoped_lock lock(mutex_);
+    std::size_t connected{};
+    std::size_t subscribed{};
+    for (const auto& weak : clients_) {
+        if (const auto client = weak.lock()) {
+            ++connected;
+            if (client->active.load()) ++subscribed;
+        }
+    }
+    return {
+        {"clients", {{"connected", connected}, {"subscribed", subscribed},
+                     {"threads", client_threads_}, {"connections_total", connections_total_},
+                     {"disconnects_total", disconnects_total_}}},
+        {"stream", {{"events_published", events_published_}, {"publish_bytes", publish_bytes_},
+                    {"send_failures", send_failures_}, {"client_messages", client_messages_},
+                    {"subscriptions", subscriptions_total_}, {"gaps", gaps_total_}}},
+        {"replay", {{"events", replay_.size()}, {"bytes", replay_bytes_},
+                    {"event_limit", max_replay_events_}, {"byte_limit", max_replay_bytes_},
+                    {"evicted", events_evicted_},
+                    {"oldest_revision", replay_.empty() ? 0 : replay_.front().revision},
+                    {"newest_revision", replay_.empty() ? 0 : replay_.back().revision}}},
+        {"timestamps", {{"last_connect_at_ms", last_connect_at_ms_},
+                        {"last_disconnect_at_ms", last_disconnect_at_ms_},
+                        {"last_subscribe_at_ms", last_subscribe_at_ms_},
+                        {"last_publish_at_ms", last_publish_at_ms_}}},
+    };
 }
 
 void WebSocketHub::stop() {

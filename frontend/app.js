@@ -24,6 +24,14 @@ let activeTab = 'workbench-tab', renderFrame = null, eventsDirty = true, payload
 let payloadCacheBytes = 0, payloadsDropped = 0, payloadBytesDropped = 0, evictionTimes = [];
 let evictionActivityPending = 0, evictionActivityTimer = null;
 let pollInFlight = false;
+let backendDiagnostics = null;
+const frontendDiagnostics = {
+  startedAtMs: Date.now(), pollAttempts: 0, pollSuccesses: 0, pollErrors: 0,
+  lastPollStartedAtMs: 0, lastPollSuccessAtMs: 0, lastPollErrorAtMs: 0,
+  lastPollDurationMs: 0, lastPollError: '', wsConnects: 0, wsOpens: 0,
+  wsCloses: 0, wsErrors: 0, wsMessages: 0, wsEvents: 0, wsGaps: 0,
+  lastWsOpenAtMs: 0, lastWsMessageAtMs: 0, lastWsEventAtMs: 0, lastWsCloseAtMs: 0,
+};
 let lastConnectionActivityState = null;
 let payloadMemoryLimit = Number(localStorage.getItem('spider-payload-memory-mib')) || 64;
 let payloadRecordLimit = Number(localStorage.getItem('spider-payload-record-limit')) || 200;
@@ -3060,6 +3068,7 @@ function showTab(tabId) {
   if (tabId === 'events-tab') scheduleRender(true, false);
   if (tabId === 'history-tab') renderHistory();
   if (tabId === 'hostnames-tab') renderHostnames();
+  if (tabId === 'diagnostics-tab') renderDiagnostics();
   if (tabId === 'workbench-tab') scheduleRender(false, true);
   for (const [sessionId, followed] of followedFlows) {
     if (followed.id === tabId) renderFlowTab(sessionId);
@@ -3087,9 +3096,12 @@ function connectEventSocket() {
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.pathname = `${url.pathname.replace(/\/$/, '')}/api/events/ws`;
   const protocols = tokenValue() ? ['spider', tokenValue()] : ['spider'];
+  ++frontendDiagnostics.wsConnects;
   const socket = new WebSocket(url, protocols);
   eventSocket = socket;
   socket.onopen = () => {
+    ++frontendDiagnostics.wsOpens;
+    frontendDiagnostics.lastWsOpenAtMs = Date.now();
     socket.send(JSON.stringify(revision === 0
       ? {type: 'subscribe', tail: true}
       : {type: 'subscribe', after: revision}));
@@ -3099,8 +3111,14 @@ function connectEventSocket() {
     socket.send(JSON.stringify({type: 'script-available', available: true}));
   };
   socket.onmessage = message => {
+    ++frontendDiagnostics.wsMessages;
+    frontendDiagnostics.lastWsMessageAtMs = Date.now();
     const data = JSON.parse(message.data);
-    if (data.type === 'event') ingestEvent({revision: data.revision, event: data.event});
+    if (data.type === 'event') {
+      ++frontendDiagnostics.wsEvents;
+      frontendDiagnostics.lastWsEventAtMs = Date.now();
+      ingestEvent({revision: data.revision, event: data.event});
+    }
     if (data.type === 'subscribed') revision = Math.max(revision, Number(data.revision) || 0);
     if (data.type === 'traffic-rules-status') {
       const counts = new Map();
@@ -3113,15 +3131,21 @@ function connectEventSocket() {
       renderTrafficRules();
     }
     if (data.type === 'gap') {
+      ++frontendDiagnostics.wsGaps;
       status.textContent = `stream gap · oldest r${data.oldest_available}`;
       status.className = 'error';
       addActivity('system', 'STREAM GAP', `Events before r${data.oldest_available} are unavailable`,
         'Some earlier payloads may be missing from flow views.', 'warn');
     }
   };
-  socket.onerror = () => socket.close();
+  socket.onerror = () => {
+    ++frontendDiagnostics.wsErrors;
+    socket.close();
+  };
   socket.onclose = () => {
     if (eventSocket !== socket) return;
+    ++frontendDiagnostics.wsCloses;
+    frontendDiagnostics.lastWsCloseAtMs = Date.now();
     status.textContent = 'reconnecting event stream…';
     status.className = 'error';
     reconnectTimer = setTimeout(connectEventSocket, 1000);
@@ -3152,18 +3176,28 @@ function decideSelected(action) {
 async function poll() {
   if (pollInFlight) return;
   pollInFlight = true;
+  const pollStarted = performance.now();
+  ++frontendDiagnostics.pollAttempts;
+  frontendDiagnostics.lastPollStartedAtMs = Date.now();
   try {
-    const [statusResponse, sessionResponse, historyResponse] = await Promise.all([
+    const [statusResponse, sessionResponse, historyResponse, diagnosticsResponse] = await Promise.all([
       fetch(`${baseUrl()}/api/status`, {headers: headers()}),
       fetch(`${baseUrl()}/api/sessions`, {headers: headers()}),
       fetch(`${baseUrl()}/api/session-history`, {headers: headers()}),
+      fetch(`${baseUrl()}/api/diagnostics`, {headers: headers()}),
     ]);
     if (!statusResponse.ok) throw new Error(`status HTTP ${statusResponse.status}`);
     if (!sessionResponse.ok) throw new Error(`sessions HTTP ${sessionResponse.status}`);
     if (!historyResponse.ok) throw new Error(`history HTTP ${historyResponse.status}`);
-    const [current, sessionData, historyData] = await Promise.all([
-      statusResponse.json(), sessionResponse.json(), historyResponse.json(),
+    if (!diagnosticsResponse.ok) throw new Error(`diagnostics HTTP ${diagnosticsResponse.status}`);
+    const [current, sessionData, historyData, diagnosticsData] = await Promise.all([
+      statusResponse.json(), sessionResponse.json(), historyResponse.json(), diagnosticsResponse.json(),
     ]);
+    backendDiagnostics = diagnosticsData;
+    ++frontendDiagnostics.pollSuccesses;
+    frontendDiagnostics.lastPollSuccessAtMs = Date.now();
+    frontendDiagnostics.lastPollDurationMs = performance.now() - pollStarted;
+    frontendDiagnostics.lastPollError = '';
     if (Number(current.hostname_revision) !== hostnameRevision) {
       const hostnameResponse = await fetch(`${baseUrl()}/api/hostnames`, {headers: headers()});
       if (!hostnameResponse.ok) throw new Error(`hostnames HTTP ${hostnameResponse.status}`);
@@ -3222,12 +3256,62 @@ async function poll() {
     status.className = 'ok';
     socketSend({type: 'traffic-rules-status-request'});
     updateCacheStats();
+    if (activeTab === 'diagnostics-tab') renderDiagnostics();
   } catch (error) {
+    ++frontendDiagnostics.pollErrors;
+    frontendDiagnostics.lastPollErrorAtMs = Date.now();
+    frontendDiagnostics.lastPollDurationMs = performance.now() - pollStarted;
+    frontendDiagnostics.lastPollError = error.message;
     status.textContent = `offline · ${error.message}`;
     status.className = 'error';
   } finally {
     pollInFlight = false;
   }
+}
+
+function diagnosticAge(timestamp) {
+  if (!timestamp) return 'never';
+  const age = Math.max(0, Date.now() - Number(timestamp));
+  if (age < 1000) return `${age} ms ago`;
+  return `${(age / 1000).toFixed(age < 10000 ? 1 : 0)} s ago`;
+}
+
+function renderDiagnostics() {
+  const backendRevision = Number(backendDiagnostics?.store?.revision) || 0;
+  const lag = Math.max(0, backendRevision - revision);
+  const callback = backendDiagnostics?.store?.callbacks || {};
+  const ws = backendDiagnostics?.websocket || {};
+  const subscribed = Number(ws.clients?.subscribed) || 0;
+  let health = 'healthy';
+  let healthClass = 'diagnostics-health-ok';
+  if (lag > 0 || (subscribed === 0 && frontendDiagnostics.wsOpens > 0)) {
+    health = `attention · revision lag ${lag}, subscribed clients ${subscribed}`;
+    healthClass = 'diagnostics-health-warn';
+  }
+  if (frontendDiagnostics.lastPollError || Number(ws.stream?.send_failures) > 0) {
+    health = `problem · ${frontendDiagnostics.lastPollError || 'WebSocket send failures'}`;
+    healthClass = 'diagnostics-health-error';
+  }
+  const healthNode = byId('diagnostics-health');
+  healthNode.textContent = health;
+  healthNode.className = healthClass;
+  byId('diagnostics-path').textContent =
+    `Smithproxy callbacks  ${callback.received || 0} · last ${diagnosticAge(callback.last_received_at_ms)}\n` +
+    `Store revision        r${backendRevision}\n` +
+    `WS published          ${ws.stream?.events_published || 0} · last ${diagnosticAge(ws.timestamps?.last_publish_at_ms)}\n` +
+    `WS clients            ${ws.clients?.connected || 0} connected · ${subscribed} subscribed\n` +
+    `Browser revision      r${revision} · lag ${lag}\n` +
+    `Browser last event    ${diagnosticAge(frontendDiagnostics.lastWsEventAtMs)}`;
+  byId('diagnostics-browser').textContent =
+    `Uptime                ${Math.floor((Date.now() - frontendDiagnostics.startedAtMs) / 1000)} s\n` +
+    `Polls                 ${frontendDiagnostics.pollSuccesses}/${frontendDiagnostics.pollAttempts} ok · ${frontendDiagnostics.pollErrors} errors\n` +
+    `Last poll             ${frontendDiagnostics.lastPollDurationMs.toFixed(1)} ms · ${diagnosticAge(frontendDiagnostics.lastPollSuccessAtMs)}\n` +
+    `WebSocket             ${eventSocket?.readyState === WebSocket.OPEN ? 'open' : 'closed'}\n` +
+    `WS lifecycle          ${frontendDiagnostics.wsConnects} connects · ${frontendDiagnostics.wsCloses} closes · ${frontendDiagnostics.wsErrors} errors\n` +
+    `WS messages/events    ${frontendDiagnostics.wsMessages}/${frontendDiagnostics.wsEvents} · gaps ${frontendDiagnostics.wsGaps}\n` +
+    `Payload cache         ${payloadRecords.length} records · ${payloadCacheBytes} bytes · ${payloadsDropped} evicted`;
+  byId('diagnostics-backend').textContent = backendDiagnostics
+    ? JSON.stringify(backendDiagnostics, null, 2) : 'waiting for backend';
 }
 
 function escapeHtml(value) {
