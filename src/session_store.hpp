@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -32,8 +33,10 @@ public:
     explicit SessionStore(std::size_t history_limit = 1000,
                           std::size_t session_history_limit = 1000);
 
-    std::uint64_t apply(const nlohmann::json& event);
-    void set_event_sink(std::function<void(std::uint64_t, const nlohmann::json&)> sink,
+    std::uint64_t apply(const nlohmann::json& event,
+                        std::optional<std::string_view> raw_payload = std::nullopt);
+    void set_event_sink(std::function<void(std::uint64_t, const nlohmann::json&,
+                                           std::optional<std::string_view>)> sink,
                         bool replay_existing = false);
     [[nodiscard]] nlohmann::json snapshot() const;
     [[nodiscard]] nlohmann::json session_history() const;
@@ -83,7 +86,8 @@ private:
     std::uint64_t sessions_evicted_{};
     std::unordered_map<std::string, std::uint64_t> callbacks_by_action_;
     std::unordered_map<std::string, std::uint64_t> callbacks_by_source_;
-    std::function<void(std::uint64_t, const nlohmann::json&)> event_sink_;
+    std::function<void(std::uint64_t, const nlohmann::json&,
+                       std::optional<std::string_view>)> event_sink_;
 };
 
 } // namespace spider

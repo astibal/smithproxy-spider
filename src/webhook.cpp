@@ -10,7 +10,8 @@
 namespace spider {
 
 WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
-                             const nlohmann::json& original_event) {
+                             const nlohmann::json& original_event,
+                             const std::optional<std::string_view> raw_payload) {
     auto event = original_event;
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
@@ -30,7 +31,7 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     const auto ticket = decisions.prepare(event);
     decisions.observe(event);
     if (event.value("decision", nlohmann::json::object()).value("state", "") != "ignored") {
-        store.apply(event);
+        store.apply(event, raw_payload);
     }
     if (action == "access-request") return {200, {{"access-response", "accept"}}};
     if (action == "connection-content") return decisions.wait(ticket);

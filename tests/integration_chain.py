@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import json
 import os
+import base64
+import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -10,6 +13,66 @@ import urllib.error
 from http.server import ThreadingHTTPServer
 
 from fake_smithproxy import Handler
+
+def websocket_connect(port):
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    key = base64.b64encode(os.urandom(16)).decode()
+    request = (
+        "GET /api/events/ws HTTP/1.1\r\n"
+        f"Host: 127.0.0.1:{port}\r\n"
+        "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
+        "Sec-WebSocket-Protocol: spider, frontend-key\r\n\r\n"
+    )
+    client.sendall(request.encode())
+    response = b""
+    while b"\r\n\r\n" not in response:
+        response += client.recv(4096)
+    assert response.startswith(b"HTTP/1.1 101")
+    return client
+
+def websocket_send_json(client, value):
+    payload = json.dumps(value, separators=(",", ":")).encode()
+    assert len(payload) < 126
+    mask = os.urandom(4)
+    masked = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+    client.sendall(bytes([0x81, 0x80 | len(payload)]) + mask + masked)
+
+def receive_exact(client, length):
+    result = b""
+    while len(result) < length:
+        block = client.recv(length - len(result))
+        if not block:
+            raise RuntimeError("WebSocket closed while receiving a frame")
+        result += block
+    return result
+
+def websocket_receive(client):
+    first, second = receive_exact(client, 2)
+    length = second & 0x7f
+    if length == 126:
+        length = struct.unpack("!H", receive_exact(client, 2))[0]
+    elif length == 127:
+        length = struct.unpack("!Q", receive_exact(client, 8))[0]
+    assert not second & 0x80
+    return first & 0x0f, receive_exact(client, length)
+
+def decode_sxbn_chain(wire):
+    envelopes = []
+    offset = 0
+    while offset < len(wire):
+        assert wire[offset:offset + 8] == b"SXBN001:"
+        json_length = int(wire[offset + 8:offset + 16], 16)
+        assert wire[offset + 16:offset + 17] == b":"
+        payload_length = int(wire[offset + 17:offset + 25], 16)
+        json_start = offset + 25
+        payload_start = json_start + json_length
+        end = payload_start + payload_length
+        assert end <= len(wire)
+        envelopes.append((json.loads(wire[json_start:payload_start]),
+                          wire[payload_start:end]))
+        offset = end
+    return envelopes
 
 def get_json(url, token=None):
     headers = {"X-Spider-Token": token} if token else {}
@@ -109,6 +172,29 @@ def main():
                     assert info_status == 200
                     assert info["action"] == "info-response"
                     assert "sxbn-001" in info["protocols"]["connection-content"]
+
+                    live_socket = websocket_connect(spider_port)
+                    websocket_send_json(live_socket, {"type": "subscribe", "tail": True})
+                    opcode, subscribed = websocket_receive(live_socket)
+                    assert opcode == 1
+                    assert json.loads(subscribed)["type"] == "subscribed"
+
+                    text_status, _ = post_json(callback, {
+                        "action": "connection-start", "id": "text-live",
+                        "details": {"info": {"session":
+                            "tcp_10.0.0.1:10+tcp_10.0.0.2:20"}},
+                    })
+                    assert text_status == 200
+                    while True:
+                        opcode, frame = websocket_receive(live_socket)
+                        if opcode != 1:
+                            continue
+                        text_event = json.loads(frame)
+                        if text_event.get("type") == "event" and \
+                                text_event.get("event", {}).get("id") == "text-live":
+                            assert text_event["event"]["action"] == "connection-start"
+                            break
+
                     payload = b"\x00binary\xffpayload"
                     metadata = json.dumps({
                         "action": "connection-content", "id": "binary-integration",
@@ -122,11 +208,58 @@ def main():
                     binary_status, binary_reply = post_bytes(callback, envelope)
                     assert binary_status == 200
                     assert binary_reply["action"] == "unchanged"
+                    while True:
+                        opcode, frame = websocket_receive(live_socket)
+                        if opcode != 2:
+                            continue
+                        live_chain = decode_sxbn_chain(frame)
+                        if live_chain[0][0]["event"].get("id") == "binary-integration":
+                            assert live_chain[0][1] == payload
+                            break
+                    live_socket.close()
+
+                    empty_metadata = json.dumps({
+                        "action": "connection-content", "id": "binary-empty",
+                        "details": {"info": {
+                            "session": "tcp_10.0.0.1:1+tcp_10.0.0.2:2", "side": "R",
+                            "payload_length": 0, "payload_layer": "tcp",
+                        }},
+                    }, separators=(",", ":")).encode()
+                    empty_envelope = (b"SXBN001:" +
+                                      f"{len(empty_metadata):08X}:00000000".encode() +
+                                      empty_metadata)
+                    empty_status, empty_reply = post_bytes(callback, empty_envelope)
+                    assert empty_status == 200
+                    assert empty_reply["action"] == "unchanged"
+                    try:
+                        post_bytes(callback, envelope[:-1])
+                        raise AssertionError("truncated SXBN callback was accepted")
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 400
+
                     binary_events = get_json(events_url, "frontend-key")["events"]
                     binary_event = next(entry["event"] for entry in binary_events
                                         if entry["event"].get("id") == "binary-integration")
                     assert binary_event["details"]["info"]["payload_encoding"] == "sxbn-001"
                     assert binary_event["details"]["info"]["payload_length"] == len(payload)
+                    binary_revision = next(entry["revision"] for entry in binary_events
+                                           if entry["event"].get("id") == "binary-integration")
+                    websocket = websocket_connect(spider_port)
+                    try:
+                        websocket_send_json(websocket, {"type": "subscribe",
+                                                        "after": binary_revision - 1})
+                        opcode, frame = websocket_receive(websocket)
+                        assert opcode == 2
+                        chain = decode_sxbn_chain(frame)
+                        assert len(chain) == 1
+                        assert chain[0][0]["type"] == "event"
+                        assert chain[0][0]["key"] == f"event:{binary_revision}"
+                        assert chain[0][0]["revision"] == binary_revision
+                        assert chain[0][0]["event"]["id"] == "binary-integration"
+                        assert "content" not in chain[0][0]["event"]["details"]["info"]
+                        assert chain[0][1] == payload
+                    finally:
+                        websocket.close()
                     return 0
             except OSError:
                 pass

@@ -24,6 +24,66 @@ int main() {
     assert(spider::decode_sxbn(envelope, decoded_envelope, envelope_error));
     assert(decoded_envelope["details"]["info"]["content"] == "AAH+/w==");
     assert(decoded_envelope["details"]["info"]["payload_encoding"] == "sxbn-001");
+    std::string decoded_payload;
+    assert(spider::decode_sxbn(envelope, decoded_envelope, decoded_payload, envelope_error));
+    assert(decoded_payload == std::string("\x00\x01\xfe\xff", 4));
+
+    const auto original_wire = spider::encode_sxbn(
+        {{"type", "event"}, {"key", "event:7"}, {"revision", 7}},
+        std::string_view("\x00\x01\xfe\xff", 4));
+    const auto enrichment_wire = spider::encode_sxbn(
+        {{"type", "enrichment"},
+         {"source", {{"envelope", "event:7"}, {"annotation", 1}}}});
+    std::vector<spider::SxbnEnvelope> chain;
+    std::string chain_error;
+    assert(spider::decode_sxbn_chain(original_wire + enrichment_wire, chain, chain_error));
+    assert(chain.size() == 2);
+    assert(chain[0].metadata["revision"] == 7);
+    assert(chain[0].payload == std::string("\x00\x01\xfe\xff", 4));
+    assert(chain[1].metadata["type"] == "enrichment");
+    assert(chain[1].payload.empty());
+    const auto truncated_chain = original_wire + enrichment_wire.substr(0, enrichment_wire.size() - 1);
+    assert(!spider::decode_sxbn_chain(truncated_chain, chain, chain_error));
+    assert(chain.empty());
+    assert(!spider::decode_sxbn_chain({}, chain, chain_error));
+    assert(!spider::decode_sxbn_chain("not-an-envelope", chain, chain_error));
+    assert(chain_error == "missing SXBN001 envelope");
+    assert(!spider::decode_sxbn_chain("SXBN001:00000002;00000000{}", chain, chain_error));
+    assert(chain_error == "invalid SXBN length separator");
+    assert(!spider::decode_sxbn_chain("SXBN001:zzzzzzzz:00000000", chain, chain_error));
+    assert(chain_error == "invalid SXBN JSON length");
+    assert(!spider::decode_sxbn_chain("SXBN001:00000002:zzzzzzzz{}", chain, chain_error));
+    assert(chain_error == "invalid SXBN payload length");
+    assert(!spider::decode_sxbn_chain("SXBN001:00000002:00000000[]", chain, chain_error));
+    assert(chain_error == "SXBN metadata must be an object");
+    assert(!spider::decode_sxbn_chain("SXBN001:00000001:00000000{", chain, chain_error));
+    assert(chain_error == "invalid SXBN JSON metadata");
+
+    auto wrong_action = envelope_metadata;
+    wrong_action["action"] = "ping";
+    assert(!spider::decode_sxbn(spider::encode_sxbn(wrong_action), decoded_envelope,
+                                decoded_payload, envelope_error));
+    assert(envelope_error == "SXBN is only valid for connection-content");
+    auto duplicate_content = envelope_metadata;
+    duplicate_content["details"]["info"]["content"] = "AA==";
+    assert(!spider::decode_sxbn(spider::encode_sxbn(duplicate_content), decoded_envelope,
+                                decoded_payload, envelope_error));
+    assert(envelope_error == "invalid SXBN connection-content metadata");
+    auto wrong_length = envelope_metadata;
+    wrong_length["details"]["info"]["payload_length"] = 3;
+    assert(!spider::decode_sxbn(spider::encode_sxbn(
+                                    wrong_length, std::string_view("data", 4)),
+                                decoded_envelope, decoded_payload, envelope_error));
+    assert(envelope_error == "SXBN payload length mismatch");
+    assert(!spider::decode_sxbn(original_wire + enrichment_wire, decoded_envelope,
+                                decoded_payload, envelope_error));
+    assert(envelope_error == "callback requires exactly one SXBN envelope");
+
+    auto empty_metadata = envelope_metadata;
+    empty_metadata["details"]["info"]["payload_length"] = 0;
+    const auto empty_wire = spider::encode_sxbn(empty_metadata);
+    assert(spider::decode_sxbn(empty_wire, decoded_envelope, decoded_payload, envelope_error));
+    assert(decoded_payload.empty());
 
     const nlohmann::json filter_event = {
         {"action", "connection-content"}, {"id", "filter-session"},

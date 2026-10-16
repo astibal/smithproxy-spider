@@ -65,7 +65,8 @@ std::string SessionStore::session_label(const nlohmann::json& event) {
     return {};
 }
 
-std::uint64_t SessionStore::apply(const nlohmann::json& event) {
+std::uint64_t SessionStore::apply(const nlohmann::json& event,
+                                  const std::optional<std::string_view> raw_payload) {
     const auto action = event.value("action", "");
     const auto id = event.value("id", "");
     auto stored_event = event;
@@ -73,7 +74,8 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event) {
     stored_event["spider_received_at_ms"] = received_at_ms;
 
     std::uint64_t rev{};
-    std::function<void(std::uint64_t, const nlohmann::json&)> sink;
+    std::function<void(std::uint64_t, const nlohmann::json&,
+                       std::optional<std::string_view>)> sink;
     {
         std::scoped_lock lock(mutex_);
         rev = ++revision_;
@@ -134,7 +136,7 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event) {
         }
         sink = event_sink_;
     }
-    if (sink) sink(rev, stored_event);
+    if (sink) sink(rev, stored_event, raw_payload);
     return rev;
 }
 
@@ -168,12 +170,14 @@ void SessionStore::apply_hostname_info(const nlohmann::json& event) {
     if (changed) ++hostname_revision_;
 }
 
-void SessionStore::set_event_sink(std::function<void(std::uint64_t, const nlohmann::json&)> sink,
+void SessionStore::set_event_sink(
+                                  std::function<void(std::uint64_t, const nlohmann::json&,
+                                                     std::optional<std::string_view>)> sink,
                                   const bool replay_existing) {
     std::scoped_lock lock(mutex_);
     event_sink_ = std::move(sink);
     if (event_sink_ && replay_existing) {
-        for (const auto& record : history_) event_sink_(record.revision, record.event);
+        for (const auto& record : history_) event_sink_(record.revision, record.event, std::nullopt);
     }
 }
 

@@ -1122,6 +1122,9 @@ payloadRecordLimit = clampInteger(payloadRecordLimit, 10, 10000, 200);
 eventRecordLimit = clampInteger(eventRecordLimit, 100, 20000, 2000);
 
 function payloadSize(record) {
+  if (record?.binaryPayload instanceof Uint8Array) {
+    return record.binaryPayload.byteLength + 1024;
+  }
   const content = record.event.details?.info?.content;
   if (typeof content !== 'string') return 0;
   // A JS string may occupy two bytes per character. Include a small object overhead.
@@ -1141,6 +1144,11 @@ function summarizeEvent(record) {
   if (typeof info?.content === 'string') {
     event.details = {...details, info: {...info,
       content: `[binary data: ${decodedPayloadSize(info.content)} bytes]`,
+    }};
+  }
+  if (record.binaryPayload instanceof Uint8Array && info) {
+    event.details = {...details, info: {...info,
+      content: `[binary data: ${record.binaryPayload.byteLength} bytes]`,
     }};
   }
   return {revision: record.revision, event};
@@ -1226,7 +1234,7 @@ function scheduleRender(eventsChanged = false, payloadsChanged = false) {
     }
     if (payloadsDirty && activeTab === 'workbench-tab') {
       if (selectedPayload) {
-        payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
+        payloadBytes = recordPayloadBytes(selectedPayload);
         replacementBase64 = null;
         renderPayload();
       }
@@ -1247,6 +1255,20 @@ function decodeBase64(value) {
   return Uint8Array.from(binary, char => char.charCodeAt(0));
 }
 
+function encodeBase64(bytes) {
+  let binary = '';
+  const block = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += block) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + block));
+  }
+  return btoa(binary);
+}
+
+function recordPayloadBytes(record) {
+  return record?.binaryPayload instanceof Uint8Array
+    ? record.binaryPayload : decodeBase64(record?.event?.details?.info?.content);
+}
+
 function encodeHex(bytes, baseOffset = 0) {
   const rows = [];
   for (let offset = 0; offset < bytes.length; offset += 16) {
@@ -1260,7 +1282,7 @@ function encodeHex(bytes, baseOffset = 0) {
 
 function l7PayloadView(record, source = null) {
   const info = record?.event?.details?.info;
-  if (source === null) source = decodeBase64(info?.content);
+  if (source === null) source = recordPayloadBytes(record);
   if (!info || !Array.isArray(info.L7_payload_start) ||
       !Array.isArray(info.L7_payload_end) ||
       info.L7_payload_start.length !== info.L7_payload_end.length ||
@@ -1624,7 +1646,7 @@ function renderPayloadList() {
   for (let index = payloadRecords.length - 1; index >= 0; --index) {
     const record = payloadRecords[index];
     const info = record.event.details?.info || {};
-    const size = decodedPayloadSize(info.content);
+    const size = recordPayloadBytes(record).length;
     const row = document.createElement('button');
     row.type = 'button';
     row.className = `payload-row${record === selectedPayload ? ' selected' : ''}` +
@@ -1952,7 +1974,7 @@ function exportFollowedFlow(followed, records) {
       destinationAddress: connection.destinationHost,
       destinationPort: Number(connection.destinationPort),
       side: info.side === 'R' ? 'R' : 'L',
-      payload: decodeBase64(info.content),
+      payload: recordPayloadBytes(record),
       timestampMs: Number(record.event.spider_received_at_ms),
     });
   }
@@ -2204,7 +2226,7 @@ function renderFlowTab(scopeKey) {
     const recordRevision = String(record.revision);
     if (rendered.has(recordRevision)) continue;
     const info = record.event.details?.info || {};
-    const wireBytes = decodeBase64(info.content);
+    const wireBytes = recordPayloadBytes(record);
     const completeBytes = flowPayloadBytes(record, wireBytes);
     const side = info.side === 'R' ? 'R' : 'L';
     const bytes = flowDisplayBytes(followed, side, completeBytes);
@@ -2575,7 +2597,7 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
     if (visibleIndex >= 0) {
       const info = record.event.details?.info || {};
       const side = info.side === 'R' ? 'R' : 'L';
-      const wireBytes = decodeBase64(info.content);
+      const wireBytes = recordPayloadBytes(record);
       const completeBytes = flowPayloadBytes(record, wireBytes);
       const bytes = flowDisplayBytes(followed, side, completeBytes);
       const card = document.createElement('article');
@@ -2674,7 +2696,7 @@ function updateFlowRecord(record) {
   }
   const side = info.side === 'R' ? 'R' : 'L';
   flow[side].count += 1;
-  flow[side].bytes += decodedPayloadSize(info.content);
+  flow[side].bytes += recordPayloadBytes(record).length;
   const l7 = l7PayloadView(record);
   if (l7.state === 'body') {
     flow[side].l7Bytes += l7.bytes.length;
@@ -2714,7 +2736,7 @@ function selectPayload(record, follow = false) {
     byId('workbench-info').className = 'empty';
     return;
   }
-  payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
+  payloadBytes = recordPayloadBytes(selectedPayload);
   replacementBase64 = null;
   byId('replacement-text').value = '';
   if (selectedPayload.inspectOutput) displayScriptResult(selectedPayload.inspectOutput, true);
@@ -2742,7 +2764,8 @@ function ingestEvent(record) {
   if (eventRecords.length > eventRecordLimit) eventRecords.splice(0, eventRecords.length - eventRecordLimit);
   const passed = record.event.decision?.state === 'passed';
   if (record.event.action === 'connection-content' && !passed &&
-      typeof record.event.details?.info?.content === 'string') {
+      (record.binaryPayload instanceof Uint8Array ||
+       typeof record.event.details?.info?.content === 'string')) {
     record.cacheBytes = payloadSize(record);
     payloadRecords.push(record);
     payloadCacheBytes += record.cacheBytes;
@@ -2774,7 +2797,7 @@ function executeJavascriptScript(record) {
   return new Promise(resolve => {
     const worker = new Worker('script-worker.js');
     const info = record?.event?.details?.info || {};
-    const bytes = decodeBase64(info.content);
+    const bytes = recordPayloadBytes(record);
     const timeout = setTimeout(() => {
       worker.terminate();
       resolve({ok: false, logs: [], error: 'Script exceeded the 2 s execution limit.'});
@@ -2846,8 +2869,8 @@ async function executePythonScript(record) {
     }, 2000);
     pythonRequests.set(id, {resolve, timeout});
     pythonWorker.postMessage({id, script: byId('script-editor').value,
-      content: info.content || '', side: info.side || '',
-      l7: scriptL7Metadata(record, decodeBase64(info.content)),
+      content: info.content || encodeBase64(recordPayloadBytes(record)), side: info.side || '',
+      l7: scriptL7Metadata(record, recordPayloadBytes(record)),
       sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
   });
 }
@@ -3098,6 +3121,7 @@ function connectEventSocket() {
   const protocols = tokenValue() ? ['spider', tokenValue()] : ['spider'];
   ++frontendDiagnostics.wsConnects;
   const socket = new WebSocket(url, protocols);
+  socket.binaryType = 'arraybuffer';
   eventSocket = socket;
   socket.onopen = () => {
     ++frontendDiagnostics.wsOpens;
@@ -3113,6 +3137,26 @@ function connectEventSocket() {
   socket.onmessage = message => {
     ++frontendDiagnostics.wsMessages;
     frontendDiagnostics.lastWsMessageAtMs = Date.now();
+    if (message.data instanceof ArrayBuffer) {
+      try {
+        const envelopes = SpiderSxbn.decode(message.data);
+        const original = envelopes[0];
+        if (!original || original.metadata.type !== 'event') {
+          throw new Error('SXBN chain does not start with an event envelope');
+        }
+        ++frontendDiagnostics.wsEvents;
+        frontendDiagnostics.lastWsEventAtMs = Date.now();
+        ingestEvent({revision: original.metadata.revision,
+          event: original.metadata.event,
+          binaryPayload: original.payload,
+          enrichments: envelopes.slice(1)});
+      } catch (error) {
+        ++frontendDiagnostics.wsErrors;
+        addActivity('system', 'SXBN ERROR', 'Binary event could not be decoded',
+          error.message || String(error), 'warn');
+      }
+      return;
+    }
     const data = JSON.parse(message.data);
     if (data.type === 'event') {
       ++frontendDiagnostics.wsEvents;

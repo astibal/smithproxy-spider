@@ -133,15 +133,20 @@ private:
         if (method == "POST" && url == callback_path()) {
             try {
                 nlohmann::json event;
+                std::string raw_payload;
+                std::optional<std::string_view> payload_view;
                 if (std::string_view(body).starts_with(sxbn_magic)) {
                     std::string error;
-                    if (!decode_sxbn(body, event, error)) {
+                    if (!decode_sxbn(body, event, raw_payload, error)) {
                         return json_response(400, {{"error", error}});
                     }
+                    event["details"]["info"]["content"] = base64_encode(raw_payload);
+                    payload_view = raw_payload;
                 } else {
                     event = nlohmann::json::parse(body);
                 }
-                const auto reply = process_webhook(store_, decisions_, event);
+                const auto reply = process_webhook(store_, decisions_, event,
+                                                   payload_view);
                 return json_response(reply.status, reply.body);
             } catch (const nlohmann::json::exception&) {
                 return json_response(400, {{"error", "invalid JSON"}});
@@ -270,8 +275,10 @@ int run_http_server(const ServerConfig& config, SessionStore& store,
         decisions.handle_message({{"type", "live-edit"}, {"enabled", false}});
         decisions.handle_message({{"type", "script-available"}, {"available", false}});
     });
-    store.set_event_sink([&websocket](const std::uint64_t revision, const nlohmann::json& event) {
-        websocket.publish(revision, event);
+    store.set_event_sink([&websocket](const std::uint64_t revision,
+                                     const nlohmann::json& event,
+                                     const std::optional<std::string_view> raw_payload) {
+        websocket.publish(revision, event, raw_payload);
     }, true);
     lmh::WebServer server(config.port);
     server.options().bind_address = config.bind_address;

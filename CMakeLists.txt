@@ -61,6 +61,8 @@ if(BUILD_TESTING)
     if(NODE_EXECUTABLE)
         add_test(NAME spider_pcapng_test
                  COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/pcapng_test.js)
+        add_test(NAME spider_sxbn_test
+                 COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/sxbn_test.js)
     endif()
 endif()
 

@@ -30,13 +30,14 @@ public:
 
     [[nodiscard]] bool can_upgrade(MHD_Connection* connection) const;
     int queue_upgrade(MHD_Connection* connection);
-    void publish(std::uint64_t revision, const nlohmann::json& event);
+    void publish(std::uint64_t revision, const nlohmann::json& event,
+                 std::optional<std::string_view> raw_payload = std::nullopt);
     [[nodiscard]] nlohmann::json diagnostics() const;
     void stop();
 
 private:
     struct Client;
-    struct ReplayItem { std::uint64_t revision; std::string wire; };
+    struct ReplayItem { std::uint64_t revision; unsigned char opcode; std::string wire; };
 
     static void upgrade(void* cls, MHD_Connection*, void*, const char* extra_in,
                         std::size_t extra_in_size, MHD_socket socket,
