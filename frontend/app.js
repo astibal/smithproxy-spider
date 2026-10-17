@@ -1461,13 +1461,250 @@ function l7PayloadMarker(record, source = null) {
   return marker;
 }
 
-function enrichmentMarker(record) {
+function enrichmentMarker(record, activate = null, active = false) {
   if (!record?.enrichments?.length) return null;
   const marker = document.createElement('span');
   marker.className = 'enrichment-marker';
   marker.textContent = `ENRICH ${record.enrichments.length}`;
   marker.title = record.enrichments.map(item =>
     item?.metadata?.operation || item?.metadata?.content_type || 'derived content').join('\n');
+  marker.tabIndex = 0;
+  marker.setAttribute('role', 'button');
+  marker.setAttribute('aria-pressed', String(active));
+  const show = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (activate) activate();
+    else {
+      selectPayload(record, false);
+      byId('enrichment-viewer').open = true;
+    }
+  };
+  marker.onclick = show;
+  marker.onkeydown = event => {
+    if (event.key === 'Enter' || event.key === ' ') show(event);
+  };
+  return marker;
+}
+
+function enrichmentHeaders(item) {
+  const metadata = item?.metadata || {};
+  const fields = Array.isArray(metadata.headers) ? metadata.headers : metadata.message?.headers;
+  return Array.isArray(fields) ? fields.filter(field => field && typeof field.name === 'string') : [];
+}
+
+function enrichmentStartLine(item) {
+  const message = item?.metadata?.message;
+  if (!message || typeof message !== 'object') return '';
+  if (message.kind === 'request')
+    return `${message.method || '?'} ${message.target || '?'} ${message.version || ''}`.trim();
+  if (message.kind === 'response')
+    return `${message.version || ''} ${message.status || '?'} ${message.reason || ''}`.trim();
+  return '';
+}
+
+function enrichmentStreamId(item) {
+  const value = Number(item?.metadata?.source?.stream_id);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function enrichmentContentType(record, item, records) {
+  const streamId = enrichmentStreamId(item);
+  const side = record.event.details?.info?.side === 'R' ? 'R' : 'L';
+  for (let index = records.indexOf(record); index >= 0; --index) {
+    const candidate = records[index];
+    if (candidate.event.id !== record.event.id ||
+        (candidate.event.details?.info?.side === 'R' ? 'R' : 'L') !== side) continue;
+    for (const enrichment of [...(candidate.enrichments || [])].reverse()) {
+      if (streamId !== null && enrichmentStreamId(enrichment) !== streamId) continue;
+      const type = enrichmentHeaders(enrichment).find(field =>
+        field.name.toLowerCase() === 'content-type')?.value;
+      if (type) return String(type);
+    }
+  }
+  return item?.metadata?.content_type || 'application/octet-stream';
+}
+
+function enrichmentViewKind(contentType) {
+  const mime = String(contentType).split(';', 1)[0].trim().toLowerCase();
+  return new Set([
+    'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif',
+    'image/bmp', 'image/x-icon', 'image/vnd.microsoft.icon',
+  ]).has(mime) ? {kind: 'image', mime} : null;
+}
+
+function closeFloatingEnrichment() {
+  const floating = document.querySelector('.floating-enrichment');
+  if (!floating) return;
+  if (floating.dataset.objectUrl) URL.revokeObjectURL(floating.dataset.objectUrl);
+  floating.remove();
+}
+
+function openFloatingEnrichment(item, supported, title) {
+  closeFloatingEnrichment();
+  const floating = document.createElement('section');
+  floating.className = 'floating-enrichment';
+  floating.setAttribute('role', 'dialog');
+  floating.setAttribute('aria-label', title);
+  const objectUrl = URL.createObjectURL(new Blob([item.payload], {type: supported.mime}));
+  floating.dataset.objectUrl = objectUrl;
+  const head = document.createElement('header');
+  const label = document.createElement('b');
+  label.textContent = title;
+  const close = document.createElement('button');
+  close.type = 'button'; close.textContent = '×'; close.title = 'Close floating view';
+  close.onclick = closeFloatingEnrichment;
+  head.append(label, close);
+  const image = document.createElement('img');
+  image.alt = title;
+  const status = document.createElement('small');
+  status.textContent = `decoding ${supported.mime}…`;
+  image.onload = () => {
+    status.textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${formatBytes(item.payload.length)} · ${supported.mime}`;
+  };
+  image.onerror = () => {
+    status.textContent = `Browser could not decode this ${supported.mime} payload.`;
+  };
+  image.src = objectUrl;
+  floating.append(head, image, status);
+  document.body.append(floating);
+  head.onpointerdown = event => {
+    if (event.target.closest('button')) return;
+    event.preventDefault();
+    const bounds = floating.getBoundingClientRect();
+    const offsetX = event.clientX - bounds.left, offsetY = event.clientY - bounds.top;
+    head.setPointerCapture(event.pointerId);
+    head.onpointermove = move => {
+      if (!head.hasPointerCapture(move.pointerId)) return;
+      floating.style.left = `${Math.max(0, Math.min(innerWidth - 120, move.clientX - offsetX))}px`;
+      floating.style.top = `${Math.max(0, Math.min(innerHeight - 48, move.clientY - offsetY))}px`;
+      floating.style.right = 'auto';
+    };
+    head.onpointerup = move => {
+      head.releasePointerCapture(move.pointerId);
+      head.onpointermove = null;
+      head.onpointerup = null;
+    };
+  };
+}
+
+function appendEnrichmentView(card, item, contentType) {
+  const supported = enrichmentViewKind(contentType);
+  if (!supported || !item.payload?.length) return null;
+  const viewer = document.createElement('div');
+  viewer.className = 'inline-enrichment-media';
+  viewer.hidden = true;
+  const image = document.createElement('img');
+  image.alt = `Decoded ${supported.mime} payload`;
+  const status = document.createElement('small');
+  viewer.append(image, status);
+  card.append(viewer);
+  let objectUrl = null;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'inline-enrichment-view';
+  button.textContent = 'View';
+  button.title = `Render ${supported.mime} with the browser image decoder`;
+  button.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const opening = viewer.hidden;
+    viewer.hidden = !opening;
+    button.textContent = opening ? 'Hide' : 'View';
+    button.setAttribute('aria-pressed', String(opening));
+    if (!opening) return;
+    status.textContent = 'decoding…';
+    objectUrl = URL.createObjectURL(new Blob([item.payload], {type: supported.mime}));
+    image.onload = () => {
+      status.textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${formatBytes(item.payload.length)}`;
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    };
+    image.onerror = () => {
+      status.textContent = `Browser could not decode this ${supported.mime} payload.`;
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    };
+    image.src = objectUrl;
+  };
+  const floating = document.createElement('button');
+  floating.type = 'button';
+  floating.className = 'inline-enrichment-view';
+  floating.textContent = 'Float';
+  floating.title = 'Open a movable, resizable view without changing the flow layout';
+  floating.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    openFloatingEnrichment(item, supported, `Enrichment · ${supported.mime}`);
+  };
+  return [button, floating];
+}
+
+function appendInlineEnrichments(target, record, records) {
+  target.replaceChildren();
+  for (const item of record.enrichments || []) {
+    const metadata = item?.metadata || {};
+    const headers = enrichmentHeaders(item);
+    const card = document.createElement('details');
+    card.className = 'inline-enrichment-card';
+    card.open = true;
+    const summary = document.createElement('summary');
+    const operation = document.createElement('b');
+    operation.textContent = metadata.operation || 'derived content';
+    const description = document.createElement('span');
+    const streamId = enrichmentStreamId(item);
+    let contentType = metadata.content_type || 'application/octet-stream';
+    if (headers.length) {
+      description.textContent = `${headers.length} headers${streamId ? ` · H2 stream ${streamId}` : ''}`;
+    } else {
+      contentType = enrichmentContentType(record, item, records);
+      description.textContent = `${contentType} · ${formatBytes(item.payload?.length || 0)}` +
+        `${metadata.content_encoding ? ` · decoded ${metadata.content_encoding}` : ''}` +
+        `${streamId ? ` · H2 stream ${streamId}` : ''}`;
+    }
+    summary.append(operation, description);
+    card.append(summary);
+    const view = appendEnrichmentView(card, item, contentType);
+    if (view) summary.append(...view);
+    if (headers.length) {
+      const fields = document.createElement('pre');
+      const startLine = enrichmentStartLine(item);
+      fields.textContent = `${startLine ? `${startLine}\n` : ''}${headers.map(field =>
+        `${field.name}: ${field.value ?? ''}`).join('\n')}`;
+      card.append(fields);
+    }
+    if (item.payload?.length) {
+      const payload = document.createElement('pre');
+      payload.className = 'inline-enrichment-payload';
+      const previewLimit = 16384;
+      appendMixedAscii(payload, item.payload.subarray(0, previewLimit));
+      if (item.payload.length > previewLimit) payload.append(document.createTextNode(
+        `\n[… ${formatBytes(item.payload.length - previewLimit)} more]`));
+      card.append(payload);
+    }
+  }
+}
+
+function attachInlineEnrichments(container, record, records, followed) {
+  if (!record?.enrichments?.length) return null;
+  followed.openEnrichments ||= new Set();
+  const revision = String(record.revision);
+  const panel = document.createElement('section');
+  panel.className = 'inline-enrichments';
+  panel.hidden = !followed.openEnrichments.has(revision);
+  if (!panel.hidden) appendInlineEnrichments(panel, record, records);
+  const marker = enrichmentMarker(record, () => {
+    const opening = panel.hidden;
+    panel.hidden = !opening;
+    marker.setAttribute('aria-pressed', String(opening));
+    if (opening) {
+      followed.openEnrichments.add(revision);
+      appendInlineEnrichments(panel, record, records);
+    } else {
+      followed.openEnrichments.delete(revision);
+    }
+  }, !panel.hidden);
+  container.append(panel);
   return marker;
 }
 
@@ -1873,7 +2110,9 @@ function openFlowTab(sessionId, type = 'connection') {
     const followed = {...scope, id, evicted: 0,
       view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
       laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11,
-      cardLevels: new Map(), payloadCaps: {L: 0, R: 0}, keepAll: false, timeMode: 'elapsed',
+      cardLevels: new Map(), openEnrichments: new Set(),
+      payloadCaps: {L: 0, R: 0},
+      keepAll: false, timeMode: 'elapsed',
       l7Context: false, annotations: true};
     followed.laneWidths = new Map();
     followedFlows.set(scope.key, followed);
@@ -2315,8 +2554,6 @@ function renderFlowTab(scopeKey) {
     if (bytes.length < completeBytes.length) metadata.append(document.createElement('br'),
       `of ${formatBytes(completeBytes.length)}`);
     metadata.append(document.createElement('br'), l7PayloadMarker(record, wireBytes));
-    const enriched = enrichmentMarker(record);
-    if (enriched) metadata.append(document.createElement('br'), enriched);
     if (followed.view === 'stream') {
       const content = document.createElement('pre');
       const payload = document.createElement('div');
@@ -2338,6 +2575,8 @@ function renderFlowTab(scopeKey) {
       if (followed.annotations) appendAnnotationRail(payload, record, wireBytes);
       payload.append(content);
       chunk.append(direction, metadata, payload);
+      const enriched = attachInlineEnrichments(chunk, record, records, followed);
+      if (enriched) metadata.append(document.createElement('br'), enriched);
       renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0,
         followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
     } else {
@@ -2375,6 +2614,8 @@ function renderFlowTab(scopeKey) {
       chunk.append(summary);
       if (followed.annotations) appendAnnotationRail(chunk, record, wireBytes);
       chunk.append(content);
+      const enriched = attachInlineEnrichments(chunk, record, records, followed);
+      if (enriched) metadata.append(document.createElement('br'), enriched);
     }
     stream.append(chunk);
   }
@@ -2688,8 +2929,6 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
         (bytes.length < completeBytes.length ? ` / ${formatBytes(completeBytes.length)} (trimmed)` : '');
       const preview = document.createElement('pre');
       head.append(meta, l7PayloadMarker(record, wireBytes));
-      const enriched = enrichmentMarker(record);
-      if (enriched) head.append(enriched);
       if (bytes.length > 320) {
         const expand = document.createElement('button');
         expand.type = 'button'; expand.className = 'lane-card-expand';
@@ -2705,6 +2944,8 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
       card.append(head);
       if (followed.annotations) appendAnnotationRail(card, record, wireBytes);
       card.append(preview);
+      const enriched = attachInlineEnrichments(card, record, records, followed);
+      if (enriched) head.append(enriched);
       renderLaneCardPayload(card, bytes, followed.cardLevels.get(record.revision) || 0,
         followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
       row.append(card);
