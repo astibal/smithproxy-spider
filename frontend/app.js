@@ -1576,6 +1576,97 @@ function enrichmentViewKind(contentType) {
   ]).has(mime) ? {kind: 'image', mime} : null;
 }
 
+function humanContentKind(contentType) {
+  const mime = String(contentType || 'application/octet-stream').split(';', 1)[0].trim().toLowerCase();
+  const visual = enrichmentViewKind(mime);
+  if (visual) return visual;
+  if (mime.startsWith('text/') || /(?:json|xml|javascript|x-www-form-urlencoded)$/.test(mime)) {
+    return {kind: 'text', mime};
+  }
+  return {kind: 'bytes', mime};
+}
+
+function humanRecordStreamId(record) {
+  const annotation = contentAnnotations(record).find(item =>
+    item.kind === 'h2.data' && Number.isInteger(Number(item.attributes?.stream_id)));
+  return annotation ? Number(annotation.attributes.stream_id) : null;
+}
+
+function humanRecordContentType(record, records) {
+  const streamId = humanRecordStreamId(record);
+  const side = record.event.details?.info?.side === 'R' ? 'R' : 'L';
+  for (let index = records.indexOf(record); index >= 0; --index) {
+    const candidate = records[index];
+    if (candidate.event.id !== record.event.id ||
+        (candidate.event.details?.info?.side === 'R' ? 'R' : 'L') !== side) continue;
+    for (const enrichment of [...(candidate.enrichments || [])].reverse()) {
+      if (streamId !== null && enrichmentStreamId(enrichment) !== streamId) continue;
+      const type = enrichmentHeaders(enrichment).find(field =>
+        field.name.toLowerCase() === 'content-type')?.value;
+      if (type) return String(type);
+    }
+  }
+  return null;
+}
+
+function sniffHumanContentType(bytes) {
+  if (!bytes?.length) return null;
+  if (bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10]
+      .every((value, index) => bytes[index] === value)) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+    return 'image/jpeg';
+  if (bytes.length >= 6 && new TextDecoder().decode(bytes.subarray(0, 6)).startsWith('GIF8'))
+    return 'image/gif';
+  if (bytes.length >= 12 && new TextDecoder().decode(bytes.subarray(0, 4)) === 'RIFF' &&
+      new TextDecoder().decode(bytes.subarray(8, 12)) === 'WEBP') return 'image/webp';
+  const sample = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 4096))).trimStart();
+  if (sample.startsWith('{') || sample.startsWith('[')) return 'application/json';
+  if (/^<!doctype\s+html|^<html[\s>]/i.test(sample)) return 'text/html';
+  if (/^<\?xml[\s?]|^<svg[\s>]/i.test(sample)) return 'application/xml';
+  const inspected = bytes.subarray(0, Math.min(bytes.length, 1024));
+  const printable = [...inspected].filter(value => value === 9 || value === 10 || value === 13 ||
+    (value >= 32 && value < 127)).length;
+  return printable / inspected.length >= 0.85 ? 'text/plain' : null;
+}
+
+function humanRepresentation(record, records, fallbackBytes) {
+  const enrichments = record?.enrichments || [];
+  const payloadItem = [...enrichments].reverse().find(item => item?.payload?.length);
+  if (payloadItem) {
+    const contentType = enrichmentContentType(record, payloadItem, records);
+    return {...humanContentKind(contentType), contentType, bytes: payloadItem.payload,
+      operation: payloadItem.metadata?.operation || 'derived content'};
+  }
+  const headerItem = [...enrichments].reverse().find(item => enrichmentHeaders(item).length);
+  if (headerItem) {
+    const headers = enrichmentHeaders(headerItem);
+    const startLine = enrichmentStartLine(headerItem);
+    return {kind: 'headers', contentType: 'HTTP fields', operation: headerItem.metadata?.operation ||
+      'decoded headers', text: `${startLine ? `${startLine}\n` : ''}${headers.map(field =>
+        `${field.name}: ${field.value ?? ''}`).join('\n')}`};
+  }
+  const l7 = l7PayloadView(record);
+  const bytes = l7.state === 'body' ? l7.bytes : fallbackBytes || new Uint8Array();
+  const contentType = humanRecordContentType(record, records) || sniffHumanContentType(bytes);
+  return {...humanContentKind(contentType),
+    contentType: contentType || 'unclassified bytes', operation: contentType ? 'content' : 'payload', bytes};
+}
+
+function humanText(representation, byteLimit = null) {
+  const source = representation.bytes || new Uint8Array();
+  const bytes = byteLimit === null ? source : source.subarray(0, byteLimit);
+  const decoded = new TextDecoder().decode(bytes);
+  if (representation.kind !== 'text' || !/(?:\/|\+)json$/.test(representation.contentType.split(';', 1)[0])) {
+    return decoded;
+  }
+  if (bytes.length !== source.length) return decoded;
+  try {
+    return JSON.stringify(JSON.parse(decoded), null, 2);
+  } catch (_) {
+    return decoded;
+  }
+}
+
 function closeFloatingEnrichment() {
   const floating = document.querySelector('.floating-enrichment');
   if (!floating) return;
@@ -1583,14 +1674,12 @@ function closeFloatingEnrichment() {
   floating.remove();
 }
 
-function openFloatingEnrichment(item, supported, title) {
+function createFloatingEnrichment(title) {
   closeFloatingEnrichment();
   const floating = document.createElement('section');
   floating.className = 'floating-enrichment';
   floating.setAttribute('role', 'dialog');
   floating.setAttribute('aria-label', title);
-  const objectUrl = URL.createObjectURL(new Blob([item.payload], {type: supported.mime}));
-  floating.dataset.objectUrl = objectUrl;
   const head = document.createElement('header');
   const label = document.createElement('b');
   label.textContent = title;
@@ -1598,18 +1687,7 @@ function openFloatingEnrichment(item, supported, title) {
   close.type = 'button'; close.textContent = '×'; close.title = 'Close floating view';
   close.onclick = closeFloatingEnrichment;
   head.append(label, close);
-  const image = document.createElement('img');
-  image.alt = title;
-  const status = document.createElement('small');
-  status.textContent = `decoding ${supported.mime}…`;
-  image.onload = () => {
-    status.textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${formatBytes(item.payload.length)} · ${supported.mime}`;
-  };
-  image.onerror = () => {
-    status.textContent = `Browser could not decode this ${supported.mime} payload.`;
-  };
-  image.src = objectUrl;
-  floating.append(head, image, status);
+  floating.append(head);
   document.body.append(floating);
   head.onpointerdown = event => {
     if (event.target.closest('button')) return;
@@ -1629,6 +1707,103 @@ function openFloatingEnrichment(item, supported, title) {
       head.onpointerup = null;
     };
   };
+  return floating;
+}
+
+function openFloatingEnrichment(item, supported, title) {
+  const floating = createFloatingEnrichment(title);
+  const objectUrl = URL.createObjectURL(new Blob([item.payload], {type: supported.mime}));
+  floating.dataset.objectUrl = objectUrl;
+  const image = document.createElement('img');
+  image.alt = title;
+  const status = document.createElement('small');
+  status.textContent = `decoding ${supported.mime}…`;
+  image.onload = () => {
+    status.textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${formatBytes(item.payload.length)} · ${supported.mime}`;
+  };
+  image.onerror = () => {
+    status.textContent = `Browser could not decode this ${supported.mime} payload.`;
+  };
+  image.src = objectUrl;
+  floating.append(image, status);
+}
+
+function openFloatingHuman(representation) {
+  const title = `${representation.operation} · ${representation.contentType}`;
+  const floating = createFloatingEnrichment(title);
+  const status = document.createElement('small');
+  if (representation.kind === 'image') {
+    const objectUrl = URL.createObjectURL(new Blob([representation.bytes],
+      {type: representation.contentType}));
+    floating.dataset.objectUrl = objectUrl;
+    const image = document.createElement('img');
+    image.alt = title;
+    image.onload = () => {
+      status.textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${formatBytes(representation.bytes.length)}`;
+    };
+    image.onerror = () => { status.textContent = 'Browser could not render this payload.'; };
+    image.src = objectUrl;
+    floating.append(image, status);
+    return;
+  }
+  const content = document.createElement('pre');
+  const previewLimit = 8 * 1024 * 1024;
+  if (representation.kind === 'headers') content.textContent = representation.text;
+  else if (representation.kind === 'text') content.textContent = humanText(representation, previewLimit);
+  else appendMixedAscii(content, representation.bytes.subarray(0, previewLimit));
+  if (representation.bytes?.length > previewLimit) content.append(document.createTextNode(
+    `\n[… ${formatBytes(representation.bytes.length - previewLimit)} omitted from this view]`));
+  status.textContent = representation.bytes ? formatBytes(representation.bytes.length) : 'decoded metadata';
+  floating.append(content, status);
+}
+
+function renderHumanPreview(target, record, records, fallbackBytes, limit = 640) {
+  const representation = humanRepresentation(record, records, fallbackBytes);
+  target.replaceChildren();
+  target.classList.add('human-preview');
+  const head = document.createElement('span');
+  head.className = 'human-preview-head';
+  const label = document.createElement('span');
+  label.textContent = `${representation.operation} · ${representation.contentType}`;
+  const floating = document.createElement('button');
+  floating.type = 'button'; floating.textContent = 'Float';
+  floating.title = 'Open the complete human-readable representation in a floating window';
+  floating.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    openFloatingHuman(representation);
+  };
+  head.append(label, floating);
+  target.append(head);
+  if (representation.kind === 'image') {
+    const image = document.createElement('img');
+    image.className = 'human-preview-image';
+    image.alt = `${representation.operation} preview`;
+    const objectUrl = URL.createObjectURL(new Blob([representation.bytes],
+      {type: representation.contentType}));
+    image.onload = image.onerror = () => URL.revokeObjectURL(objectUrl);
+    image.src = objectUrl;
+    target.append(image);
+    return;
+  }
+  const body = document.createElement('span');
+  body.className = 'human-preview-body';
+  const text = representation.kind === 'headers' ? representation.text :
+    representation.kind === 'text' ? humanText(representation, limit) : null;
+  if (text !== null) {
+    body.textContent = text.slice(0, limit);
+    if (representation.kind === 'text' && representation.bytes.length > limit) {
+      body.append(document.createTextNode(
+        `\n[… ${formatBytes(representation.bytes.length - limit)} more]`));
+    } else if (text.length > limit) {
+      body.append(document.createTextNode(`\n[… ${text.length - limit} more characters]`));
+    }
+  } else {
+    appendMixedAscii(body, representation.bytes.subarray(0, limit));
+    if (representation.bytes.length > limit) body.append(document.createTextNode(
+      `\n[… ${formatBytes(representation.bytes.length - limit)} more]`));
+  }
+  target.append(body);
 }
 
 function appendEnrichmentView(card, item, contentType) {
@@ -2159,7 +2334,7 @@ function openFlowTab(sessionId, type = 'connection') {
       cardLevels: new Map(), openEnrichments: new Set(),
       payloadCaps: {L: 0, R: 0},
       keepAll: false, timeMode: 'elapsed',
-      l7Context: false, annotations: true};
+      l7Context: false, annotations: true, human: false};
     followed.laneWidths = new Map();
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
@@ -2377,6 +2552,7 @@ function renderFlowTab(scopeKey) {
       '<span class="flow-scope-controls"><button type="button" data-flow-scope="wire">Wire</button>' +
       '<button type="button" data-flow-scope="l7">L7</button>' +
       '<label class="l7-context-toggle" title="Show 16 wire bytes immediately before and after each L7 body range"><input type="checkbox" data-l7-context> ±16 B context</label></span>' +
+      '<button type="button" data-flow-human title="Prefer decoded content and render formats understood by the browser">Human</button>' +
       '<button type="button" data-flow-annotations title="Show Smithproxy protocol annotations over each payload">Annotations</button>' +
       '<button type="button" data-flow-expand="all">Expand all</button>' +
       '<button type="button" data-flow-expand="none">Collapse all</button>' +
@@ -2412,6 +2588,11 @@ function renderFlowTab(scopeKey) {
     }
     panel.querySelector('[data-l7-context]').onchange = event => {
       followed.l7Context = event.target.checked;
+      followed.renderedMode = null;
+      renderFlowTab(scopeKey);
+    };
+    panel.querySelector('[data-flow-human]').onclick = () => {
+      followed.human = !followed.human;
       followed.renderedMode = null;
       renderFlowTab(scopeKey);
     };
@@ -2521,14 +2702,16 @@ function renderFlowTab(scopeKey) {
   }
   const contextToggle = panel.querySelector('[data-l7-context]');
   contextToggle.checked = followed.l7Context;
-  contextToggle.disabled = payloadScope !== 'l7';
+  contextToggle.disabled = payloadScope !== 'l7' || followed.human;
+  panel.querySelector('[data-flow-human]').setAttribute('aria-pressed', String(followed.human));
   panel.querySelector('[data-flow-annotations]').setAttribute(
     'aria-pressed', String(followed.annotations));
   panel.querySelector('[data-flow-expand="all"]').hidden = followed.view !== 'chunks';
   panel.querySelector('[data-flow-expand="none"]').hidden = followed.view !== 'chunks';
   panel.querySelector('.lane-layout-controls').hidden = followed.view !== 'lanes';
   panel.querySelector('.flow-scope-controls').hidden = followed.view === 'messages';
-  panel.querySelector('[data-flow-annotations]').hidden = followed.view === 'messages';
+  panel.querySelector('[data-flow-human]').hidden = followed.view === 'messages';
+  panel.querySelector('[data-flow-annotations]').hidden = followed.view === 'messages' || followed.human;
   panel.querySelector('[data-lane-fit]').setAttribute('aria-pressed', String(followed.laneFit));
   panel.querySelector('[data-lane-fit]').textContent = followed.laneFit ? 'Fit: on' : 'Fit width';
   panel.querySelector('[data-lane-width-slider]').value = String(followed.laneWidth);
@@ -2563,7 +2746,7 @@ function renderFlowTab(scopeKey) {
     renderFlowMessages(stream, followed);
     return;
   }
-  const renderMode = `${followed.view}:${payloadMode}:${payloadScope}:${followed.l7Context}:${followed.annotations}`;
+  const renderMode = `${followed.view}:${payloadMode}:${payloadScope}:${followed.l7Context}:${followed.annotations}:${followed.human}`;
   if (followed.renderedMode !== renderMode) {
     stream.replaceChildren();
     delete stream.dataset.layoutKey;
@@ -2610,7 +2793,7 @@ function renderFlowTab(scopeKey) {
       chunk.style.setProperty('--flow-color', flowLaneColor(followed, record.event.id));
       chunk.title = laneLabel(record.event.id);
       direction.textContent = `${side}·${followed.laneOrder.indexOf(record.event.id) + 1}`;
-      if (bytes.length > 640) {
+      if (!followed.human && bytes.length > 640) {
         const expand = document.createElement('button');
         expand.type = 'button'; expand.className = 'flow-stream-expand';
         expand.onclick = () => {
@@ -2621,12 +2804,13 @@ function renderFlowTab(scopeKey) {
         };
         metadata.append(document.createElement('br'), expand);
       }
-      if (followed.annotations) appendAnnotationRail(payload, record, wireBytes);
+      if (followed.annotations && !followed.human) appendAnnotationRail(payload, record, wireBytes);
       payload.append(content);
       chunk.append(direction, metadata, payload);
       const enriched = attachInlineEnrichments(chunk, record, records, followed);
       if (enriched) badges.append(enriched);
-      renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0,
+      if (followed.human) renderHumanPreview(content, record, records, bytes);
+      else renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0,
         followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
     } else {
       const summary = document.createElement('summary');
@@ -2644,8 +2828,10 @@ function renderFlowTab(scopeKey) {
       };
       summary.append(expand);
       const content = document.createElement('pre');
-      if (!(followed.l7Context && payloadScope === 'l7' &&
-            appendL7Context(content, record, wireBytes, payloadMode, bytes.length))) {
+      if (followed.human) {
+        renderHumanPreview(content, record, records, bytes);
+      } else if (!(followed.l7Context && payloadScope === 'l7' &&
+                   appendL7Context(content, record, wireBytes, payloadMode, bytes.length))) {
         const annotations = followed.annotations && payloadScope === 'wire'
           ? contentAnnotations(record, bytes.length) : [];
         if (!appendAnnotatedPayload(content, bytes, annotations, payloadMode)) {
@@ -2661,7 +2847,7 @@ function renderFlowTab(scopeKey) {
       chunk.open = !followed.collapsed;
       chunk.classList.toggle('expanded', followed.expanded);
       chunk.append(summary);
-      if (followed.annotations) appendAnnotationRail(chunk, record, wireBytes);
+      if (followed.annotations && !followed.human) appendAnnotationRail(chunk, record, wireBytes);
       chunk.append(content);
       const enriched = attachInlineEnrichments(chunk, record, records, followed);
       if (enriched) badges.append(enriched);
@@ -2755,15 +2941,17 @@ function laneStepLabel(delta) {
   return `prev ${laneDeltaLabel(delta).replace('Δ ', '+')}`;
 }
 
-function renderLaneCardPayload(card, bytes, level, context = null) {
+function renderLaneCardPayload(card, bytes, level, context = null, human = null) {
   const limits = [320, 4096, bytes.length];
   const limit = Math.min(bytes.length, limits[level] ?? limits[0]);
   const preview = card.querySelector('pre');
   preview.replaceChildren();
-  if (!context || !appendL7Context(preview, context.record, context.wireBytes, 'ascii', limit)) {
+  if (human) {
+    renderHumanPreview(preview, human.record, human.records, bytes, limits[level] ?? limits[0]);
+  } else if (!context || !appendL7Context(preview, context.record, context.wireBytes, 'ascii', limit)) {
     appendMixedAscii(preview, bytes.subarray(0, limit));
   }
-  const remaining = bytes.length - limit;
+  const remaining = human ? 0 : bytes.length - limit;
   if (remaining) {
     const omitted = document.createElement('span');
     omitted.className = 'lane-card-omitted';
@@ -2978,25 +3166,27 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
         (bytes.length < completeBytes.length ? ` / ${formatBytes(completeBytes.length)} (trimmed)` : '');
       const preview = document.createElement('pre');
       head.append(meta, l7PayloadMarker(record, wireBytes));
-      if (bytes.length > 320) {
+      if (!followed.human && bytes.length > 320) {
         const expand = document.createElement('button');
         expand.type = 'button'; expand.className = 'lane-card-expand';
         expand.onclick = () => {
           const next = Number(expand.dataset.nextLevel || 0);
           followed.cardLevels.set(record.revision, next);
           renderLaneCardPayload(card, bytes, next,
-            followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
+            followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null,
+            followed.human ? {record, records} : null);
           decorateLaneResponses(stream, records, followed);
         };
         head.append(expand);
       }
       card.append(head);
-      if (followed.annotations) appendAnnotationRail(card, record, wireBytes);
+      if (followed.annotations && !followed.human) appendAnnotationRail(card, record, wireBytes);
       card.append(preview);
       const enriched = attachInlineEnrichments(card, record, records, followed);
       if (enriched) head.append(enriched);
       renderLaneCardPayload(card, bytes, followed.cardLevels.get(record.revision) || 0,
-        followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
+        followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null,
+        followed.human ? {record, records} : null);
       row.append(card);
     } else if (hiddenIndex >= 0) {
       const tick = document.createElement('button');
