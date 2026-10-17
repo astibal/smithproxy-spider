@@ -160,6 +160,47 @@ smithproxyVerify.checked = localStorage.getItem('smithproxy-verify') !== 'false'
 byId('resolve-hostnames').checked = hostnameResolving;
 byId('hide-resolved-ips').checked = hideResolvedIps;
 byId('compact-session-labels').checked = compactSessionLabels;
+
+async function redeemSaslikBootstrap() {
+  const fragment = new URLSearchParams(location.hash.replace(/^#/, ''));
+  const code = fragment.get('code');
+  const saslikOrigin = fragment.get('saslik_origin');
+  if (!code || !saslikOrigin) return;
+
+  // Remove the capability before performing any network operation. It must
+  // not survive in browser history, screenshots, or a copied address.
+  history.replaceState(null, '', `${location.pathname}${location.search}`);
+  token.value = '';
+  sessionStorage.removeItem('spider-token');
+  const bootstrapUrl = new URL('/api/spider/bootstrap/redeem', saslikOrigin);
+  if (!['http:', 'https:'].includes(bootstrapUrl.protocol)) {
+    throw new Error('Unsupported Saslik bootstrap URL');
+  }
+  const response = await fetch(bootstrapUrl, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({code}),
+  });
+  const value = await response.json();
+  if (!response.ok) throw new Error(value.error || `Bootstrap HTTP ${response.status}`);
+
+  const backendUrl = new URL(value.backend);
+  if (['127.0.0.1', 'localhost', '10.254.77.1', '10.254.77.2'].includes(backendUrl.hostname)) {
+    backendUrl.hostname = bootstrapUrl.hostname;
+  }
+  backend.value = backendUrl.toString().replace(/\/$/, '');
+  token.value = value.token;
+}
+
+async function bootstrapAndConnect() {
+  try {
+    await redeemSaslikBootstrap();
+  } catch (error) {
+    status.textContent = `offline · ${error.message}`;
+    status.className = 'error';
+  }
+  connect();
+}
 byId('script-language').value = scriptLanguage;
 const savedSidebarWidth = Number(localStorage.getItem('spider-sidebar-width'));
 if (savedSidebarWidth >= 280) byId('sidebar').style.width = `${savedSidebarWidth}px`;
@@ -4067,4 +4108,4 @@ renderActivity();
 updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
 showTab('workbench-tab');
-connect();
+bootstrapAndConnect();
