@@ -1518,7 +1518,9 @@ function enrichmentMarker(record, activate = null, active = false) {
     if (activate) activate();
     else {
       selectPayload(record, false);
-      byId('enrichment-viewer').open = true;
+      const viewer = byId('enrichment-viewer');
+      viewer.hidden = false;
+      viewer.open = true;
     }
   };
   marker.onclick = show;
@@ -1723,6 +1725,7 @@ function appendInlineEnrichments(target, record, records) {
         `\n[… ${formatBytes(item.payload.length - previewLimit)} more]`));
       card.append(payload);
     }
+    target.append(card);
   }
 }
 
@@ -1816,8 +1819,12 @@ function renderPayload() {
 function renderEnrichments(record) {
   const viewer = byId('enrichment-viewer');
   const enrichments = Array.isArray(record?.enrichments) ? record.enrichments : [];
-  viewer.hidden = enrichments.length === 0;
-  byId('enrichment-count').textContent = enrichments.length ? `(${enrichments.length})` : '';
+  viewer.hidden = false;
+  viewer.classList.toggle('empty', enrichments.length === 0);
+  if (!enrichments.length) {
+    viewer.open = false;
+  }
+  byId('enrichment-count').textContent = String(enrichments.length);
   const content = byId('enrichment-content');
   content.replaceChildren();
   enrichments.forEach((item, index) => {
@@ -1880,7 +1887,6 @@ function payloadInspectionInfo(record) {
   if (Array.isArray(info.L7_payload_start)) labels.push(l7PayloadSummary(l7PayloadView(record)));
   if (info.l7?.app) labels.push(String(info.l7.app));
   if (record.inspectResult) labels.push(`INSPECT ${record.inspectResult}`);
-  if (record.enrichments?.length) labels.push(`enriched ${record.enrichments.length}`);
   if (record.event.decision?.state === 'pending' && !record.decided) labels.push('awaiting decision');
   else if (record.event.decision?.state === 'auto-accepted') labels.push('auto-accepted');
   return [...new Set(labels)].join(' · ');
