@@ -66,7 +66,8 @@ std::string SessionStore::session_label(const nlohmann::json& event) {
 }
 
 std::uint64_t SessionStore::apply(const nlohmann::json& event,
-                                  const std::optional<std::string_view> raw_payload) {
+                                  const std::optional<std::string_view> raw_payload,
+                                  const std::vector<SxbnEnvelope>& enrichments) {
     const auto action = event.value("action", "");
     const auto id = event.value("id", "");
     auto stored_event = event;
@@ -75,7 +76,8 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event,
 
     std::uint64_t rev{};
     std::function<void(std::uint64_t, const nlohmann::json&,
-                       std::optional<std::string_view>)> sink;
+                       std::optional<std::string_view>,
+                       const std::vector<SxbnEnvelope>&)> sink;
     {
         std::scoped_lock lock(mutex_);
         rev = ++revision_;
@@ -136,7 +138,7 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event,
         }
         sink = event_sink_;
     }
-    if (sink) sink(rev, stored_event, raw_payload);
+    if (sink) sink(rev, stored_event, raw_payload, enrichments);
     return rev;
 }
 
@@ -172,12 +174,16 @@ void SessionStore::apply_hostname_info(const nlohmann::json& event) {
 
 void SessionStore::set_event_sink(
                                   std::function<void(std::uint64_t, const nlohmann::json&,
-                                                     std::optional<std::string_view>)> sink,
+                                                     std::optional<std::string_view>,
+                                                     const std::vector<SxbnEnvelope>&)> sink,
                                   const bool replay_existing) {
     std::scoped_lock lock(mutex_);
     event_sink_ = std::move(sink);
     if (event_sink_ && replay_existing) {
-        for (const auto& record : history_) event_sink_(record.revision, record.event, std::nullopt);
+        const std::vector<SxbnEnvelope> no_enrichments;
+        for (const auto& record : history_) {
+            event_sink_(record.revision, record.event, std::nullopt, no_enrichments);
+        }
     }
 }
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "binary_envelope.hpp"
+
 #include <cstddef>
 #include <deque>
 #include <functional>
@@ -34,9 +36,11 @@ public:
                           std::size_t session_history_limit = 1000);
 
     std::uint64_t apply(const nlohmann::json& event,
-                        std::optional<std::string_view> raw_payload = std::nullopt);
+                        std::optional<std::string_view> raw_payload = std::nullopt,
+                        const std::vector<SxbnEnvelope>& enrichments = {});
     void set_event_sink(std::function<void(std::uint64_t, const nlohmann::json&,
-                                           std::optional<std::string_view>)> sink,
+                                           std::optional<std::string_view>,
+                                           const std::vector<SxbnEnvelope>&)> sink,
                         bool replay_existing = false);
     [[nodiscard]] nlohmann::json snapshot() const;
     [[nodiscard]] nlohmann::json session_history() const;
@@ -87,7 +91,8 @@ private:
     std::unordered_map<std::string, std::uint64_t> callbacks_by_action_;
     std::unordered_map<std::string, std::uint64_t> callbacks_by_source_;
     std::function<void(std::uint64_t, const nlohmann::json&,
-                       std::optional<std::string_view>)> event_sink_;
+                       std::optional<std::string_view>,
+                       const std::vector<SxbnEnvelope>&)> event_sink_;
 };
 
 } // namespace spider

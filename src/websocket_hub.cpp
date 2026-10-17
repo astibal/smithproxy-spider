@@ -159,7 +159,8 @@ void WebSocketHub::upgrade(void* cls, MHD_Connection*, void*, const char* extra_
 }
 
 void WebSocketHub::publish(const std::uint64_t revision, const nlohmann::json& event,
-                           const std::optional<std::string_view> raw_payload) {
+                           const std::optional<std::string_view> raw_payload,
+                           const std::vector<SxbnEnvelope>& enrichments) {
     constexpr unsigned char text_opcode = 0x1U;
     constexpr unsigned char binary_opcode = 0x2U;
     auto opcode = text_opcode;
@@ -170,6 +171,17 @@ void WebSocketHub::publish(const std::uint64_t revision, const nlohmann::json& e
         wire = encode_sxbn({{"type", "event"}, {"key", "event:" + std::to_string(revision)},
                             {"revision", revision}, {"event", std::move(wire_event)}},
                            *raw_payload);
+        const auto source_key = "event:" + std::to_string(revision);
+        for (std::size_t index = 0; index < enrichments.size(); ++index) {
+            auto metadata = enrichments[index].metadata;
+            metadata["type"] = "enrichment";
+            metadata["key"] = source_key + ":enrichment:" + std::to_string(index);
+            if (!metadata.contains("source") || !metadata["source"].is_object()) {
+                metadata["source"] = nlohmann::json::object();
+            }
+            metadata["source"]["envelope"] = source_key;
+            wire += encode_sxbn(metadata, enrichments[index].payload);
+        }
         opcode = binary_opcode;
     } else {
         wire = nlohmann::json{{"type", "event"}, {"revision", revision}, {"event", event}}.dump();

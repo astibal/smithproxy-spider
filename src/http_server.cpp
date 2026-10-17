@@ -1,6 +1,7 @@
 #include "http_server.hpp"
 
 #include "decision_broker.hpp"
+#include "enrichment.hpp"
 #include "session_store.hpp"
 #include "smithproxy_manager.hpp"
 #include "webhook.hpp"
@@ -39,8 +40,10 @@ bool constant_time_equal(const std::string_view lhs, const std::string_view rhs)
 class SpiderController final : public lmh::Controller {
 public:
     SpiderController(const ServerConfig& config, SessionStore& store, SmithproxyManager& smithproxy,
-                     DecisionBroker& decisions, WebSocketHub& websocket)
-        : config_(config), store_(store), smithproxy_(smithproxy), decisions_(decisions), websocket_(websocket) {}
+                     DecisionBroker& decisions, EnrichmentEngine& enrichment,
+                     WebSocketHub& websocket)
+        : config_(config), store_(store), smithproxy_(smithproxy), decisions_(decisions),
+          enrichment_(enrichment), websocket_(websocket) {}
 
     bool validPath(const char* path, const char* method) override {
         const std::string_view p(path);
@@ -146,7 +149,7 @@ private:
                     event = nlohmann::json::parse(body);
                 }
                 const auto reply = process_webhook(store_, decisions_, event,
-                                                   payload_view);
+                                                   payload_view, &enrichment_);
                 return json_response(reply.status, reply.body);
             } catch (const nlohmann::json::exception&) {
                 return json_response(400, {{"error", "invalid JSON"}});
@@ -167,6 +170,7 @@ private:
                     {"errors", callback_errors_.load(std::memory_order_relaxed)},
                 }},
                 {"store", store_.diagnostics()},
+                {"enrichment", enrichment_.diagnostics()},
                 {"websocket", websocket_.diagnostics()},
             });
         }
@@ -237,6 +241,7 @@ private:
     SessionStore& store_;
     SmithproxyManager& smithproxy_;
     DecisionBroker& decisions_;
+    EnrichmentEngine& enrichment_;
     WebSocketHub& websocket_;
     std::atomic_uint64_t requests_total_{};
     std::atomic_uint64_t response_bytes_{};
@@ -255,6 +260,7 @@ private:
 int run_http_server(const ServerConfig& config, SessionStore& store,
                     SmithproxyManager& smithproxy, std::atomic_bool& stop) {
     DecisionBroker decisions;
+    EnrichmentEngine enrichment;
     WebSocketHub websocket(config.token, [&decisions](const nlohmann::json& message)
                            -> std::optional<nlohmann::json> {
         if (message.value("type", "") == "auto-accept-rules") {
@@ -277,8 +283,9 @@ int run_http_server(const ServerConfig& config, SessionStore& store,
     });
     store.set_event_sink([&websocket](const std::uint64_t revision,
                                      const nlohmann::json& event,
-                                     const std::optional<std::string_view> raw_payload) {
-        websocket.publish(revision, event, raw_payload);
+                                     const std::optional<std::string_view> raw_payload,
+                                     const std::vector<SxbnEnvelope>& enrichments) {
+        websocket.publish(revision, event, raw_payload, enrichments);
     }, true);
     lmh::WebServer server(config.port);
     server.options().bind_address = config.bind_address;
@@ -289,7 +296,8 @@ int run_http_server(const ServerConfig& config, SessionStore& store,
     server.options().handler_should_terminate = [&stop] { return stop.load(); };
     server.options().thread_pool_size = 16;
     server.options().allow_upgrade = true;
-    server.addController(std::make_shared<SpiderController>(config, store, smithproxy, decisions, websocket));
+    server.addController(std::make_shared<SpiderController>(config, store, smithproxy, decisions,
+                                                            enrichment, websocket));
     const auto result = server.start() ? 0 : 1;
     store.set_event_sink({});
     websocket.stop();

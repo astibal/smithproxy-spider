@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MICROHTTPD REQUIRED IMPORTED_TARGET libmicrohttpd)
 pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
+pkg_check_modules(NGHTTP2 REQUIRED IMPORTED_TARGET libnghttp2)
+find_package(ZLIB REQUIRED)
 find_package(nlohmann_json 3.10 QUIET)
 if(NOT nlohmann_json_FOUND)
     add_library(spider_nlohmann_json INTERFACE)
@@ -25,6 +27,9 @@ target_compile_options(spider_protocol PRIVATE -Wall -Wextra -Wpedantic -Wconver
 
 add_library(spider_core
     src/decision_broker.cpp
+    src/content_decoding_enrichment.cpp
+    src/enrichment.cpp
+    src/http2_enrichment.cpp
     src/session_filter.cpp
     src/session_store.cpp
     src/smithproxy_client.cpp
@@ -32,7 +37,9 @@ add_library(spider_core
     src/webhook.cpp
 )
 target_include_directories(spider_core PUBLIC src)
-target_link_libraries(spider_core PUBLIC spider_protocol nlohmann_json::nlohmann_json PkgConfig::CURL)
+target_link_libraries(spider_core PUBLIC spider_protocol nlohmann_json::nlohmann_json
+    PkgConfig::CURL PkgConfig::NGHTTP2)
+target_link_libraries(spider_core PUBLIC ZLIB::ZLIB)
 target_compile_options(spider_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 
 add_executable(smithproxy-spider

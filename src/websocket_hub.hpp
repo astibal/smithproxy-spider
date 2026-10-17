@@ -1,5 +1,7 @@
 #pragma once
 
+#include "binary_envelope.hpp"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -31,7 +33,8 @@ public:
     [[nodiscard]] bool can_upgrade(MHD_Connection* connection) const;
     int queue_upgrade(MHD_Connection* connection);
     void publish(std::uint64_t revision, const nlohmann::json& event,
-                 std::optional<std::string_view> raw_payload = std::nullopt);
+                 std::optional<std::string_view> raw_payload = std::nullopt,
+                 const std::vector<SxbnEnvelope>& enrichments = {});
     [[nodiscard]] nlohmann::json diagnostics() const;
     void stop();
 
