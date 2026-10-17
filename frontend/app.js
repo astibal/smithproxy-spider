@@ -1730,17 +1730,16 @@ function attachInlineEnrichments(container, record, records, followed) {
   if (!record?.enrichments?.length) return null;
   followed.openEnrichments ||= new Set();
   const revision = String(record.revision);
-  const panel = document.createElement('section');
+  const panel = document.createElement('div');
   panel.className = 'inline-enrichments';
   panel.hidden = !followed.openEnrichments.has(revision);
-  if (!panel.hidden) appendInlineEnrichments(panel, record, records);
+  appendInlineEnrichments(panel, record, records);
   const marker = enrichmentMarker(record, () => {
     const opening = panel.hidden;
     panel.hidden = !opening;
     marker.setAttribute('aria-pressed', String(opening));
     if (opening) {
       followed.openEnrichments.add(revision);
-      appendInlineEnrichments(panel, record, records);
     } else {
       followed.openEnrichments.delete(revision);
     }
@@ -2594,7 +2593,10 @@ function renderFlowTab(scopeKey) {
     metadata.append(`r${record.revision}`, document.createElement('br'), formatBytes(bytes.length));
     if (bytes.length < completeBytes.length) metadata.append(document.createElement('br'),
       `of ${formatBytes(completeBytes.length)}`);
-    metadata.append(document.createElement('br'), l7PayloadMarker(record, wireBytes));
+    const badges = document.createElement('span');
+    badges.className = 'flow-payload-badges';
+    badges.append(l7PayloadMarker(record, wireBytes));
+    metadata.append(document.createElement('br'), badges);
     if (followed.view === 'stream') {
       const content = document.createElement('pre');
       const payload = document.createElement('div');
@@ -2617,7 +2619,7 @@ function renderFlowTab(scopeKey) {
       payload.append(content);
       chunk.append(direction, metadata, payload);
       const enriched = attachInlineEnrichments(chunk, record, records, followed);
-      if (enriched) metadata.append(document.createElement('br'), enriched);
+      if (enriched) badges.append(enriched);
       renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0,
         followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
     } else {
@@ -2656,7 +2658,7 @@ function renderFlowTab(scopeKey) {
       if (followed.annotations) appendAnnotationRail(chunk, record, wireBytes);
       chunk.append(content);
       const enriched = attachInlineEnrichments(chunk, record, records, followed);
-      if (enriched) metadata.append(document.createElement('br'), enriched);
+      if (enriched) badges.append(enriched);
     }
     stream.append(chunk);
   }
