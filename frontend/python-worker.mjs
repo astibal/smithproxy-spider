@@ -19,6 +19,9 @@ class Api:
         self.l7_ranges = [tuple(value) for value in l7.get("ranges", [])]
         self.l7_encodings = list(l7.get("encodings", []))
         self.l7_bytes = bytes(l7.get("bytes", []))
+        self.enrichments = json.loads(_spider_enrichments)
+        for item in self.enrichments:
+            item["bytes"] = bytes(item.get("bytes", []))
 
     def print(self, *values):
         logs.append(" ".join(str(value) for value in values))
@@ -67,6 +70,7 @@ try {
       pyodide.globals.set('_spider_session_id', data.sessionId);
       pyodide.globals.set('_spider_session_label', data.sessionLabel);
       pyodide.globals.set('_spider_l7', JSON.stringify(data.l7 || {}));
+      pyodide.globals.set('_spider_enrichments', JSON.stringify(data.enrichments || []));
       const proxy = await pyodide.runPythonAsync(harness);
       const result = proxy.toJs({dict_converter: Object.fromEntries});
       proxy.destroy();

@@ -111,6 +111,7 @@ const eventFilters = {ping: false, sessions: false, status: true, other: false};
 const defaultJavascriptScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
 // api.l7           detected body state, ranges, encodings, bytes, and text
+// api.enrichments  decoded/derived metadata and bytes
 // api.side         "L" (client) or "R" (server)
 // api.sessionId    Smithproxy session identifier
 // api.sessionLabel endpoints and detected protocol
@@ -128,6 +129,7 @@ const defaultPythonScript = `# api.bytes          original payload as bytes
 # api.l7_ranges      (start, end) offsets into api.bytes
 # api.l7_encodings   positional Content-Encoding values
 # api.l7_state       "body", "none", "unknown", or "unavailable"
+# api.enrichments    decoded/derived metadata and bytes
 # api.side           "L" (client) or "R" (server)
 # api.session_id     Smithproxy session identifier
 # api.session_label  endpoints and detected protocol
@@ -1122,13 +1124,17 @@ payloadRecordLimit = clampInteger(payloadRecordLimit, 10, 10000, 200);
 eventRecordLimit = clampInteger(eventRecordLimit, 100, 20000, 2000);
 
 function payloadSize(record) {
+  const enrichmentBytes = Array.isArray(record?.enrichments)
+    ? record.enrichments.reduce((total, item) => total +
+        (item?.payload?.byteLength || 0) + JSON.stringify(item?.metadata || {}).length * 2, 0)
+    : 0;
   if (record?.binaryPayload instanceof Uint8Array) {
-    return record.binaryPayload.byteLength + 1024;
+    return record.binaryPayload.byteLength + enrichmentBytes + 1024;
   }
   const content = record.event.details?.info?.content;
   if (typeof content !== 'string') return 0;
   // A JS string may occupy two bytes per character. Include a small object overhead.
-  return content.length * 2 + 1024;
+  return content.length * 2 + enrichmentBytes + 1024;
 }
 
 function decodedPayloadSize(content) {
@@ -1455,6 +1461,16 @@ function l7PayloadMarker(record, source = null) {
   return marker;
 }
 
+function enrichmentMarker(record) {
+  if (!record?.enrichments?.length) return null;
+  const marker = document.createElement('span');
+  marker.className = 'enrichment-marker';
+  marker.textContent = `ENRICH ${record.enrichments.length}`;
+  marker.title = record.enrichments.map(item =>
+    item?.metadata?.operation || item?.metadata?.content_type || 'derived content').join('\n');
+  return marker;
+}
+
 function flowPayloadBytes(record, wireBytes) {
   return payloadScope === 'l7' ? l7PayloadView(record, wireBytes).bytes : wireBytes;
 }
@@ -1475,6 +1491,13 @@ function scriptL7Metadata(record, source) {
     encodings: view.encodings,
     bytes: Array.from(view.bytes),
   };
+}
+
+function scriptEnrichments(record) {
+  return (record?.enrichments || []).map(item => ({
+    metadata: item.metadata || {},
+    bytes: Array.from(item.payload || []),
+  }));
 }
 
 function renderPayload() {
@@ -1505,11 +1528,38 @@ function renderPayload() {
     : `${shownBytes.length} B`;
   const inspection = payloadInspectionInfo(selectedPayload);
   renderWorkbenchInfo(inspection, selectedPayload);
+  renderEnrichments(selectedPayload);
   const pending = selectedPayload?.event?.decision?.state === 'pending' && !selectedPayload.decided;
   byId('accept-payload').disabled = !pending;
   byId('accept-session').disabled = !pending;
   byId('discard-payload').disabled = !pending;
   byId('replace-payload').disabled = !pending || replacementBase64 === null;
+}
+
+function renderEnrichments(record) {
+  const viewer = byId('enrichment-viewer');
+  const enrichments = Array.isArray(record?.enrichments) ? record.enrichments : [];
+  viewer.hidden = enrichments.length === 0;
+  byId('enrichment-count').textContent = enrichments.length ? `(${enrichments.length})` : '';
+  const content = byId('enrichment-content');
+  content.replaceChildren();
+  enrichments.forEach((item, index) => {
+    const metadata = item?.metadata || {};
+    const body = {...metadata};
+    delete body.type;
+    if (index) content.append(document.createTextNode('\n\n'));
+    content.append(document.createTextNode(
+      `${metadata.operation || metadata.content_type || 'derived content'}\n` +
+      JSON.stringify(body, null, 2)));
+    if (item.payload?.length) {
+      const previewLimit = 8192;
+      content.append(document.createTextNode(`\n\nDecoded payload (${formatBytes(item.payload.length)}):\n`));
+      appendMixedAscii(content, item.payload.subarray(0, previewLimit));
+      if (item.payload.length > previewLimit)
+        content.append(document.createTextNode(
+          `\n[… ${formatBytes(item.payload.length - previewLimit)} more]`));
+    }
+  });
 }
 
 function workbenchSiftClassifications(record) {
@@ -1553,6 +1603,7 @@ function payloadInspectionInfo(record) {
   if (Array.isArray(info.L7_payload_start)) labels.push(l7PayloadSummary(l7PayloadView(record)));
   if (info.l7?.app) labels.push(String(info.l7.app));
   if (record.inspectResult) labels.push(`INSPECT ${record.inspectResult}`);
+  if (record.enrichments?.length) labels.push(`enriched ${record.enrichments.length}`);
   if (record.event.decision?.state === 'pending' && !record.decided) labels.push('awaiting decision');
   else if (record.event.decision?.state === 'auto-accepted') labels.push('auto-accepted');
   return [...new Set(labels)].join(' · ');
@@ -1655,6 +1706,8 @@ function renderPayloadList() {
     row.innerHTML = `<span>r${record.revision}</span><b>${escapeHtml(info.side || '?')}</b>` +
       `<span>${escapeHtml(formatBytes(size) || `${size} B`)}</span>`;
     row.append(l7PayloadMarker(record));
+    const enriched = enrichmentMarker(record);
+    if (enriched) row.append(enriched);
     const session = document.createElement('span');
     session.textContent = resolvedSessionLabel(info.session || record.event.id || 'unlabelled');
     row.append(session);
@@ -2241,6 +2294,8 @@ function renderFlowTab(scopeKey) {
     if (bytes.length < completeBytes.length) metadata.append(document.createElement('br'),
       `of ${formatBytes(completeBytes.length)}`);
     metadata.append(document.createElement('br'), l7PayloadMarker(record, wireBytes));
+    const enriched = enrichmentMarker(record);
+    if (enriched) metadata.append(document.createElement('br'), enriched);
     if (followed.view === 'stream') {
       const content = document.createElement('pre');
       const payload = document.createElement('div');
@@ -2612,6 +2667,8 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
         (bytes.length < completeBytes.length ? ` / ${formatBytes(completeBytes.length)} (trimmed)` : '');
       const preview = document.createElement('pre');
       head.append(meta, l7PayloadMarker(record, wireBytes));
+      const enriched = enrichmentMarker(record);
+      if (enriched) head.append(enriched);
       if (bytes.length > 320) {
         const expand = document.createElement('button');
         expand.type = 'button'; expand.className = 'lane-card-expand';
@@ -2734,6 +2791,7 @@ function selectPayload(record, follow = false) {
     byId('workbench-source').className = 'empty';
     byId('workbench-info').textContent = 'waiting for metadata';
     byId('workbench-info').className = 'empty';
+    byId('enrichment-viewer').hidden = true;
     return;
   }
   payloadBytes = recordPayloadBytes(selectedPayload);
@@ -2814,6 +2872,7 @@ function executeJavascriptScript(record) {
     };
     worker.postMessage({script: byId('script-editor').value, bytes: Array.from(bytes),
       l7: scriptL7Metadata(record, bytes),
+      enrichments: scriptEnrichments(record),
       side: info.side || '', sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
   });
 }
@@ -2871,6 +2930,7 @@ async function executePythonScript(record) {
     pythonWorker.postMessage({id, script: byId('script-editor').value,
       content: info.content || encodeBase64(recordPayloadBytes(record)), side: info.side || '',
       l7: scriptL7Metadata(record, recordPayloadBytes(record)),
+      enrichments: scriptEnrichments(record),
       sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
   });
 }

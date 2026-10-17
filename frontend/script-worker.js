@@ -18,6 +18,14 @@ self.onmessage = ({data}) => {
     bytes: l7Bytes,
     text: new TextDecoder().decode(l7Bytes),
   });
+  const enrichments = Object.freeze((data.enrichments || []).map(item => {
+    const bytes = Uint8Array.from(item.bytes || []);
+    return Object.freeze({
+      metadata: Object.freeze(item.metadata || {}),
+      bytes,
+      text: new TextDecoder().decode(bytes),
+    });
+  }));
   const api = Object.freeze({
     bytes: Uint8Array.from(data.bytes),
     text: new TextDecoder().decode(Uint8Array.from(data.bytes)),
@@ -25,6 +33,7 @@ self.onmessage = ({data}) => {
     sessionId: data.sessionId,
     sessionLabel: data.sessionLabel,
     l7,
+    enrichments,
     print: (...values) => logs.push(values.map(value =>
       typeof value === 'string' ? value : JSON.stringify(value)).join(' ')),
   });
