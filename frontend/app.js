@@ -1799,11 +1799,30 @@ function renderFlowMessages(stream, followed) {
   const records = eventRecords.filter(record => scopeMatchesEvent(followed, record))
     .sort((a, b) => a.revision - b.revision);
   stream.className = 'flow-stream flow-messages';
-  stream.replaceChildren();
+  if (stream.dataset.renderKind !== 'messages') {
+    stream.replaceChildren();
+    stream.dataset.renderKind = 'messages';
+  }
+  followed.openMessages ||= new Set();
+  const wanted = new Set(records.map(record => String(record.revision)));
+  for (const message of stream.querySelectorAll('.flow-message[data-revision]')) {
+    if (wanted.has(message.dataset.revision)) continue;
+    followed.openMessages.delete(message.dataset.revision);
+    message.remove();
+  }
+  const rendered = new Set([...stream.querySelectorAll('.flow-message[data-revision]')]
+    .map(message => message.dataset.revision));
   for (const record of records) {
+    const recordRevision = String(record.revision);
+    if (rendered.has(recordRevision)) continue;
     const message = document.createElement('details');
     message.className = `flow-message ${eventCategory(record.event)}`;
-    message.dataset.revision = String(record.revision);
+    message.dataset.revision = recordRevision;
+    message.open = followed.openMessages.has(recordRevision);
+    message.ontoggle = () => {
+      if (message.open) followed.openMessages.add(recordRevision);
+      else followed.openMessages.delete(recordRevision);
+    };
     const summary = document.createElement('summary');
     const action = document.createElement('b');
     action.textContent = record.event.action || 'message';
@@ -1823,6 +1842,7 @@ function renderFlowMessages(stream, followed) {
     message.append(summary, json);
     stream.append(message);
   }
+  stream.querySelector('.empty')?.remove();
   if (!records.length) {
     const empty = document.createElement('span');
     empty.className = 'empty';
@@ -2262,6 +2282,7 @@ function renderFlowTab(scopeKey) {
   if (followed.renderedMode !== renderMode) {
     stream.replaceChildren();
     delete stream.dataset.layoutKey;
+    delete stream.dataset.renderKind;
     followed.renderedMode = renderMode;
   }
   if (followed.view === 'lanes') {
