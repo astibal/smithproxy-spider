@@ -1504,14 +1504,38 @@ function l7PayloadMarker(record, source = null) {
 
 function enrichmentMarker(record, activate = null, active = false) {
   if (!record?.enrichments?.length) return null;
+  const descriptions = record.enrichments.map(item => {
+    const metadata = item?.metadata || {};
+    const operation = String(metadata.operation || '');
+    const headers = enrichmentHeaders(item);
+    if (operation === 'hpack.decode') return `H2 headers${headers.length ? ` (${headers.length})` : ''}`;
+    if (operation === 'http1.parse-head') {
+      const kind = metadata.message?.kind;
+      return `H1${kind ? ` ${kind}` : ''} headers${headers.length ? ` (${headers.length})` : ''}`;
+    }
+    if (operation === 'gzip.inflate') return 'gzip decoded';
+    if (operation === 'deflate.inflate') return 'deflate decoded';
+    const contentType = String(metadata.content_type || '').split(';', 1)[0];
+    return contentType && contentType !== 'application/octet-stream'
+      ? contentType : operation || 'derived content';
+  });
+  const unique = [...new Set(descriptions)];
+  const label = unique.length <= 2 ? unique.join(' + ') : `${unique[0]} +${unique.length - 1}`;
   const marker = document.createElement('span');
   marker.className = 'enrichment-marker';
-  marker.textContent = `ENRICH ${record.enrichments.length}`;
-  marker.title = record.enrichments.map(item =>
-    item?.metadata?.operation || item?.metadata?.content_type || 'derived content').join('\n');
+  marker.textContent = label;
+  marker.title = record.enrichments.map((item, index) => {
+    const metadata = item?.metadata || {};
+    const headers = enrichmentHeaders(item);
+    return `${index + 1}. ${descriptions[index]}` +
+      `${metadata.operation ? ` · ${metadata.operation}` : ''}` +
+      `${item?.payload?.length ? ` · ${formatBytes(item.payload.length)}` : ''}` +
+      `${headers.length ? ` · ${headers.length} fields` : ''}`;
+  }).join('\n');
   marker.tabIndex = 0;
   marker.setAttribute('role', 'button');
   marker.setAttribute('aria-pressed', String(active));
+  marker.setAttribute('aria-label', `Toggle enrichment: ${label}`);
   const show = event => {
     event.preventDefault();
     event.stopPropagation();
@@ -2167,6 +2191,7 @@ function renderPayloadList() {
     const enriched = enrichmentMarker(record);
     if (enriched) row.append(enriched);
     const session = document.createElement('span');
+    session.className = 'payload-session-label';
     session.textContent = resolvedSessionLabel(info.session || record.event.id || 'unlabelled');
     row.append(session);
     row.onclick = () => {
