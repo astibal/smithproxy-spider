@@ -499,6 +499,9 @@ private:
             {"source", std::move(source)},
             {"operation", "hpack.decode"},
             {"content_type", "application/http-fields+json"},
+            {"provenance", {{"ranges", "smithproxy"},
+                            {"content_type", "spider"},
+                            {"transform", "spider"}}},
             {"context", "complete"},
             {"headers", std::move(*fields)},
         }, {}});

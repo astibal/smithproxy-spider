@@ -235,6 +235,7 @@ struct PendingOutput {
     ContextKey key;
     std::size_t generation{};
     std::string encoding;
+    std::string encoding_source;
     std::string payload;
     std::vector<std::array<std::size_t, 2>> ranges;
     std::vector<std::size_t> annotations;
@@ -315,10 +316,12 @@ public:
             }
             const auto& [key, annotation] = *identified;
             auto encoding = range.encoding;
+            auto encoding_source = std::string{"smithproxy"};
             if (encoding.empty()) {
                 if (const auto observed = observed_encodings_.find(key);
                     observed != observed_encodings_.end()) {
                     encoding = observed->second;
+                    encoding_source = "spider-hpack";
                     recovered_encodings_.fetch_add(1, std::memory_order_relaxed);
                 }
             }
@@ -340,7 +343,8 @@ public:
                     (key.layer != "http1" || item.generation == http1_generation);
             });
             if (output == pending.end()) {
-                pending.push_back({key, http1_generation, encoding, {}, {}, {}, false});
+                pending.push_back({key, http1_generation, encoding,
+                                   std::move(encoding_source), {}, {}, {}, false});
                 output = std::prev(pending.end());
             }
             output->ranges.push_back({range.start, range.end});
@@ -381,6 +385,10 @@ public:
                 {"operation", output.encoding + ".inflate"},
                 {"content_type", "application/octet-stream"},
                 {"content_encoding", output.encoding},
+                {"provenance", {{"ranges", "smithproxy"},
+                                {"encoding", output.encoding_source},
+                                {"content_type", "spider"},
+                                {"transform", "spider"}}},
                 {"context", "complete"},
                 {"finished", output.finished},
             }, std::move(output.payload)});

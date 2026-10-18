@@ -219,6 +219,8 @@ int main() {
     assert(http1_metadata["message"]["method"] == "GET");
     assert(http1_metadata["message"]["target"] == "/watch?v=1");
     assert(http1_metadata["message"]["headers"][1]["value"] == "one two");
+    assert(http1_metadata["provenance"]["ranges"] == "smithproxy");
+    assert(http1_metadata["provenance"]["content_type"] == "spider");
     assert(http1_enrichments[0].payload.empty());
     auto passed_http1 = focused_http1;
     passed_http1.erase("traffic_rule");
@@ -266,6 +268,8 @@ int main() {
     assert(split_output[0].metadata["headers"][0]["name"] == ":method");
     assert(split_output[0].metadata["headers"][1]["value"] == "/video");
     assert(split_output[0].metadata["headers"][2]["value"] == "dynamic-value");
+    assert(split_output[0].metadata["provenance"]["ranges"] == "smithproxy");
+    assert(split_output[0].metadata["provenance"]["transform"] == "spider");
 
     // Every possible split of one HEADERS frame must produce the same
     // enrichment, including splits inside the 9-byte frame header and HPACK.
@@ -464,6 +468,7 @@ int main() {
     assert(recovered_gzip != hpack_gzip_output.end());
     assert(recovered_gzip->payload == hpack_gzip_plain);
     assert(recovered_gzip->metadata["source"]["stream_id"] == 31);
+    assert(recovered_gzip->metadata["provenance"]["encoding"] == "spider-hpack");
     assert(hpack_gzip_enrichment.diagnostics()["content_decoding"]
                                              ["recovered_encodings"] == 1);
 
