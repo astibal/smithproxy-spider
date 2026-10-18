@@ -21,6 +21,8 @@ public:
     [[nodiscard]] std::vector<SxbnEnvelope> process(const nlohmann::json& event,
                                                     std::string_view payload,
                                                     bool selected);
+    void observe_http2_headers(const nlohmann::json& event,
+                               const std::vector<SxbnEnvelope>& enrichments);
     void forget(const nlohmann::json& event);
     [[nodiscard]] nlohmann::json diagnostics() const;
 

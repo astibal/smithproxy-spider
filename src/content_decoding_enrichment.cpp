@@ -104,8 +104,8 @@ std::vector<Range> encoded_ranges(const nlohmann::json& info,
         const auto start = starts[index].get<std::int64_t>();
         const auto end = ends[index].get<std::int64_t>();
         auto encoding = canonical_encoding(encodings[index].get<std::string>());
-        if (start < 0 || end <= start || static_cast<std::size_t>(end) > payload_size ||
-            (encoding != "gzip" && encoding != "deflate")) continue;
+        if (start < 0 || end <= start || static_cast<std::size_t>(end) > payload_size)
+            continue;
         result.push_back({static_cast<std::size_t>(start),
                           static_cast<std::size_t>(end), std::move(encoding)});
     }
@@ -245,6 +245,43 @@ struct PendingOutput {
 
 class ContentDecodingEnrichment::Impl {
 public:
+    void observe_http2_headers(const nlohmann::json& event,
+                               const std::vector<SxbnEnvelope>& enrichments) {
+        const auto session = session_key(event);
+        if (session.empty()) return;
+        const auto side = side_key(event);
+
+        std::scoped_lock lock(mutex_);
+        for (const auto& enrichment : enrichments) {
+            if (enrichment.metadata.value("operation", "") != "hpack.decode") continue;
+            const auto source = enrichment.metadata.value("source", nlohmann::json::object());
+            const auto stream = source.value("stream_id", std::uint32_t{});
+            if (stream == 0) continue;
+
+            const auto headers = enrichment.metadata.value("headers", nlohmann::json::array());
+            if (!headers.is_array()) continue;
+            bool initial_fields = false;
+            bool informational = false;
+            std::string encoding;
+            for (const auto& field : headers) {
+                if (!field.is_object()) continue;
+                const auto name = field.value("name", "");
+                const auto value = field.value("value", "");
+                if (name == ":method") initial_fields = true;
+                if (name == ":status") {
+                    initial_fields = true;
+                    informational = value.size() == 3 && value.front() == '1';
+                }
+                if (name == "content-encoding") encoding = canonical_encoding(value);
+            }
+            // A field block without a request/status pseudo-header is a trailer;
+            // it must not retroactively change the representation of DATA.
+            if (!initial_fields || informational) continue;
+            observed_encodings_[ContextKey{session, side, "h2", stream}] =
+                std::move(encoding);
+        }
+    }
+
     std::vector<SxbnEnvelope> process(const nlohmann::json& event,
                                       const std::string_view payload,
                                       const bool selected) {
@@ -277,7 +314,16 @@ public:
                 continue;
             }
             const auto& [key, annotation] = *identified;
-            auto position = contexts_.try_emplace(key, range.encoding).first;
+            auto encoding = range.encoding;
+            if (encoding.empty()) {
+                if (const auto observed = observed_encodings_.find(key);
+                    observed != observed_encodings_.end()) {
+                    encoding = observed->second;
+                    recovered_encodings_.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            if (encoding != "gzip" && encoding != "deflate") continue;
+            auto position = contexts_.try_emplace(key, encoding).first;
             auto& context = position->second;
             if (!selected) {
                 context.complete = false;
@@ -285,7 +331,7 @@ public:
                 continue;
             }
             if (!context.complete || !context.decoder.valid() ||
-                context.decoder.encoding() != range.encoding) {
+                context.decoder.encoding() != encoding) {
                 incomplete_.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
@@ -294,7 +340,7 @@ public:
                     (key.layer != "http1" || item.generation == http1_generation);
             });
             if (output == pending.end()) {
-                pending.push_back({key, http1_generation, range.encoding, {}, {}, {}, false});
+                pending.push_back({key, http1_generation, encoding, {}, {}, {}, false});
                 output = std::prev(pending.end());
             }
             output->ranges.push_back({range.start, range.end});
@@ -354,6 +400,9 @@ public:
         std::erase_if(contexts_, [&](const auto& item) {
             return item.first.session == session;
         });
+        std::erase_if(observed_encodings_, [&](const auto& item) {
+            return item.first.session == session;
+        });
     }
 
     nlohmann::json diagnostics() const {
@@ -372,6 +421,7 @@ public:
             {"skipped_ranges", skipped_.load(std::memory_order_relaxed)},
             {"incomplete_context", incomplete_.load(std::memory_order_relaxed)},
             {"unmapped_ranges", unmapped_.load(std::memory_order_relaxed)},
+            {"recovered_encodings", recovered_encodings_.load(std::memory_order_relaxed)},
             {"truncated_streams", truncated_.load(std::memory_order_relaxed)},
             {"input_bytes", input_bytes_.load(std::memory_order_relaxed)},
             {"output_bytes", output_bytes_.load(std::memory_order_relaxed)},
@@ -392,6 +442,7 @@ private:
 
     mutable std::mutex mutex_;
     std::map<ContextKey, Context> contexts_;
+    std::map<ContextKey, std::string> observed_encodings_;
     std::atomic_uint64_t decoded_{};
     std::atomic_uint64_t gzip_decoded_{};
     std::atomic_uint64_t deflate_decoded_{};
@@ -399,6 +450,7 @@ private:
     std::atomic_uint64_t skipped_{};
     std::atomic_uint64_t incomplete_{};
     std::atomic_uint64_t unmapped_{};
+    std::atomic_uint64_t recovered_encodings_{};
     std::atomic_uint64_t truncated_{};
     std::atomic_uint64_t input_bytes_{};
     std::atomic_uint64_t output_bytes_{};
@@ -412,6 +464,12 @@ std::vector<SxbnEnvelope> ContentDecodingEnrichment::process(
         const nlohmann::json& event, const std::string_view payload,
         const bool selected) {
     return impl_->process(event, payload, selected);
+}
+
+void ContentDecodingEnrichment::observe_http2_headers(
+        const nlohmann::json& event,
+        const std::vector<SxbnEnvelope>& enrichments) {
+    impl_->observe_http2_headers(event, enrichments);
 }
 
 void ContentDecodingEnrichment::forget(const nlohmann::json& event) {

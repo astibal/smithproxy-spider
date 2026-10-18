@@ -423,6 +423,72 @@ int main() {
     partial_enrichment.observe({{"action", "connection-stop"}, {"id", "h2-partial"}});
     assert(partial_enrichment.diagnostics()["http2"]["tracked_sessions"] == 0);
 
+    // Smithproxy may publish HEADERS and the first DATA frames in one
+    // callback before its L7_encoding shortcut reflects the decoded HPACK
+    // fields. Spider already decodes that field block, so it must use the
+    // representation metadata for DATA from the same callback.
+    const std::string hpack_gzip_plain =
+        "gzip learned from HPACK before the shortcut catches up\n";
+    const auto hpack_gzip_body = compress_payload(hpack_gzip_plain, 16 + MAX_WBITS);
+    HpackEncoder response_hpack;
+    const auto response_fields = response_hpack.encode({
+        {":status", "200"},
+        {"content-type", "text/plain"},
+        {"content-encoding", "gzip"},
+    });
+    const auto response_headers = h2_frame(1, 0x04, 31, response_fields);
+    const auto response_data = h2_frame(0, 0x01, 31, hpack_gzip_body);
+    const auto response_wire = response_headers + response_data;
+    const auto data_header = response_headers.size();
+    const auto data_start = data_header + 9U;
+    auto hpack_gzip_event = h2_event("h2-hpack-gzip", "R", nlohmann::json::array({
+        nlohmann::json::array({0, 9, "h2.frame.header",
+                               {{"frame_type", "HEADERS"}, {"stream_id", 31}}}),
+        nlohmann::json::array({9, response_headers.size(), "h2.headers",
+                               {{"frame_type", "HEADERS"}, {"stream_id", 31}}}),
+        nlohmann::json::array({data_header, data_start, "h2.frame.header",
+                               {{"frame_type", "DATA"}, {"stream_id", 31}}}),
+        nlohmann::json::array({data_start, response_wire.size(), "h2.data",
+                               {{"frame_type", "DATA"}, {"stream_id", 31}}}),
+    }));
+    hpack_gzip_event["details"]["info"]["L7_payload_start"] = {data_start};
+    hpack_gzip_event["details"]["info"]["L7_payload_end"] = {response_wire.size()};
+    hpack_gzip_event["details"]["info"]["L7_encoding"] = {""};
+    spider::EnrichmentEngine hpack_gzip_enrichment;
+    const auto hpack_gzip_output = hpack_gzip_enrichment.process(
+        hpack_gzip_event, response_wire);
+    const auto recovered_gzip = std::ranges::find_if(
+        hpack_gzip_output, [](const auto& item) {
+            return item.metadata.value("operation", "") == "gzip.inflate";
+        });
+    assert(recovered_gzip != hpack_gzip_output.end());
+    assert(recovered_gzip->payload == hpack_gzip_plain);
+    assert(recovered_gzip->metadata["source"]["stream_id"] == 31);
+    assert(hpack_gzip_enrichment.diagnostics()["content_decoding"]
+                                             ["recovered_encodings"] == 1);
+
+    const auto later_fields = response_hpack.encode({
+        {":status", "200"}, {"content-encoding", "gzip"},
+    });
+    const auto later_headers = h2_frame(1, 0x04, 33, later_fields);
+    auto later_header_event = h2_event("h2-hpack-gzip", "R", nlohmann::json::array({
+        nlohmann::json::array({0, 9, "h2.frame.header",
+                               {{"frame_type", "HEADERS"}, {"stream_id", 33}}}),
+        nlohmann::json::array({9, later_headers.size(), "h2.headers",
+                               {{"frame_type", "HEADERS"}, {"stream_id", 33}}}),
+    }));
+    assert(hpack_gzip_enrichment.process(later_header_event, later_headers).size() == 1);
+    const auto later_plain = std::string("gzip in a later callback");
+    const auto later_body = compress_payload(later_plain, 16 + MAX_WBITS);
+    auto later_data_event = compressed_event(
+        "h2-hpack-gzip", "R", "", later_body.size(), "h2.data", 33);
+    const auto later_output = hpack_gzip_enrichment.process(later_data_event, later_body);
+    const auto later_decoded = std::ranges::find_if(later_output, [](const auto& item) {
+        return item.metadata.value("operation", "") == "gzip.inflate";
+    });
+    assert(later_decoded != later_output.end());
+    assert(later_decoded->payload == later_plain);
+
     const std::string plain_content =
         "Spider stateful decompression across arbitrary callback boundaries.\n";
     for (const auto& compressed : std::array{
