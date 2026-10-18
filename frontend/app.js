@@ -13,6 +13,7 @@ let scriptLanguage = localStorage.getItem('spider-script-language') === 'javascr
 let pythonWorker = null, pythonWorkerReady = null, pythonRequestId = 0;
 const pythonRequests = new Map();
 const flowRecords = new Map();
+const startedConnections = new Set();
 const liveSiftClassifications = new Map();
 const followedFlows = new Map();
 let flowMenuSession = null;
@@ -1223,6 +1224,7 @@ function trimPayloadCache() {
     }
     if (selectedPayload === removed) selectedPayload = null;
     const flow = flowRecords.get(removed.event.id);
+    if (flow) flow.evicted += 1;
     if (flow?.latest === removed) {
       flow.latest = [...payloadRecords].reverse().find(record => record.event.id === removed.event.id) || null;
     }
@@ -1904,7 +1906,18 @@ function appendInlineEnrichments(target, record, records) {
         `${metadata.content_encoding ? ` · decoded ${metadata.content_encoding}` : ''}` +
         `${streamId ? ` · H2 stream ${streamId}` : ''}`;
     }
-    summary.append(operation, description);
+    const declared = metadata.provenance || {};
+    const provenance = document.createElement('small');
+    provenance.className = 'enrichment-provenance';
+    const parts = [
+      `hints: ${declared.ranges || 'smithproxy'}`,
+      `type: ${declared.content_type || 'spider'}`,
+      `decoded: ${declared.transform || 'spider'}`,
+    ];
+    if (declared.encoding) parts.splice(2, 0, `encoding: ${declared.encoding}`);
+    provenance.textContent = parts.join(' · ');
+    provenance.title = 'Origin of the ranges and metadata used to produce this derived view';
+    summary.append(operation, description, provenance);
     card.append(summary);
     const view = appendEnrichmentView(card, item, contentType);
     if (view) summary.append(...view);
@@ -2153,7 +2166,24 @@ function renderPayloadList() {
       const connection = parseSessionLabel(flow.label);
       const peerKey = connection && `${connection.sourceHost}|${connection.destinationHost}|${connection.destinationPort}`;
       label.textContent = flowListLabel(flow.label || flow.id, (flowPeers.get(peerKey) || 0) > 1);
-      label.title = flow.label || flow.id;
+      const markers = [];
+      if (!flow.complete) {
+        const incomplete = document.createElement('b');
+        incomplete.className = 'flow-incomplete-marker';
+        incomplete.textContent = 'I';
+        markers.push(incomplete);
+      }
+      if (flow.evicted) {
+        const evicted = document.createElement('b');
+        evicted.className = 'flow-evicted-marker';
+        evicted.textContent = 'E';
+        markers.push(evicted);
+      }
+      if (markers.length) label.prepend(...markers, ' ');
+      const warnings = [];
+      if (!flow.complete) warnings.push('Incomplete: connection-start was not observed');
+      if (flow.evicted) warnings.push(`Evicted: ${flow.evicted} payloads left the browser cache`);
+      label.title = `${warnings.length ? `${warnings.join('\n')}\n` : ''}${flow.label || flow.id}`;
       const left = document.createElement('span');
       left.className = 'flow-side';
       left.innerHTML = `L ${flow.L.count} · ${escapeHtml(formatBytes(flow.L.bytes))}` +
@@ -2308,9 +2338,20 @@ function renderFlowMessages(stream, followed) {
     };
     const summary = document.createElement('summary');
     const action = document.createElement('b');
-    action.textContent = record.event.action || 'message';
+    const info = record.event.details?.info || {};
+    const side = info.side === 'R' ? 'R' : info.side === 'L' ? 'L' : '·';
+    action.textContent = `${side} | ${record.event.action || 'message'}`;
     const identity = document.createElement('span');
-    identity.textContent = `r${record.revision} · ${record.event.id || 'no connection id'}`;
+    const annotations = Array.isArray(info.content_annotations) ? info.content_annotations : [];
+    const annotationKinds = [...new Set(annotations
+      .map(item => Array.isArray(item) ? item[2] : '')
+      .filter(Boolean))];
+    const annotationInfo = annotations.length
+      ? ` · annotations ${annotations.length}` +
+        `${annotationKinds.length ? ` (${annotationKinds.join(', ')})` : ''}`
+      : ' · annotations 0';
+    identity.textContent = `r${record.revision} · ${record.event.id || 'no connection id'}` +
+      annotationInfo;
     const timestamp = Number(record.event.spider_received_at_ms);
     const time = document.createElement('time');
     time.textContent = Number.isFinite(timestamp)
@@ -2568,7 +2609,7 @@ function renderFlowTab(scopeKey) {
   }
   const omitted = retained.length - records.length;
   if (!panel.querySelector('.flow-stream')) {
-    panel.innerHTML = '<div class="flow-follow-toolbar"><div class="flow-follow-head"><h2>Follow flow</h2><small></small>' +
+    panel.innerHTML = '<div class="flow-follow-toolbar"><div class="flow-follow-head"><h2>Follow flow</h2><span class="flow-completeness" hidden></span><small></small>' +
       '<span class="flow-follow-classifications"></span><div class="flow-follow-controls">' +
       '<button type="button" data-flow-view="chunks" aria-pressed="true">Chunks</button>' +
       '<button type="button" data-flow-view="stream" aria-pressed="false">Stream</button>' +
@@ -2747,6 +2788,17 @@ function renderFlowTab(scopeKey) {
   panel.querySelector('.flow-view-limit').value = String(flowViewLimitMiB);
   panel.querySelector('.flow-follow-head small').textContent =
     scopeLabel(followed, records);
+  const visibleConnections = followed.type === 'connection'
+    ? new Set([followed.sessionId])
+    : new Set(records.map(record => record.event.id).filter(Boolean));
+  const incompleteConnections = [...visibleConnections]
+    .filter(id => !startedConnections.has(id));
+  const completeness = panel.querySelector('.flow-completeness');
+  completeness.hidden = incompleteConnections.length === 0;
+  completeness.textContent = incompleteConnections.length > 1
+    ? `INCOMPLETE ${incompleteConnections.length}/${visibleConnections.size}` : 'INCOMPLETE';
+  completeness.title = incompleteConnections.length
+    ? `connection-start was not observed for: ${incompleteConnections.join(', ')}` : '';
   panel.querySelector('.flow-follow-head h2').textContent = followed.type === 'client'
     ? 'Client activity' : followed.type === 'service' ? 'Follow service' : 'Follow connection';
   const classification = workbenchSiftClassifications(records.at(-1));
@@ -3272,6 +3324,8 @@ function updateFlowRecord(record) {
   let flow = flowRecords.get(event.id);
   if (!flow) {
     flow = {id: event.id, label: info.session || event.id, active: true,
+            complete: startedConnections.has(event.id),
+            evicted: 0,
             lastRevision: record.revision, latest: record,
             L: {count: 0, bytes: 0, l7Bytes: 0, l7Payloads: 0, l7Unknown: 0},
             R: {count: 0, bytes: 0, l7Bytes: 0, l7Payloads: 0, l7Unknown: 0}};
@@ -3332,6 +3386,11 @@ function ingestEvent(record) {
   if (!record || !record.event || record.revision <= revision) return;
   revision = record.revision;
   eventRecords.push(summarizeEvent(record));
+  if (record.event.action === 'connection-start' && record.event.id) {
+    startedConnections.add(record.event.id);
+    const flow = flowRecords.get(record.event.id);
+    if (flow) flow.complete = true;
+  }
   if (record.event.action === 'hostname-info') ingestHostnameInfo(record.event);
   const sift = record.event.details?.info?.classification?.sift;
   if (Array.isArray(sift) && sift.length) {
@@ -3969,6 +4028,7 @@ function connect() {
   eventRecords = [];
   payloadRecords = [];
   flowRecords.clear();
+  startedConnections.clear();
   liveSiftClassifications.clear();
   payloadCacheBytes = 0;
   payloadsDropped = 0;
