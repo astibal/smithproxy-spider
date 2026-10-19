@@ -59,6 +59,9 @@ if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(spider_tests tests/session_store_test.cpp)
     target_link_libraries(spider_tests PRIVATE spider_core)
+    # The test harness uses assert() for both checks and test fixture setup.
+    # Keep those expressions active when the project is built in Release mode.
+    target_compile_options(spider_tests PRIVATE -UNDEBUG)
     add_test(NAME spider_tests COMMAND spider_tests)
     add_test(NAME spider_chain_test
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration_chain.py
