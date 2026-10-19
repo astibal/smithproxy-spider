@@ -1,5 +1,7 @@
 #include "websocket_hub.hpp"
 
+#include "binary_envelope.hpp"
+
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 
@@ -156,13 +158,39 @@ void WebSocketHub::upgrade(void* cls, MHD_Connection*, void*, const char* extra_
     }).detach();
 }
 
-void WebSocketHub::publish(const std::uint64_t revision, const nlohmann::json& event) {
-    const auto wire = nlohmann::json{{"type", "event"}, {"revision", revision}, {"event", event}}.dump();
+void WebSocketHub::publish(const std::uint64_t revision, const nlohmann::json& event,
+                           const std::optional<std::string_view> raw_payload,
+                           const std::vector<SxbnEnvelope>& enrichments) {
+    constexpr unsigned char text_opcode = 0x1U;
+    constexpr unsigned char binary_opcode = 0x2U;
+    auto opcode = text_opcode;
+    std::string wire;
+    if (raw_payload && event.value("action", "") == "connection-content") {
+        auto wire_event = event;
+        wire_event["details"]["info"].erase("content");
+        wire = encode_sxbn({{"type", "event"}, {"key", "event:" + std::to_string(revision)},
+                            {"revision", revision}, {"event", std::move(wire_event)}},
+                           *raw_payload);
+        const auto source_key = "event:" + std::to_string(revision);
+        for (std::size_t index = 0; index < enrichments.size(); ++index) {
+            auto metadata = enrichments[index].metadata;
+            metadata["type"] = "enrichment";
+            metadata["key"] = source_key + ":enrichment:" + std::to_string(index);
+            if (!metadata.contains("source") || !metadata["source"].is_object()) {
+                metadata["source"] = nlohmann::json::object();
+            }
+            metadata["source"]["envelope"] = source_key;
+            wire += encode_sxbn(metadata, enrichments[index].payload);
+        }
+        opcode = binary_opcode;
+    } else {
+        wire = nlohmann::json{{"type", "event"}, {"revision", revision}, {"event", event}}.dump();
+    }
     std::scoped_lock lock(mutex_);
     ++events_published_;
     publish_bytes_ += wire.size();
     last_publish_at_ms_ = unix_time_ms();
-    replay_.push_back({revision, wire});
+    replay_.push_back({revision, opcode, wire});
     replay_bytes_ += wire.size();
     while (replay_.size() > max_replay_events_ || replay_bytes_ > max_replay_bytes_) {
         replay_bytes_ -= replay_.front().wire.size();
@@ -172,7 +200,7 @@ void WebSocketHub::publish(const std::uint64_t revision, const nlohmann::json& e
     std::erase_if(clients_, [&](const auto& weak) {
         const auto client = weak.lock();
         if (!client) return true;
-        if (client->active.load() && !client->send_text(wire)) {
+        if (client->active.load() && !client->send_frame(opcode, wire)) {
             ++send_failures_;
             ::shutdown(client->socket, SHUT_RDWR);
         }
@@ -192,7 +220,7 @@ void WebSocketHub::subscribe(const std::shared_ptr<Client>& client, std::uint64_
                           {"oldest_available", replay_.front().revision}}.dump());
     }
     for (const auto& item : replay_) {
-        if (item.revision > after && !client->send_text(item.wire)) return;
+        if (item.revision > after && !client->send_frame(item.opcode, item.wire)) return;
     }
     client->active.store(true);
     client->send_text(nlohmann::json{{"type", "subscribed"},

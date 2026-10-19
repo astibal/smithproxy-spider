@@ -13,6 +13,7 @@ let scriptLanguage = localStorage.getItem('spider-script-language') === 'javascr
 let pythonWorker = null, pythonWorkerReady = null, pythonRequestId = 0;
 const pythonRequests = new Map();
 const flowRecords = new Map();
+const startedConnections = new Set();
 const liveSiftClassifications = new Map();
 const followedFlows = new Map();
 let flowMenuSession = null;
@@ -86,8 +87,9 @@ try {
     id: rule.id || `address:${rule.address}`,
     kind: rule.kind || 'address',
     value: rule.value || rule.address,
+    mode: rule.mode === 'ignore' ? 'forget' : rule.mode,
   })).filter(rule => rule && typeof rule.value === 'string' &&
-    ['pass', 'focus', 'inspect', 'ignore'].includes(rule.mode));
+    ['pass', 'focus', 'inspect', 'forget'].includes(rule.mode));
 } catch (_) {}
 let endpointAggregates = [];
 try {
@@ -111,6 +113,7 @@ const eventFilters = {ping: false, sessions: false, status: true, other: false};
 const defaultJavascriptScript = `// api.bytes        Uint8Array with the original payload
 // api.text         UTF-8 decoded view
 // api.l7           detected body state, ranges, encodings, bytes, and text
+// api.enrichments  decoded/derived metadata and bytes
 // api.side         "L" (client) or "R" (server)
 // api.sessionId    Smithproxy session identifier
 // api.sessionLabel endpoints and detected protocol
@@ -128,6 +131,7 @@ const defaultPythonScript = `# api.bytes          original payload as bytes
 # api.l7_ranges      (start, end) offsets into api.bytes
 # api.l7_encodings   positional Content-Encoding values
 # api.l7_state       "body", "none", "unknown", or "unavailable"
+# api.enrichments    decoded/derived metadata and bytes
 # api.side           "L" (client) or "R" (server)
 # api.session_id     Smithproxy session identifier
 # api.session_label  endpoints and detected protocol
@@ -158,6 +162,47 @@ smithproxyVerify.checked = localStorage.getItem('smithproxy-verify') !== 'false'
 byId('resolve-hostnames').checked = hostnameResolving;
 byId('hide-resolved-ips').checked = hideResolvedIps;
 byId('compact-session-labels').checked = compactSessionLabels;
+
+async function redeemSaslikBootstrap() {
+  const fragment = new URLSearchParams(location.hash.replace(/^#/, ''));
+  const code = fragment.get('code');
+  const saslikOrigin = fragment.get('saslik_origin');
+  if (!code || !saslikOrigin) return;
+
+  // Remove the capability before performing any network operation. It must
+  // not survive in browser history, screenshots, or a copied address.
+  history.replaceState(null, '', `${location.pathname}${location.search}`);
+  token.value = '';
+  sessionStorage.removeItem('spider-token');
+  const bootstrapUrl = new URL('/api/spider/bootstrap/redeem', saslikOrigin);
+  if (!['http:', 'https:'].includes(bootstrapUrl.protocol)) {
+    throw new Error('Unsupported Saslik bootstrap URL');
+  }
+  const response = await fetch(bootstrapUrl, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({code}),
+  });
+  const value = await response.json();
+  if (!response.ok) throw new Error(value.error || `Bootstrap HTTP ${response.status}`);
+
+  const backendUrl = new URL(value.backend);
+  if (['127.0.0.1', 'localhost', '10.254.77.1', '10.254.77.2'].includes(backendUrl.hostname)) {
+    backendUrl.hostname = bootstrapUrl.hostname;
+  }
+  backend.value = backendUrl.toString().replace(/\/$/, '');
+  token.value = value.token;
+}
+
+async function bootstrapAndConnect() {
+  try {
+    await redeemSaslikBootstrap();
+  } catch (error) {
+    status.textContent = `offline · ${error.message}`;
+    status.className = 'error';
+  }
+  connect();
+}
 byId('script-language').value = scriptLanguage;
 const savedSidebarWidth = Number(localStorage.getItem('spider-sidebar-width'));
 if (savedSidebarWidth >= 280) byId('sidebar').style.width = `${savedSidebarWidth}px`;
@@ -272,7 +317,7 @@ function tokenValue() {
 const headers = () => ({'X-Spider-Token': tokenValue()});
 
 function modeEffect(mode) {
-  if (mode === 'ignore') return 'Future payloads will be auto-accepted by the backend and will not reach Spider.';
+  if (mode === 'forget') return 'Spider permanently declines future content callbacks for matching connections.';
   if (mode === 'pass') return 'Payloads will reach Spider, but will be excluded from flow analysis.';
   if (mode === 'focus') return 'Non-matching traffic will be passed after classification.';
   if (mode === 'inspect') return 'Matching payloads will always be sent through the active script.';
@@ -350,7 +395,7 @@ function renderTrafficRules() {
   byId('focus-indicator').hidden = !trafficRules.some(rule => rule.mode === 'focus');
   byId('bypass-indicator').hidden = !bypassAll;
   byId('bypass-all').setAttribute('aria-pressed', String(bypassAll));
-  const counts = {pass: 0, focus: 0, inspect: 0, ignore: 0};
+  const counts = {pass: 0, focus: 0, inspect: 0, forget: 0};
   for (const rule of trafficRules) ++counts[rule.mode];
   const breakdown = Object.entries(counts).filter(([, count]) => count)
     .map(([mode, count]) => `${mode.toUpperCase()} ${count}`).join(' · ');
@@ -1122,10 +1167,17 @@ payloadRecordLimit = clampInteger(payloadRecordLimit, 10, 10000, 200);
 eventRecordLimit = clampInteger(eventRecordLimit, 100, 20000, 2000);
 
 function payloadSize(record) {
+  const enrichmentBytes = Array.isArray(record?.enrichments)
+    ? record.enrichments.reduce((total, item) => total +
+        (item?.payload?.byteLength || 0) + JSON.stringify(item?.metadata || {}).length * 2, 0)
+    : 0;
+  if (record?.binaryPayload instanceof Uint8Array) {
+    return record.binaryPayload.byteLength + enrichmentBytes + 1024;
+  }
   const content = record.event.details?.info?.content;
   if (typeof content !== 'string') return 0;
   // A JS string may occupy two bytes per character. Include a small object overhead.
-  return content.length * 2 + 1024;
+  return content.length * 2 + enrichmentBytes + 1024;
 }
 
 function decodedPayloadSize(content) {
@@ -1141,6 +1193,11 @@ function summarizeEvent(record) {
   if (typeof info?.content === 'string') {
     event.details = {...details, info: {...info,
       content: `[binary data: ${decodedPayloadSize(info.content)} bytes]`,
+    }};
+  }
+  if (record.binaryPayload instanceof Uint8Array && info) {
+    event.details = {...details, info: {...info,
+      content: `[binary data: ${record.binaryPayload.byteLength} bytes]`,
     }};
   }
   return {revision: record.revision, event};
@@ -1168,6 +1225,7 @@ function trimPayloadCache() {
     }
     if (selectedPayload === removed) selectedPayload = null;
     const flow = flowRecords.get(removed.event.id);
+    if (flow) flow.evicted += 1;
     if (flow?.latest === removed) {
       flow.latest = [...payloadRecords].reverse().find(record => record.event.id === removed.event.id) || null;
     }
@@ -1226,7 +1284,7 @@ function scheduleRender(eventsChanged = false, payloadsChanged = false) {
     }
     if (payloadsDirty && activeTab === 'workbench-tab') {
       if (selectedPayload) {
-        payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
+        payloadBytes = recordPayloadBytes(selectedPayload);
         replacementBase64 = null;
         renderPayload();
       }
@@ -1247,6 +1305,20 @@ function decodeBase64(value) {
   return Uint8Array.from(binary, char => char.charCodeAt(0));
 }
 
+function encodeBase64(bytes) {
+  let binary = '';
+  const block = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += block) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + block));
+  }
+  return btoa(binary);
+}
+
+function recordPayloadBytes(record) {
+  return record?.binaryPayload instanceof Uint8Array
+    ? record.binaryPayload : decodeBase64(record?.event?.details?.info?.content);
+}
+
 function encodeHex(bytes, baseOffset = 0) {
   const rows = [];
   for (let offset = 0; offset < bytes.length; offset += 16) {
@@ -1260,7 +1332,7 @@ function encodeHex(bytes, baseOffset = 0) {
 
 function l7PayloadView(record, source = null) {
   const info = record?.event?.details?.info;
-  if (source === null) source = decodeBase64(info?.content);
+  if (source === null) source = recordPayloadBytes(record);
   if (!info || !Array.isArray(info.L7_payload_start) ||
       !Array.isArray(info.L7_payload_end) ||
       info.L7_payload_start.length !== info.L7_payload_end.length ||
@@ -1433,6 +1505,465 @@ function l7PayloadMarker(record, source = null) {
   return marker;
 }
 
+function enrichmentMarker(record, activate = null, active = false) {
+  if (!record?.enrichments?.length) return null;
+  const descriptions = record.enrichments.map(item => {
+    const metadata = item?.metadata || {};
+    const operation = String(metadata.operation || '');
+    const headers = enrichmentHeaders(item);
+    if (operation === 'hpack.decode') return `H2 headers${headers.length ? ` (${headers.length})` : ''}`;
+    if (operation === 'http1.parse-head') {
+      const kind = metadata.message?.kind;
+      return `H1${kind ? ` ${kind}` : ''} headers${headers.length ? ` (${headers.length})` : ''}`;
+    }
+    if (operation === 'gzip.inflate') return 'gzip decoded';
+    if (operation === 'deflate.inflate') return 'deflate decoded';
+    const contentType = String(metadata.content_type || '').split(';', 1)[0];
+    return contentType && contentType !== 'application/octet-stream'
+      ? contentType : operation || 'derived content';
+  });
+  const unique = [...new Set(descriptions)];
+  const label = unique.length <= 2 ? unique.join(' + ') : `${unique[0]} +${unique.length - 1}`;
+  const marker = document.createElement('span');
+  marker.className = 'enrichment-marker';
+  marker.textContent = label;
+  marker.title = record.enrichments.map((item, index) => {
+    const metadata = item?.metadata || {};
+    const headers = enrichmentHeaders(item);
+    return `${index + 1}. ${descriptions[index]}` +
+      `${metadata.operation ? ` · ${metadata.operation}` : ''}` +
+      `${item?.payload?.length ? ` · ${formatBytes(item.payload.length)}` : ''}` +
+      `${headers.length ? ` · ${headers.length} fields` : ''}`;
+  }).join('\n');
+  marker.tabIndex = 0;
+  marker.setAttribute('role', 'button');
+  marker.setAttribute('aria-pressed', String(active));
+  marker.setAttribute('aria-label', `Toggle enrichment: ${label}`);
+  const show = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (activate) activate();
+    else {
+      selectPayload(record, false);
+      const viewer = byId('enrichment-viewer');
+      viewer.hidden = false;
+      viewer.open = true;
+    }
+  };
+  marker.onclick = show;
+  marker.onkeydown = event => {
+    if (event.key === 'Enter' || event.key === ' ') show(event);
+  };
+  return marker;
+}
+
+function enrichmentHeaders(item) {
+  const metadata = item?.metadata || {};
+  const fields = Array.isArray(metadata.headers) ? metadata.headers : metadata.message?.headers;
+  return Array.isArray(fields) ? fields.filter(field => field && typeof field.name === 'string') : [];
+}
+
+function enrichmentStartLine(item) {
+  const message = item?.metadata?.message;
+  if (!message || typeof message !== 'object') return '';
+  if (message.kind === 'request')
+    return `${message.method || '?'} ${message.target || '?'} ${message.version || ''}`.trim();
+  if (message.kind === 'response')
+    return `${message.version || ''} ${message.status || '?'} ${message.reason || ''}`.trim();
+  return '';
+}
+
+function enrichmentStreamId(item) {
+  const value = Number(item?.metadata?.source?.stream_id);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function enrichmentContentType(record, item, records) {
+  const streamId = enrichmentStreamId(item);
+  const side = record.event.details?.info?.side === 'R' ? 'R' : 'L';
+  for (let index = records.indexOf(record); index >= 0; --index) {
+    const candidate = records[index];
+    if (candidate.event.id !== record.event.id ||
+        (candidate.event.details?.info?.side === 'R' ? 'R' : 'L') !== side) continue;
+    for (const enrichment of [...(candidate.enrichments || [])].reverse()) {
+      if (streamId !== null && enrichmentStreamId(enrichment) !== streamId) continue;
+      const type = enrichmentHeaders(enrichment).find(field =>
+        field.name.toLowerCase() === 'content-type')?.value;
+      if (type) return String(type);
+    }
+  }
+  return item?.metadata?.content_type || 'application/octet-stream';
+}
+
+function enrichmentViewKind(contentType) {
+  const mime = String(contentType).split(';', 1)[0].trim().toLowerCase();
+  return new Set([
+    'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif',
+    'image/bmp', 'image/x-icon', 'image/vnd.microsoft.icon',
+  ]).has(mime) ? {kind: 'image', mime} : null;
+}
+
+function humanContentKind(contentType) {
+  const mime = String(contentType || 'application/octet-stream').split(';', 1)[0].trim().toLowerCase();
+  const visual = enrichmentViewKind(mime);
+  if (visual) return visual;
+  if (mime.startsWith('text/') || /(?:json|xml|javascript|x-www-form-urlencoded)$/.test(mime)) {
+    return {kind: 'text', mime};
+  }
+  return {kind: 'bytes', mime};
+}
+
+function humanRecordStreamId(record) {
+  const annotation = contentAnnotations(record).find(item =>
+    item.kind === 'h2.data' && Number.isInteger(Number(item.attributes?.stream_id)));
+  return annotation ? Number(annotation.attributes.stream_id) : null;
+}
+
+function humanRecordContentType(record, records) {
+  const streamId = humanRecordStreamId(record);
+  const side = record.event.details?.info?.side === 'R' ? 'R' : 'L';
+  for (let index = records.indexOf(record); index >= 0; --index) {
+    const candidate = records[index];
+    if (candidate.event.id !== record.event.id ||
+        (candidate.event.details?.info?.side === 'R' ? 'R' : 'L') !== side) continue;
+    for (const enrichment of [...(candidate.enrichments || [])].reverse()) {
+      if (streamId !== null && enrichmentStreamId(enrichment) !== streamId) continue;
+      const type = enrichmentHeaders(enrichment).find(field =>
+        field.name.toLowerCase() === 'content-type')?.value;
+      if (type) return String(type);
+    }
+  }
+  return null;
+}
+
+function sniffHumanContentType(bytes) {
+  if (!bytes?.length) return null;
+  if (bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10]
+      .every((value, index) => bytes[index] === value)) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+    return 'image/jpeg';
+  if (bytes.length >= 6 && new TextDecoder().decode(bytes.subarray(0, 6)).startsWith('GIF8'))
+    return 'image/gif';
+  if (bytes.length >= 12 && new TextDecoder().decode(bytes.subarray(0, 4)) === 'RIFF' &&
+      new TextDecoder().decode(bytes.subarray(8, 12)) === 'WEBP') return 'image/webp';
+  const sample = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 4096))).trimStart();
+  if (sample.startsWith('{') || sample.startsWith('[')) return 'application/json';
+  if (/^<!doctype\s+html|^<html[\s>]/i.test(sample)) return 'text/html';
+  if (/^<\?xml[\s?]|^<svg[\s>]/i.test(sample)) return 'application/xml';
+  const inspected = bytes.subarray(0, Math.min(bytes.length, 1024));
+  const printable = [...inspected].filter(value => value === 9 || value === 10 || value === 13 ||
+    (value >= 32 && value < 127)).length;
+  return printable / inspected.length >= 0.85 ? 'text/plain' : null;
+}
+
+function humanRepresentation(record, records, fallbackBytes) {
+  const enrichments = record?.enrichments || [];
+  const payloadItem = [...enrichments].reverse().find(item => item?.payload?.length);
+  if (payloadItem) {
+    const contentType = enrichmentContentType(record, payloadItem, records);
+    return {...humanContentKind(contentType), contentType, bytes: payloadItem.payload,
+      operation: payloadItem.metadata?.operation || 'derived content'};
+  }
+  const headerItem = [...enrichments].reverse().find(item => enrichmentHeaders(item).length);
+  if (headerItem) {
+    const headers = enrichmentHeaders(headerItem);
+    const startLine = enrichmentStartLine(headerItem);
+    return {kind: 'headers', contentType: 'HTTP fields', operation: headerItem.metadata?.operation ||
+      'decoded headers', text: `${startLine ? `${startLine}\n` : ''}${headers.map(field =>
+        `${field.name}: ${field.value ?? ''}`).join('\n')}`};
+  }
+  const l7 = l7PayloadView(record);
+  const bytes = l7.state === 'body' ? l7.bytes : fallbackBytes || new Uint8Array();
+  const contentType = humanRecordContentType(record, records) || sniffHumanContentType(bytes);
+  return {...humanContentKind(contentType),
+    contentType: contentType || 'unclassified bytes', operation: contentType ? 'content' : 'payload', bytes};
+}
+
+function humanText(representation, byteLimit = null) {
+  const source = representation.bytes || new Uint8Array();
+  const bytes = byteLimit === null ? source : source.subarray(0, byteLimit);
+  const decoded = new TextDecoder().decode(bytes);
+  if (representation.kind !== 'text' || !/(?:\/|\+)json$/.test(representation.contentType.split(';', 1)[0])) {
+    return decoded;
+  }
+  if (bytes.length !== source.length) return decoded;
+  try {
+    return JSON.stringify(JSON.parse(decoded), null, 2);
+  } catch (_) {
+    return decoded;
+  }
+}
+
+function closeFloatingEnrichment() {
+  const floating = document.querySelector('.floating-enrichment');
+  if (!floating) return;
+  if (floating.dataset.objectUrl) URL.revokeObjectURL(floating.dataset.objectUrl);
+  floating.remove();
+}
+
+function createFloatingEnrichment(title) {
+  closeFloatingEnrichment();
+  const floating = document.createElement('section');
+  floating.className = 'floating-enrichment';
+  floating.setAttribute('role', 'dialog');
+  floating.setAttribute('aria-label', title);
+  const head = document.createElement('header');
+  const label = document.createElement('b');
+  label.textContent = title;
+  const close = document.createElement('button');
+  close.type = 'button'; close.textContent = '×'; close.title = 'Close floating view';
+  close.onclick = closeFloatingEnrichment;
+  head.append(label, close);
+  floating.append(head);
+  document.body.append(floating);
+  head.onpointerdown = event => {
+    if (event.target.closest('button')) return;
+    event.preventDefault();
+    const bounds = floating.getBoundingClientRect();
+    const offsetX = event.clientX - bounds.left, offsetY = event.clientY - bounds.top;
+    head.setPointerCapture(event.pointerId);
+    head.onpointermove = move => {
+      if (!head.hasPointerCapture(move.pointerId)) return;
+      floating.style.left = `${Math.max(0, Math.min(innerWidth - 120, move.clientX - offsetX))}px`;
+      floating.style.top = `${Math.max(0, Math.min(innerHeight - 48, move.clientY - offsetY))}px`;
+      floating.style.right = 'auto';
+    };
+    head.onpointerup = move => {
+      head.releasePointerCapture(move.pointerId);
+      head.onpointermove = null;
+      head.onpointerup = null;
+    };
+  };
+  return floating;
+}
+
+function openFloatingEnrichment(item, supported, title) {
+  const floating = createFloatingEnrichment(title);
+  const objectUrl = URL.createObjectURL(new Blob([item.payload], {type: supported.mime}));
+  floating.dataset.objectUrl = objectUrl;
+  const image = document.createElement('img');
+  image.alt = title;
+  const status = document.createElement('small');
+  status.textContent = `decoding ${supported.mime}…`;
+  image.onload = () => {
+    status.textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${formatBytes(item.payload.length)} · ${supported.mime}`;
+  };
+  image.onerror = () => {
+    status.textContent = `Browser could not decode this ${supported.mime} payload.`;
+  };
+  image.src = objectUrl;
+  floating.append(image, status);
+}
+
+function openFloatingHuman(representation) {
+  const title = `${representation.operation} · ${representation.contentType}`;
+  const floating = createFloatingEnrichment(title);
+  const status = document.createElement('small');
+  if (representation.kind === 'image') {
+    const objectUrl = URL.createObjectURL(new Blob([representation.bytes],
+      {type: representation.contentType}));
+    floating.dataset.objectUrl = objectUrl;
+    const image = document.createElement('img');
+    image.alt = title;
+    image.onload = () => {
+      status.textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${formatBytes(representation.bytes.length)}`;
+    };
+    image.onerror = () => { status.textContent = 'Browser could not render this payload.'; };
+    image.src = objectUrl;
+    floating.append(image, status);
+    return;
+  }
+  const content = document.createElement('pre');
+  const previewLimit = 8 * 1024 * 1024;
+  if (representation.kind === 'headers') content.textContent = representation.text;
+  else if (representation.kind === 'text') content.textContent = humanText(representation, previewLimit);
+  else appendMixedAscii(content, representation.bytes.subarray(0, previewLimit));
+  if (representation.bytes?.length > previewLimit) content.append(document.createTextNode(
+    `\n[… ${formatBytes(representation.bytes.length - previewLimit)} omitted from this view]`));
+  status.textContent = representation.bytes ? formatBytes(representation.bytes.length) : 'decoded metadata';
+  floating.append(content, status);
+}
+
+function renderHumanPreview(target, record, records, fallbackBytes, limit = 640) {
+  const representation = humanRepresentation(record, records, fallbackBytes);
+  target.replaceChildren();
+  target.classList.add('human-preview');
+  const head = document.createElement('span');
+  head.className = 'human-preview-head';
+  const label = document.createElement('span');
+  label.textContent = `${representation.operation} · ${representation.contentType}`;
+  const floating = document.createElement('button');
+  floating.type = 'button'; floating.textContent = 'Float';
+  floating.title = 'Open the complete human-readable representation in a floating window';
+  floating.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    openFloatingHuman(representation);
+  };
+  head.append(label, floating);
+  target.append(head);
+  if (representation.kind === 'image') {
+    const image = document.createElement('img');
+    image.className = 'human-preview-image';
+    image.alt = `${representation.operation} preview`;
+    const objectUrl = URL.createObjectURL(new Blob([representation.bytes],
+      {type: representation.contentType}));
+    image.onload = image.onerror = () => URL.revokeObjectURL(objectUrl);
+    image.src = objectUrl;
+    target.append(image);
+    return;
+  }
+  const body = document.createElement('span');
+  body.className = 'human-preview-body';
+  const text = representation.kind === 'headers' ? representation.text :
+    representation.kind === 'text' ? humanText(representation, limit) : null;
+  if (text !== null) {
+    body.textContent = text.slice(0, limit);
+    if (representation.kind === 'text' && representation.bytes.length > limit) {
+      body.append(document.createTextNode(
+        `\n[… ${formatBytes(representation.bytes.length - limit)} more]`));
+    } else if (text.length > limit) {
+      body.append(document.createTextNode(`\n[… ${text.length - limit} more characters]`));
+    }
+  } else {
+    appendMixedAscii(body, representation.bytes.subarray(0, limit));
+    if (representation.bytes.length > limit) body.append(document.createTextNode(
+      `\n[… ${formatBytes(representation.bytes.length - limit)} more]`));
+  }
+  target.append(body);
+}
+
+function appendEnrichmentView(card, item, contentType) {
+  const supported = enrichmentViewKind(contentType);
+  if (!supported || !item.payload?.length) return null;
+  const viewer = document.createElement('div');
+  viewer.className = 'inline-enrichment-media';
+  viewer.hidden = true;
+  const image = document.createElement('img');
+  image.alt = `Decoded ${supported.mime} payload`;
+  const status = document.createElement('small');
+  viewer.append(image, status);
+  card.append(viewer);
+  let objectUrl = null;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'inline-enrichment-view';
+  button.textContent = 'View';
+  button.title = `Render ${supported.mime} with the browser image decoder`;
+  button.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const opening = viewer.hidden;
+    viewer.hidden = !opening;
+    button.textContent = opening ? 'Hide' : 'View';
+    button.setAttribute('aria-pressed', String(opening));
+    if (!opening) return;
+    status.textContent = 'decoding…';
+    objectUrl = URL.createObjectURL(new Blob([item.payload], {type: supported.mime}));
+    image.onload = () => {
+      status.textContent = `${image.naturalWidth} × ${image.naturalHeight} · ${formatBytes(item.payload.length)}`;
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    };
+    image.onerror = () => {
+      status.textContent = `Browser could not decode this ${supported.mime} payload.`;
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    };
+    image.src = objectUrl;
+  };
+  const floating = document.createElement('button');
+  floating.type = 'button';
+  floating.className = 'inline-enrichment-view';
+  floating.textContent = 'Float';
+  floating.title = 'Open a movable, resizable view without changing the flow layout';
+  floating.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    openFloatingEnrichment(item, supported, `Enrichment · ${supported.mime}`);
+  };
+  return [button, floating];
+}
+
+function appendInlineEnrichments(target, record, records) {
+  target.replaceChildren();
+  for (const item of record.enrichments || []) {
+    const metadata = item?.metadata || {};
+    const headers = enrichmentHeaders(item);
+    const card = document.createElement('details');
+    card.className = 'inline-enrichment-card';
+    card.open = true;
+    const summary = document.createElement('summary');
+    const operation = document.createElement('b');
+    operation.textContent = metadata.operation || 'derived content';
+    const description = document.createElement('span');
+    const streamId = enrichmentStreamId(item);
+    let contentType = metadata.content_type || 'application/octet-stream';
+    if (headers.length) {
+      description.textContent = `${headers.length} headers${streamId ? ` · H2 stream ${streamId}` : ''}`;
+    } else {
+      contentType = enrichmentContentType(record, item, records);
+      description.textContent = `${contentType} · ${formatBytes(item.payload?.length || 0)}` +
+        `${metadata.content_encoding ? ` · decoded ${metadata.content_encoding}` : ''}` +
+        `${streamId ? ` · H2 stream ${streamId}` : ''}`;
+    }
+    const declared = metadata.provenance || {};
+    const provenance = document.createElement('small');
+    provenance.className = 'enrichment-provenance';
+    const parts = [
+      `hints: ${declared.ranges || 'smithproxy'}`,
+      `type: ${declared.content_type || 'spider'}`,
+      `decoded: ${declared.transform || 'spider'}`,
+    ];
+    if (declared.encoding) parts.splice(2, 0, `encoding: ${declared.encoding}`);
+    provenance.textContent = parts.join(' · ');
+    provenance.title = 'Origin of the ranges and metadata used to produce this derived view';
+    summary.append(operation, description, provenance);
+    card.append(summary);
+    const view = appendEnrichmentView(card, item, contentType);
+    if (view) summary.append(...view);
+    if (headers.length) {
+      const fields = document.createElement('pre');
+      const startLine = enrichmentStartLine(item);
+      fields.textContent = `${startLine ? `${startLine}\n` : ''}${headers.map(field =>
+        `${field.name}: ${field.value ?? ''}`).join('\n')}`;
+      card.append(fields);
+    }
+    if (item.payload?.length) {
+      const payload = document.createElement('pre');
+      payload.className = 'inline-enrichment-payload';
+      const previewLimit = 16384;
+      appendMixedAscii(payload, item.payload.subarray(0, previewLimit));
+      if (item.payload.length > previewLimit) payload.append(document.createTextNode(
+        `\n[… ${formatBytes(item.payload.length - previewLimit)} more]`));
+      card.append(payload);
+    }
+    target.append(card);
+  }
+}
+
+function attachInlineEnrichments(container, record, records, followed) {
+  if (!record?.enrichments?.length) return null;
+  followed.openEnrichments ||= new Set();
+  const revision = String(record.revision);
+  const panel = document.createElement('div');
+  panel.className = 'inline-enrichments';
+  panel.hidden = !followed.openEnrichments.has(revision);
+  appendInlineEnrichments(panel, record, records);
+  const marker = enrichmentMarker(record, () => {
+    const opening = panel.hidden;
+    panel.hidden = !opening;
+    marker.setAttribute('aria-pressed', String(opening));
+    if (opening) {
+      followed.openEnrichments.add(revision);
+    } else {
+      followed.openEnrichments.delete(revision);
+    }
+  }, !panel.hidden);
+  container.append(panel);
+  return marker;
+}
+
 function flowPayloadBytes(record, wireBytes) {
   return payloadScope === 'l7' ? l7PayloadView(record, wireBytes).bytes : wireBytes;
 }
@@ -1453,6 +1984,13 @@ function scriptL7Metadata(record, source) {
     encodings: view.encodings,
     bytes: Array.from(view.bytes),
   };
+}
+
+function scriptEnrichments(record) {
+  return (record?.enrichments || []).map(item => ({
+    metadata: item.metadata || {},
+    bytes: Array.from(item.payload || []),
+  }));
 }
 
 function renderPayload() {
@@ -1483,11 +2021,42 @@ function renderPayload() {
     : `${shownBytes.length} B`;
   const inspection = payloadInspectionInfo(selectedPayload);
   renderWorkbenchInfo(inspection, selectedPayload);
+  renderEnrichments(selectedPayload);
   const pending = selectedPayload?.event?.decision?.state === 'pending' && !selectedPayload.decided;
   byId('accept-payload').disabled = !pending;
   byId('accept-session').disabled = !pending;
   byId('discard-payload').disabled = !pending;
   byId('replace-payload').disabled = !pending || replacementBase64 === null;
+}
+
+function renderEnrichments(record) {
+  const viewer = byId('enrichment-viewer');
+  const enrichments = Array.isArray(record?.enrichments) ? record.enrichments : [];
+  viewer.hidden = false;
+  viewer.classList.toggle('empty', enrichments.length === 0);
+  if (!enrichments.length) {
+    viewer.open = false;
+  }
+  byId('enrichment-count').textContent = String(enrichments.length);
+  const content = byId('enrichment-content');
+  content.replaceChildren();
+  enrichments.forEach((item, index) => {
+    const metadata = item?.metadata || {};
+    const body = {...metadata};
+    delete body.type;
+    if (index) content.append(document.createTextNode('\n\n'));
+    content.append(document.createTextNode(
+      `${metadata.operation || metadata.content_type || 'derived content'}\n` +
+      JSON.stringify(body, null, 2)));
+    if (item.payload?.length) {
+      const previewLimit = 8192;
+      content.append(document.createTextNode(`\n\nDecoded payload (${formatBytes(item.payload.length)}):\n`));
+      appendMixedAscii(content, item.payload.subarray(0, previewLimit));
+      if (item.payload.length > previewLimit)
+        content.append(document.createTextNode(
+          `\n[… ${formatBytes(item.payload.length - previewLimit)} more]`));
+    }
+  });
 }
 
 function workbenchSiftClassifications(record) {
@@ -1598,7 +2167,24 @@ function renderPayloadList() {
       const connection = parseSessionLabel(flow.label);
       const peerKey = connection && `${connection.sourceHost}|${connection.destinationHost}|${connection.destinationPort}`;
       label.textContent = flowListLabel(flow.label || flow.id, (flowPeers.get(peerKey) || 0) > 1);
-      label.title = flow.label || flow.id;
+      const markers = [];
+      if (!flow.complete) {
+        const incomplete = document.createElement('b');
+        incomplete.className = 'flow-incomplete-marker';
+        incomplete.textContent = 'I';
+        markers.push(incomplete);
+      }
+      if (flow.evicted) {
+        const evicted = document.createElement('b');
+        evicted.className = 'flow-evicted-marker';
+        evicted.textContent = 'E';
+        markers.push(evicted);
+      }
+      if (markers.length) label.prepend(...markers, ' ');
+      const warnings = [];
+      if (!flow.complete) warnings.push('Incomplete: connection-start was not observed');
+      if (flow.evicted) warnings.push(`Evicted: ${flow.evicted} payloads left the browser cache`);
+      label.title = `${warnings.length ? `${warnings.join('\n')}\n` : ''}${flow.label || flow.id}`;
       const left = document.createElement('span');
       left.className = 'flow-side';
       left.innerHTML = `L ${flow.L.count} · ${escapeHtml(formatBytes(flow.L.bytes))}` +
@@ -1624,7 +2210,7 @@ function renderPayloadList() {
   for (let index = payloadRecords.length - 1; index >= 0; --index) {
     const record = payloadRecords[index];
     const info = record.event.details?.info || {};
-    const size = decodedPayloadSize(info.content);
+    const size = recordPayloadBytes(record).length;
     const row = document.createElement('button');
     row.type = 'button';
     row.className = `payload-row${record === selectedPayload ? ' selected' : ''}` +
@@ -1633,7 +2219,10 @@ function renderPayloadList() {
     row.innerHTML = `<span>r${record.revision}</span><b>${escapeHtml(info.side || '?')}</b>` +
       `<span>${escapeHtml(formatBytes(size) || `${size} B`)}</span>`;
     row.append(l7PayloadMarker(record));
+    const enriched = enrichmentMarker(record);
+    if (enriched) row.append(enriched);
     const session = document.createElement('span');
+    session.className = 'payload-session-label';
     session.textContent = resolvedSessionLabel(info.session || record.event.id || 'unlabelled');
     row.append(session);
     row.onclick = () => {
@@ -1724,16 +2313,46 @@ function renderFlowMessages(stream, followed) {
   const records = eventRecords.filter(record => scopeMatchesEvent(followed, record))
     .sort((a, b) => a.revision - b.revision);
   stream.className = 'flow-stream flow-messages';
-  stream.replaceChildren();
+  if (stream.dataset.renderKind !== 'messages') {
+    stream.replaceChildren();
+    stream.dataset.renderKind = 'messages';
+  }
+  followed.openMessages ||= new Set();
+  const wanted = new Set(records.map(record => String(record.revision)));
+  for (const message of stream.querySelectorAll('.flow-message[data-revision]')) {
+    if (wanted.has(message.dataset.revision)) continue;
+    followed.openMessages.delete(message.dataset.revision);
+    message.remove();
+  }
+  const rendered = new Set([...stream.querySelectorAll('.flow-message[data-revision]')]
+    .map(message => message.dataset.revision));
   for (const record of records) {
+    const recordRevision = String(record.revision);
+    if (rendered.has(recordRevision)) continue;
     const message = document.createElement('details');
     message.className = `flow-message ${eventCategory(record.event)}`;
-    message.dataset.revision = String(record.revision);
+    message.dataset.revision = recordRevision;
+    message.open = followed.openMessages.has(recordRevision);
+    message.ontoggle = () => {
+      if (message.open) followed.openMessages.add(recordRevision);
+      else followed.openMessages.delete(recordRevision);
+    };
     const summary = document.createElement('summary');
     const action = document.createElement('b');
-    action.textContent = record.event.action || 'message';
+    const info = record.event.details?.info || {};
+    const side = info.side === 'R' ? 'R' : info.side === 'L' ? 'L' : '·';
+    action.textContent = `${side} | ${record.event.action || 'message'}`;
     const identity = document.createElement('span');
-    identity.textContent = `r${record.revision} · ${record.event.id || 'no connection id'}`;
+    const annotations = Array.isArray(info.content_annotations) ? info.content_annotations : [];
+    const annotationKinds = [...new Set(annotations
+      .map(item => Array.isArray(item) ? item[2] : '')
+      .filter(Boolean))];
+    const annotationInfo = annotations.length
+      ? ` · annotations ${annotations.length}` +
+        `${annotationKinds.length ? ` (${annotationKinds.join(', ')})` : ''}`
+      : ' · annotations 0';
+    identity.textContent = `r${record.revision} · ${record.event.id || 'no connection id'}` +
+      annotationInfo;
     const timestamp = Number(record.event.spider_received_at_ms);
     const time = document.createElement('time');
     time.textContent = Number.isFinite(timestamp)
@@ -1748,6 +2367,7 @@ function renderFlowMessages(stream, followed) {
     message.append(summary, json);
     stream.append(message);
   }
+  stream.querySelector('.empty')?.remove();
   if (!records.length) {
     const empty = document.createElement('span');
     empty.className = 'empty';
@@ -1778,8 +2398,10 @@ function openFlowTab(sessionId, type = 'connection') {
     const followed = {...scope, id, evicted: 0,
       view: type === 'connection' ? 'chunks' : 'lanes', expanded: false, collapsed: false,
       laneOrder: [], visibleLanes: new Set(), laneFit: true, laneWidth: 260, laneFont: 11,
-      cardLevels: new Map(), payloadCaps: {L: 0, R: 0}, keepAll: false, timeMode: 'elapsed',
-      l7Context: false, annotations: true};
+      cardLevels: new Map(), openEnrichments: new Set(),
+      payloadCaps: {L: 0, R: 0},
+      keepAll: false, timeMode: 'elapsed',
+      l7Context: false, annotations: true, human: false};
     followed.laneWidths = new Map();
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
@@ -1952,7 +2574,7 @@ function exportFollowedFlow(followed, records) {
       destinationAddress: connection.destinationHost,
       destinationPort: Number(connection.destinationPort),
       side: info.side === 'R' ? 'R' : 'L',
-      payload: decodeBase64(info.content),
+      payload: recordPayloadBytes(record),
       timestampMs: Number(record.event.spider_received_at_ms),
     });
   }
@@ -1988,7 +2610,7 @@ function renderFlowTab(scopeKey) {
   }
   const omitted = retained.length - records.length;
   if (!panel.querySelector('.flow-stream')) {
-    panel.innerHTML = '<div class="flow-follow-toolbar"><div class="flow-follow-head"><h2>Follow flow</h2><small></small>' +
+    panel.innerHTML = '<div class="flow-follow-toolbar"><div class="flow-follow-head"><h2>Follow flow</h2><span class="flow-completeness" hidden></span><small></small>' +
       '<span class="flow-follow-classifications"></span><div class="flow-follow-controls">' +
       '<button type="button" data-flow-view="chunks" aria-pressed="true">Chunks</button>' +
       '<button type="button" data-flow-view="stream" aria-pressed="false">Stream</button>' +
@@ -1997,6 +2619,7 @@ function renderFlowTab(scopeKey) {
       '<span class="flow-scope-controls"><button type="button" data-flow-scope="wire">Wire</button>' +
       '<button type="button" data-flow-scope="l7">L7</button>' +
       '<label class="l7-context-toggle" title="Show 16 wire bytes immediately before and after each L7 body range"><input type="checkbox" data-l7-context> ±16 B context</label></span>' +
+      '<button type="button" data-flow-human title="Prefer decoded content and render formats understood by the browser">Human</button>' +
       '<button type="button" data-flow-annotations title="Show Smithproxy protocol annotations over each payload">Annotations</button>' +
       '<button type="button" data-flow-expand="all">Expand all</button>' +
       '<button type="button" data-flow-expand="none">Collapse all</button>' +
@@ -2032,6 +2655,11 @@ function renderFlowTab(scopeKey) {
     }
     panel.querySelector('[data-l7-context]').onchange = event => {
       followed.l7Context = event.target.checked;
+      followed.renderedMode = null;
+      renderFlowTab(scopeKey);
+    };
+    panel.querySelector('[data-flow-human]').onclick = () => {
+      followed.human = !followed.human;
       followed.renderedMode = null;
       renderFlowTab(scopeKey);
     };
@@ -2141,14 +2769,16 @@ function renderFlowTab(scopeKey) {
   }
   const contextToggle = panel.querySelector('[data-l7-context]');
   contextToggle.checked = followed.l7Context;
-  contextToggle.disabled = payloadScope !== 'l7';
+  contextToggle.disabled = payloadScope !== 'l7' || followed.human;
+  panel.querySelector('[data-flow-human]').setAttribute('aria-pressed', String(followed.human));
   panel.querySelector('[data-flow-annotations]').setAttribute(
     'aria-pressed', String(followed.annotations));
   panel.querySelector('[data-flow-expand="all"]').hidden = followed.view !== 'chunks';
   panel.querySelector('[data-flow-expand="none"]').hidden = followed.view !== 'chunks';
   panel.querySelector('.lane-layout-controls').hidden = followed.view !== 'lanes';
   panel.querySelector('.flow-scope-controls').hidden = followed.view === 'messages';
-  panel.querySelector('[data-flow-annotations]').hidden = followed.view === 'messages';
+  panel.querySelector('[data-flow-human]').hidden = followed.view === 'messages';
+  panel.querySelector('[data-flow-annotations]').hidden = followed.view === 'messages' || followed.human;
   panel.querySelector('[data-lane-fit]').setAttribute('aria-pressed', String(followed.laneFit));
   panel.querySelector('[data-lane-fit]').textContent = followed.laneFit ? 'Fit: on' : 'Fit width';
   panel.querySelector('[data-lane-width-slider]').value = String(followed.laneWidth);
@@ -2159,6 +2789,17 @@ function renderFlowTab(scopeKey) {
   panel.querySelector('.flow-view-limit').value = String(flowViewLimitMiB);
   panel.querySelector('.flow-follow-head small').textContent =
     scopeLabel(followed, records);
+  const visibleConnections = followed.type === 'connection'
+    ? new Set([followed.sessionId])
+    : new Set(records.map(record => record.event.id).filter(Boolean));
+  const incompleteConnections = [...visibleConnections]
+    .filter(id => !startedConnections.has(id));
+  const completeness = panel.querySelector('.flow-completeness');
+  completeness.hidden = incompleteConnections.length === 0;
+  completeness.textContent = incompleteConnections.length > 1
+    ? `INCOMPLETE ${incompleteConnections.length}/${visibleConnections.size}` : 'INCOMPLETE';
+  completeness.title = incompleteConnections.length
+    ? `connection-start was not observed for: ${incompleteConnections.join(', ')}` : '';
   panel.querySelector('.flow-follow-head h2').textContent = followed.type === 'client'
     ? 'Client activity' : followed.type === 'service' ? 'Follow service' : 'Follow connection';
   const classification = workbenchSiftClassifications(records.at(-1));
@@ -2183,10 +2824,11 @@ function renderFlowTab(scopeKey) {
     renderFlowMessages(stream, followed);
     return;
   }
-  const renderMode = `${followed.view}:${payloadMode}:${payloadScope}:${followed.l7Context}:${followed.annotations}`;
+  const renderMode = `${followed.view}:${payloadMode}:${payloadScope}:${followed.l7Context}:${followed.annotations}:${followed.human}`;
   if (followed.renderedMode !== renderMode) {
     stream.replaceChildren();
     delete stream.dataset.layoutKey;
+    delete stream.dataset.renderKind;
     followed.renderedMode = renderMode;
   }
   if (followed.view === 'lanes') {
@@ -2204,7 +2846,7 @@ function renderFlowTab(scopeKey) {
     const recordRevision = String(record.revision);
     if (rendered.has(recordRevision)) continue;
     const info = record.event.details?.info || {};
-    const wireBytes = decodeBase64(info.content);
+    const wireBytes = recordPayloadBytes(record);
     const completeBytes = flowPayloadBytes(record, wireBytes);
     const side = info.side === 'R' ? 'R' : 'L';
     const bytes = flowDisplayBytes(followed, side, completeBytes);
@@ -2218,7 +2860,10 @@ function renderFlowTab(scopeKey) {
     metadata.append(`r${record.revision}`, document.createElement('br'), formatBytes(bytes.length));
     if (bytes.length < completeBytes.length) metadata.append(document.createElement('br'),
       `of ${formatBytes(completeBytes.length)}`);
-    metadata.append(document.createElement('br'), l7PayloadMarker(record, wireBytes));
+    const badges = document.createElement('span');
+    badges.className = 'flow-payload-badges';
+    badges.append(l7PayloadMarker(record, wireBytes));
+    metadata.append(document.createElement('br'), badges);
     if (followed.view === 'stream') {
       const content = document.createElement('pre');
       const payload = document.createElement('div');
@@ -2226,7 +2871,7 @@ function renderFlowTab(scopeKey) {
       chunk.style.setProperty('--flow-color', flowLaneColor(followed, record.event.id));
       chunk.title = laneLabel(record.event.id);
       direction.textContent = `${side}·${followed.laneOrder.indexOf(record.event.id) + 1}`;
-      if (bytes.length > 640) {
+      if (!followed.human && bytes.length > 640) {
         const expand = document.createElement('button');
         expand.type = 'button'; expand.className = 'flow-stream-expand';
         expand.onclick = () => {
@@ -2237,10 +2882,13 @@ function renderFlowTab(scopeKey) {
         };
         metadata.append(document.createElement('br'), expand);
       }
-      if (followed.annotations) appendAnnotationRail(payload, record, wireBytes);
+      if (followed.annotations && !followed.human) appendAnnotationRail(payload, record, wireBytes);
       payload.append(content);
       chunk.append(direction, metadata, payload);
-      renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0,
+      const enriched = attachInlineEnrichments(chunk, record, records, followed);
+      if (enriched) badges.append(enriched);
+      if (followed.human) renderHumanPreview(content, record, records, bytes);
+      else renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0,
         followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
     } else {
       const summary = document.createElement('summary');
@@ -2258,8 +2906,10 @@ function renderFlowTab(scopeKey) {
       };
       summary.append(expand);
       const content = document.createElement('pre');
-      if (!(followed.l7Context && payloadScope === 'l7' &&
-            appendL7Context(content, record, wireBytes, payloadMode, bytes.length))) {
+      if (followed.human) {
+        renderHumanPreview(content, record, records, bytes);
+      } else if (!(followed.l7Context && payloadScope === 'l7' &&
+                   appendL7Context(content, record, wireBytes, payloadMode, bytes.length))) {
         const annotations = followed.annotations && payloadScope === 'wire'
           ? contentAnnotations(record, bytes.length) : [];
         if (!appendAnnotatedPayload(content, bytes, annotations, payloadMode)) {
@@ -2275,8 +2925,10 @@ function renderFlowTab(scopeKey) {
       chunk.open = !followed.collapsed;
       chunk.classList.toggle('expanded', followed.expanded);
       chunk.append(summary);
-      if (followed.annotations) appendAnnotationRail(chunk, record, wireBytes);
+      if (followed.annotations && !followed.human) appendAnnotationRail(chunk, record, wireBytes);
       chunk.append(content);
+      const enriched = attachInlineEnrichments(chunk, record, records, followed);
+      if (enriched) badges.append(enriched);
     }
     stream.append(chunk);
   }
@@ -2367,15 +3019,17 @@ function laneStepLabel(delta) {
   return `prev ${laneDeltaLabel(delta).replace('Δ ', '+')}`;
 }
 
-function renderLaneCardPayload(card, bytes, level, context = null) {
+function renderLaneCardPayload(card, bytes, level, context = null, human = null) {
   const limits = [320, 4096, bytes.length];
   const limit = Math.min(bytes.length, limits[level] ?? limits[0]);
   const preview = card.querySelector('pre');
   preview.replaceChildren();
-  if (!context || !appendL7Context(preview, context.record, context.wireBytes, 'ascii', limit)) {
+  if (human) {
+    renderHumanPreview(preview, human.record, human.records, bytes, limits[level] ?? limits[0]);
+  } else if (!context || !appendL7Context(preview, context.record, context.wireBytes, 'ascii', limit)) {
     appendMixedAscii(preview, bytes.subarray(0, limit));
   }
-  const remaining = bytes.length - limit;
+  const remaining = human ? 0 : bytes.length - limit;
   if (remaining) {
     const omitted = document.createElement('span');
     omitted.className = 'lane-card-omitted';
@@ -2575,7 +3229,7 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
     if (visibleIndex >= 0) {
       const info = record.event.details?.info || {};
       const side = info.side === 'R' ? 'R' : 'L';
-      const wireBytes = decodeBase64(info.content);
+      const wireBytes = recordPayloadBytes(record);
       const completeBytes = flowPayloadBytes(record, wireBytes);
       const bytes = flowDisplayBytes(followed, side, completeBytes);
       const card = document.createElement('article');
@@ -2590,23 +3244,27 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
         (bytes.length < completeBytes.length ? ` / ${formatBytes(completeBytes.length)} (trimmed)` : '');
       const preview = document.createElement('pre');
       head.append(meta, l7PayloadMarker(record, wireBytes));
-      if (bytes.length > 320) {
+      if (!followed.human && bytes.length > 320) {
         const expand = document.createElement('button');
         expand.type = 'button'; expand.className = 'lane-card-expand';
         expand.onclick = () => {
           const next = Number(expand.dataset.nextLevel || 0);
           followed.cardLevels.set(record.revision, next);
           renderLaneCardPayload(card, bytes, next,
-            followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
+            followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null,
+            followed.human ? {record, records} : null);
           decorateLaneResponses(stream, records, followed);
         };
         head.append(expand);
       }
       card.append(head);
-      if (followed.annotations) appendAnnotationRail(card, record, wireBytes);
+      if (followed.annotations && !followed.human) appendAnnotationRail(card, record, wireBytes);
       card.append(preview);
+      const enriched = attachInlineEnrichments(card, record, records, followed);
+      if (enriched) head.append(enriched);
       renderLaneCardPayload(card, bytes, followed.cardLevels.get(record.revision) || 0,
-        followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
+        followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null,
+        followed.human ? {record, records} : null);
       row.append(card);
     } else if (hiddenIndex >= 0) {
       const tick = document.createElement('button');
@@ -2667,6 +3325,8 @@ function updateFlowRecord(record) {
   let flow = flowRecords.get(event.id);
   if (!flow) {
     flow = {id: event.id, label: info.session || event.id, active: true,
+            complete: startedConnections.has(event.id),
+            evicted: 0,
             lastRevision: record.revision, latest: record,
             L: {count: 0, bytes: 0, l7Bytes: 0, l7Payloads: 0, l7Unknown: 0},
             R: {count: 0, bytes: 0, l7Bytes: 0, l7Payloads: 0, l7Unknown: 0}};
@@ -2674,7 +3334,7 @@ function updateFlowRecord(record) {
   }
   const side = info.side === 'R' ? 'R' : 'L';
   flow[side].count += 1;
-  flow[side].bytes += decodedPayloadSize(info.content);
+  flow[side].bytes += recordPayloadBytes(record).length;
   const l7 = l7PayloadView(record);
   if (l7.state === 'body') {
     flow[side].l7Bytes += l7.bytes.length;
@@ -2712,9 +3372,10 @@ function selectPayload(record, follow = false) {
     byId('workbench-source').className = 'empty';
     byId('workbench-info').textContent = 'waiting for metadata';
     byId('workbench-info').className = 'empty';
+    byId('enrichment-viewer').hidden = true;
     return;
   }
-  payloadBytes = decodeBase64(selectedPayload.event.details?.info?.content);
+  payloadBytes = recordPayloadBytes(selectedPayload);
   replacementBase64 = null;
   byId('replacement-text').value = '';
   if (selectedPayload.inspectOutput) displayScriptResult(selectedPayload.inspectOutput, true);
@@ -2726,6 +3387,11 @@ function ingestEvent(record) {
   if (!record || !record.event || record.revision <= revision) return;
   revision = record.revision;
   eventRecords.push(summarizeEvent(record));
+  if (record.event.action === 'connection-start' && record.event.id) {
+    startedConnections.add(record.event.id);
+    const flow = flowRecords.get(record.event.id);
+    if (flow) flow.complete = true;
+  }
   if (record.event.action === 'hostname-info') ingestHostnameInfo(record.event);
   const sift = record.event.details?.info?.classification?.sift;
   if (Array.isArray(sift) && sift.length) {
@@ -2742,7 +3408,8 @@ function ingestEvent(record) {
   if (eventRecords.length > eventRecordLimit) eventRecords.splice(0, eventRecords.length - eventRecordLimit);
   const passed = record.event.decision?.state === 'passed';
   if (record.event.action === 'connection-content' && !passed &&
-      typeof record.event.details?.info?.content === 'string') {
+      (record.binaryPayload instanceof Uint8Array ||
+       typeof record.event.details?.info?.content === 'string')) {
     record.cacheBytes = payloadSize(record);
     payloadRecords.push(record);
     payloadCacheBytes += record.cacheBytes;
@@ -2774,7 +3441,7 @@ function executeJavascriptScript(record) {
   return new Promise(resolve => {
     const worker = new Worker('script-worker.js');
     const info = record?.event?.details?.info || {};
-    const bytes = decodeBase64(info.content);
+    const bytes = recordPayloadBytes(record);
     const timeout = setTimeout(() => {
       worker.terminate();
       resolve({ok: false, logs: [], error: 'Script exceeded the 2 s execution limit.'});
@@ -2791,6 +3458,7 @@ function executeJavascriptScript(record) {
     };
     worker.postMessage({script: byId('script-editor').value, bytes: Array.from(bytes),
       l7: scriptL7Metadata(record, bytes),
+      enrichments: scriptEnrichments(record),
       side: info.side || '', sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
   });
 }
@@ -2846,8 +3514,9 @@ async function executePythonScript(record) {
     }, 2000);
     pythonRequests.set(id, {resolve, timeout});
     pythonWorker.postMessage({id, script: byId('script-editor').value,
-      content: info.content || '', side: info.side || '',
-      l7: scriptL7Metadata(record, decodeBase64(info.content)),
+      content: info.content || encodeBase64(recordPayloadBytes(record)), side: info.side || '',
+      l7: scriptL7Metadata(record, recordPayloadBytes(record)),
+      enrichments: scriptEnrichments(record),
       sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
   });
 }
@@ -3098,6 +3767,7 @@ function connectEventSocket() {
   const protocols = tokenValue() ? ['spider', tokenValue()] : ['spider'];
   ++frontendDiagnostics.wsConnects;
   const socket = new WebSocket(url, protocols);
+  socket.binaryType = 'arraybuffer';
   eventSocket = socket;
   socket.onopen = () => {
     ++frontendDiagnostics.wsOpens;
@@ -3113,6 +3783,26 @@ function connectEventSocket() {
   socket.onmessage = message => {
     ++frontendDiagnostics.wsMessages;
     frontendDiagnostics.lastWsMessageAtMs = Date.now();
+    if (message.data instanceof ArrayBuffer) {
+      try {
+        const envelopes = SpiderSxbn.decode(message.data);
+        const original = envelopes[0];
+        if (!original || original.metadata.type !== 'event') {
+          throw new Error('SXBN chain does not start with an event envelope');
+        }
+        ++frontendDiagnostics.wsEvents;
+        frontendDiagnostics.lastWsEventAtMs = Date.now();
+        ingestEvent({revision: original.metadata.revision,
+          event: original.metadata.event,
+          binaryPayload: original.payload,
+          enrichments: envelopes.slice(1)});
+      } catch (error) {
+        ++frontendDiagnostics.wsErrors;
+        addActivity('system', 'SXBN ERROR', 'Binary event could not be decoded',
+          error.message || String(error), 'warn');
+      }
+      return;
+    }
     const data = JSON.parse(message.data);
     if (data.type === 'event') {
       ++frontendDiagnostics.wsEvents;
@@ -3339,6 +4029,7 @@ function connect() {
   eventRecords = [];
   payloadRecords = [];
   flowRecords.clear();
+  startedConnections.clear();
   liveSiftClassifications.clear();
   payloadCacheBytes = 0;
   payloadsDropped = 0;
@@ -3701,4 +4392,4 @@ renderActivity();
 updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
 showTab('workbench-tab');
-connect();
+bootstrapAndConnect();

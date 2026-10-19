@@ -3,11 +3,12 @@
 #include <array>
 #include <charconv>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
+#include <stdexcept>
 #include <string_view>
 
 namespace spider {
-namespace {
 
 std::string base64_encode(const std::string_view input) {
     static constexpr std::string_view alphabet =
@@ -30,25 +31,27 @@ std::string base64_encode(const std::string_view input) {
     return output;
 }
 
-} // namespace
+namespace {
 
-bool decode_sxbn(const std::string& body, nlohmann::json& event,
-                 std::string& payload, std::string& error) {
+bool decode_envelope(const std::string_view wire, const std::size_t offset,
+                     SxbnEnvelope& envelope, std::size_t& consumed,
+                     std::string& error) {
     constexpr std::size_t prefix_size = 25;
-    if (body.size() < prefix_size || !std::string_view(body).starts_with(sxbn_magic)) {
+    const auto remaining = wire.substr(offset);
+    if (remaining.size() < prefix_size || !remaining.starts_with(sxbn_magic)) {
         error = "missing SXBN001 envelope";
         return false;
     }
-    if (body[16] != ':') {
+    if (remaining[16] != ':') {
         error = "invalid SXBN length separator";
         return false;
     }
     std::uint32_t json_size{};
     std::uint32_t payload_size{};
-    const auto json_first = body.data() + sxbn_magic.size();
-    const auto json_last = body.data() + 16;
-    const auto payload_first = body.data() + 17;
-    const auto payload_last = body.data() + prefix_size;
+    const auto json_first = remaining.data() + sxbn_magic.size();
+    const auto json_last = remaining.data() + 16;
+    const auto payload_first = remaining.data() + 17;
+    const auto payload_last = remaining.data() + prefix_size;
     const auto parsed_json = std::from_chars(json_first, json_last, json_size, 16);
     const auto parsed_payload = std::from_chars(payload_first, payload_last, payload_size, 16);
     if (parsed_json.ec != std::errc{} || parsed_json.ptr != json_last) {
@@ -59,19 +62,78 @@ bool decode_sxbn(const std::string& body, nlohmann::json& event,
         error = "invalid SXBN payload length";
         return false;
     }
-    const auto content_size = static_cast<std::uint64_t>(json_size) + payload_size;
-    if (content_size != body.size() - prefix_size) {
-        error = "SXBN envelope length mismatch";
+    const auto body_size = static_cast<std::uint64_t>(json_size) + payload_size;
+    if (body_size > remaining.size() - prefix_size) {
+        error = "truncated SXBN envelope";
         return false;
     }
     try {
-        event = nlohmann::json::parse(body.begin() + static_cast<std::ptrdiff_t>(prefix_size),
-                                      body.begin() + static_cast<std::ptrdiff_t>(prefix_size + json_size));
+        envelope.metadata = nlohmann::json::parse(
+            remaining.begin() + static_cast<std::ptrdiff_t>(prefix_size),
+            remaining.begin() + static_cast<std::ptrdiff_t>(prefix_size + json_size));
     } catch (const nlohmann::json::exception&) {
         error = "invalid SXBN JSON metadata";
         return false;
     }
-    if (!event.is_object() || event.value("action", "") != "connection-content") {
+    if (!envelope.metadata.is_object()) {
+        error = "SXBN metadata must be an object";
+        return false;
+    }
+    envelope.payload.assign(remaining.data() + prefix_size + json_size, payload_size);
+    consumed = prefix_size + static_cast<std::size_t>(body_size);
+    return true;
+}
+
+} // namespace
+
+std::string encode_sxbn(const nlohmann::json& metadata, const std::string_view payload) {
+    const auto json = metadata.dump();
+    if (json.size() > std::numeric_limits<std::uint32_t>::max() ||
+        payload.size() > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::length_error("SXBN envelope field exceeds 32-bit length");
+    }
+    std::array<char, 26> prefix{};
+    std::snprintf(prefix.data(), prefix.size(), "SXBN001:%08X:%08X",
+                  static_cast<unsigned>(json.size()), static_cast<unsigned>(payload.size()));
+    std::string wire(prefix.data(), 25);
+    wire.reserve(25 + json.size() + payload.size());
+    wire += json;
+    wire.append(payload);
+    return wire;
+}
+
+bool decode_sxbn_chain(const std::string_view wire,
+                       std::vector<SxbnEnvelope>& envelopes, std::string& error) {
+    envelopes.clear();
+    if (wire.empty()) {
+        error = "empty SXBN chain";
+        return false;
+    }
+    std::size_t offset{};
+    while (offset < wire.size()) {
+        SxbnEnvelope envelope;
+        std::size_t consumed{};
+        if (!decode_envelope(wire, offset, envelope, consumed, error)) {
+            envelopes.clear();
+            return false;
+        }
+        envelopes.push_back(std::move(envelope));
+        offset += consumed;
+    }
+    return true;
+}
+
+bool decode_sxbn(const std::string& body, nlohmann::json& event,
+                 std::string& payload, std::string& error) {
+    std::vector<SxbnEnvelope> envelopes;
+    if (!decode_sxbn_chain(body, envelopes, error)) return false;
+    if (envelopes.size() != 1) {
+        error = "callback requires exactly one SXBN envelope";
+        return false;
+    }
+    event = std::move(envelopes.front().metadata);
+    payload = std::move(envelopes.front().payload);
+    if (event.value("action", "") != "connection-content") {
         error = "SXBN is only valid for connection-content";
         return false;
     }
@@ -80,14 +142,12 @@ bool decode_sxbn(const std::string& body, nlohmann::json& event,
         error = "invalid SXBN connection-content metadata";
         return false;
     }
-    const auto payload_offset = prefix_size + json_size;
-    if (info.value("payload_length", payload_size) != payload_size) {
+    if (info.value("payload_length", payload.size()) != payload.size()) {
         error = "SXBN payload length mismatch";
         return false;
     }
     info["payload_encoding"] = "sxbn-001";
-    info["payload_length"] = payload_size;
-    payload.assign(body.data() + static_cast<std::ptrdiff_t>(payload_offset), payload_size);
+    info["payload_length"] = payload.size();
     return true;
 }
 

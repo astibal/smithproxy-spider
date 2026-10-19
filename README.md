@@ -13,8 +13,8 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Dependencies: C++20 compiler, CMake, `libmicrohttpd`, `libcurl`, `pkg-config`,
-and `nlohmann-json`.
+Dependencies: C++20 compiler, CMake, `libmicrohttpd`, `libcurl`, `libnghttp2`,
+`zlib`, `pkg-config`, and `nlohmann-json`.
 
 ## Run
 
@@ -81,12 +81,22 @@ endpoints. Traffic Endpoints retains observations for a configurable TTL from
 Each endpoint column can show its top 10, top 20, or all observed values.
 Right-clicking any observed IP adds an ordered traffic rule. `PASS` still sends
 callbacks to Spider and keeps them in Events, but excludes their content from
-Payloads and Flows. `IGNORE` accepts matching content in the backend without
-storing or broadcasting it. `FOCUS` makes unmatched traffic implicit PASS while
+Payloads and Flows. `FORGET` accepts the current payload and permanently
+declines future content callbacks for every matching connection. `FOCUS` makes
+unmatched traffic implicit PASS while
 at least one focus rule exists. `INSPECT` is non-exclusive and always runs the
 selected browser script, even when Live edit is disabled; its result is returned
 as accept or replace. First match wins. Rules and ordering are stored by the
 browser, restored on reconnect, and carry live backend match counters.
+
+Focused and inspected HTTP traffic can carry chained SXBN enrichment envelopes.
+Spider parses complete HTTP/1 message heads and maintains independent HPACK
+decoder state for both directions of HTTP/2 connections. H2 frame headers and
+header blocks may span callbacks; incomplete pre-focus HPACK context fails
+closed instead of presenting uncertain headers as decoded data. Annotated gzip
+and deflate bodies are inflated as independent HTTP/1 directions or HTTP/2
+streams and delivered as binary enrichment envelopes. Decompressed output is
+bounded per event to protect the backend from compression bombs.
 
 The active-session tree shows only session keys at its leaves. Its draggable
 `src`, `dst`, and `dport` controls enable grouping dimensions and define their

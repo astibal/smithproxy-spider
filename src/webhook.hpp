@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string_view>
+#include <optional>
+
 #include <nlohmann/json.hpp>
 
 namespace spider {
@@ -11,8 +14,11 @@ struct WebhookReply {
 
 class SessionStore;
 class DecisionBroker;
+class EnrichmentEngine;
 
 [[nodiscard]] WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
-                                           const nlohmann::json& event);
+                                           const nlohmann::json& event,
+                                           std::optional<std::string_view> raw_payload = std::nullopt,
+                                           EnrichmentEngine* enrichment = nullptr);
 
 } // namespace spider
