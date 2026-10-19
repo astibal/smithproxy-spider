@@ -81,8 +81,9 @@ endpoints. Traffic Endpoints retains observations for a configurable TTL from
 Each endpoint column can show its top 10, top 20, or all observed values.
 Right-clicking any observed IP adds an ordered traffic rule. `PASS` still sends
 callbacks to Spider and keeps them in Events, but excludes their content from
-Payloads and Flows. `IGNORE` accepts matching content in the backend without
-storing or broadcasting it. `FOCUS` makes unmatched traffic implicit PASS while
+Payloads and Flows. `FORGET` accepts the current payload and permanently
+declines future content callbacks for every matching connection. `FOCUS` makes
+unmatched traffic implicit PASS while
 at least one focus rule exists. `INSPECT` is non-exclusive and always runs the
 selected browser script, even when Live edit is disabled; its result is returned
 as accept or replace. First match wins. Rules and ordering are stored by the

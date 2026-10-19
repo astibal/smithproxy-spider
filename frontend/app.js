@@ -87,8 +87,9 @@ try {
     id: rule.id || `address:${rule.address}`,
     kind: rule.kind || 'address',
     value: rule.value || rule.address,
+    mode: rule.mode === 'ignore' ? 'forget' : rule.mode,
   })).filter(rule => rule && typeof rule.value === 'string' &&
-    ['pass', 'focus', 'inspect', 'ignore'].includes(rule.mode));
+    ['pass', 'focus', 'inspect', 'forget'].includes(rule.mode));
 } catch (_) {}
 let endpointAggregates = [];
 try {
@@ -316,7 +317,7 @@ function tokenValue() {
 const headers = () => ({'X-Spider-Token': tokenValue()});
 
 function modeEffect(mode) {
-  if (mode === 'ignore') return 'Future payloads will be auto-accepted by the backend and will not reach Spider.';
+  if (mode === 'forget') return 'Spider permanently declines future content callbacks for matching connections.';
   if (mode === 'pass') return 'Payloads will reach Spider, but will be excluded from flow analysis.';
   if (mode === 'focus') return 'Non-matching traffic will be passed after classification.';
   if (mode === 'inspect') return 'Matching payloads will always be sent through the active script.';
@@ -394,7 +395,7 @@ function renderTrafficRules() {
   byId('focus-indicator').hidden = !trafficRules.some(rule => rule.mode === 'focus');
   byId('bypass-indicator').hidden = !bypassAll;
   byId('bypass-all').setAttribute('aria-pressed', String(bypassAll));
-  const counts = {pass: 0, focus: 0, inspect: 0, ignore: 0};
+  const counts = {pass: 0, focus: 0, inspect: 0, forget: 0};
   for (const rule of trafficRules) ++counts[rule.mode];
   const breakdown = Object.entries(counts).filter(([, count]) => count)
     .map(([mode, count]) => `${mode.toUpperCase()} ${count}`).join(' · ');

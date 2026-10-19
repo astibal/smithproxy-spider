@@ -763,7 +763,7 @@ int main() {
     const auto ticket = live.prepare(content);
     assert(ticket);
     assert(content["decision"]["state"] == "pending");
-    auto waiting = std::async(std::launch::async, [&] { return live.wait(ticket); });
+    auto waiting = std::async(std::launch::async, [&] { return live.wait(ticket, content); });
     live.handle_message({{"type", "decision"}, {"decision_id", ticket->id},
                          {"action", "accept-session"}});
     assert(waiting.get().body["action"] == "unchanged");
@@ -791,14 +791,27 @@ int main() {
 
     spider::DecisionBroker traffic(std::chrono::seconds(1));
     const auto traffic_status = traffic.set_traffic_rules({{"rules", nlohmann::json::array({
-        {{"address", "1.1.1.1"}, {"mode", "ignore"}},
+        {{"address", "1.1.1.1"}, {"mode", "forget"}},
         {{"address", "192.168.99.1"}, {"mode", "focus"}},
     })}});
     assert(traffic_status["errors"].empty());
-    auto ignored = filter_event;
-    ignored["details"]["info"]["session"] = "tcp_10.0.0.1:1234+tcp_1.1.1.1:443";
-    assert(!traffic.prepare(ignored));
-    assert(ignored["decision"]["state"] == "ignored");
+    auto forgotten = filter_event;
+    forgotten["details"]["info"]["session"] = "tcp_10.0.0.1:1234+tcp_1.1.1.1:443";
+    assert(!traffic.prepare(forgotten));
+    assert(forgotten["decision"]["state"] == "forgotten");
+    assert(traffic.wait({}, forgotten).body["action"] == "not-interested");
+
+    const auto migrated_status = traffic.set_traffic_rules({{"rules", nlohmann::json::array({
+        {{"address", "1.1.1.1"}, {"mode", "ignore"}},
+    })}});
+    assert(migrated_status["errors"].empty());
+    assert(migrated_status["rules"][0]["mode"] == "forget");
+
+    const auto restored_after_migration = traffic.set_traffic_rules({{"rules", nlohmann::json::array({
+        {{"address", "1.1.1.1"}, {"mode", "forget"}},
+        {{"address", "192.168.99.1"}, {"mode", "focus"}},
+    })}});
+    assert(restored_after_migration["errors"].empty());
     auto focused = filter_event;
     assert(!traffic.prepare(focused));
     assert(focused["traffic_rule"]["mode"] == "focus");
@@ -845,12 +858,14 @@ int main() {
     assert(globbed["decision"]["state"] == "passed");
 
     const auto restored_traffic_status = traffic.set_traffic_rules({{"rules", nlohmann::json::array({
-        {{"address", "1.1.1.1"}, {"mode", "ignore"}},
+        {{"address", "1.1.1.1"}, {"mode", "forget"}},
         {{"address", "192.168.99.1"}, {"mode", "focus"}},
     })}});
     assert(restored_traffic_status["errors"].empty());
     spider::SessionStore traffic_store(20);
-    assert(spider::process_webhook(traffic_store, traffic, ignored).status == 200);
+    const auto forgotten_reply = spider::process_webhook(traffic_store, traffic, forgotten);
+    assert(forgotten_reply.status == 200);
+    assert(forgotten_reply.body["action"] == "not-interested");
     assert(traffic_store.events_after(0)["events"].empty());
     assert(spider::process_webhook(traffic_store, traffic, passed).status == 200);
     assert(traffic_store.events_after(0)["events"].size() == 1);

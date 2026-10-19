@@ -35,11 +35,11 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (enrichment) enrichment->observe(event);
     const auto enrichments = enrichment && raw_payload
         ? enrichment->process(event, *raw_payload) : std::vector<SxbnEnvelope>{};
-    if (event.value("decision", nlohmann::json::object()).value("state", "") != "ignored") {
+    if (event.value("decision", nlohmann::json::object()).value("state", "") != "forgotten") {
         store.apply(event, raw_payload, enrichments);
     }
     if (action == "access-request") return {200, {{"access-response", "accept"}}};
-    if (action == "connection-content") return decisions.wait(ticket);
+    if (action == "connection-content") return decisions.wait(ticket, event);
     return {200, nlohmann::json::object()};
 }
 

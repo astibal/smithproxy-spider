@@ -33,8 +33,8 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
             break;
         }
     }
-    if (matched && matched->mode == "ignore") {
-        event["decision"] = {{"state", "ignored"}, {"reason", "rule"}};
+    if (matched && matched->mode == "forget") {
+        event["decision"] = {{"state", "forgotten"}, {"reason", "rule"}};
         return {};
     }
     if ((matched && matched->mode == "pass") || (!matched && focus_active)) {
@@ -64,8 +64,14 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
     return ticket;
 }
 
-WebhookReply DecisionBroker::wait(const std::shared_ptr<Ticket>& ticket) {
-    if (!ticket) return {200, {{"action", "unchanged"}}};
+WebhookReply DecisionBroker::wait(const std::shared_ptr<Ticket>& ticket,
+                                  const nlohmann::json& event) {
+    if (!ticket) {
+        const auto state = event.value("decision", nlohmann::json::object())
+                               .value("state", "");
+        if (state == "forgotten") return {200, {{"action", "not-interested"}}};
+        return {200, {{"action", "unchanged"}}};
+    }
     std::unique_lock lock(mutex_);
     if (!ticket->ready.wait_for(lock, timeout_, [&] { return ticket->decided; })) {
         pending_.erase(ticket->id);
@@ -185,14 +191,15 @@ nlohmann::json DecisionBroker::set_traffic_rules(const nlohmann::json& message) 
             const auto kind = rule.value("kind", "address");
             const auto value = rule.value("value", "");
             const auto address = rule.value("address", "");
-            const auto mode = rule.value("mode", "");
+            auto mode = rule.value("mode", "");
+            if (mode == "ignore") mode = "forget"; // migrate pre-FORGET clients
             std::string error;
             const auto sift_rule = kind == "sift" || kind == "sift-glob";
             auto filter = sift_rule ? std::optional<SessionFilter>{} : SessionFilter::compile(
                 "(src host " + address + " or dst host " + address + ")", error);
             if ((sift_rule ? value.empty() : address.empty()) ||
                 (mode != "pass" && mode != "focus" && mode != "inspect" &&
-                                    mode != "ignore")) {
+                                    mode != "forget")) {
                 errors.push_back({{"address", address}, {"error", "invalid address or mode"}});
             } else if (!sift_rule && !filter) {
                 errors.push_back({{"address", address}, {"error", error}});

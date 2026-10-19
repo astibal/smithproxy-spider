@@ -24,7 +24,8 @@ public:
 
     explicit DecisionBroker(std::chrono::milliseconds timeout = std::chrono::seconds(10));
     [[nodiscard]] std::shared_ptr<Ticket> prepare(nlohmann::json& event);
-    [[nodiscard]] WebhookReply wait(const std::shared_ptr<Ticket>& ticket);
+    [[nodiscard]] WebhookReply wait(const std::shared_ptr<Ticket>& ticket,
+                                    const nlohmann::json& event);
     void handle_message(const nlohmann::json& message);
     [[nodiscard]] nlohmann::json set_auto_accept_rules(const nlohmann::json& message);
     [[nodiscard]] nlohmann::json auto_accept_rule_status() const;
