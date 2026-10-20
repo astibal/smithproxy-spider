@@ -12,7 +12,6 @@ resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
 resource.setrlimit(resource.RLIMIT_FSIZE, (2 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 request = json.load(sys.stdin)
-
 class Output:
     def __init__(self):
         self.text = ''
@@ -41,6 +40,7 @@ class Api:
         self.message = views.message
         self.metadata = views.metadata
         self.http1 = views.http1
+        self.http2 = views.http2
         starts, ends = info.get('L7_payload_start', []), info.get('L7_payload_end', [])
         self.l7_state = 'unavailable'
         self.l7_ranges = []
