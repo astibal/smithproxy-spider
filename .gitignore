@@ -1,7 +1,9 @@
 /build/
+/collections/
 /cmake-build-*/
 .cache/
 .idea/
 compile_commands.json
 __pycache__/
 *.pyc
+/tools/editor/node_modules/

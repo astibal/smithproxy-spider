@@ -1,5 +1,35 @@
 # Smithproxy Spider
 
+### Collection sample picker
+
+Inspection → **Choose sample** opens a read-only browser of backend collection files,
+100 entries per page. Select a file to preview its saved metadata and use its original
+payload/enrichments as offline script input. The preview is capped at 30,000 characters;
+loading a sample is limited to 64 MiB. Saved samples cannot submit live traffic decisions.
+The picker also links back to live Payloads.
+
+Follow views have **Collect** above Keep all. Collection is backend state, independent
+of the browser cache, and captures future callbacks (not already retained payloads).
+Connection views match the exact session ID; client/service views use their source
+and destination scope. This requires the updated backend, including authenticated
+`GET /api/inspection/collections?offset=0` and
+`GET /api/inspection/sample?id=...`.
+
+### Synthetic PCAPNG export
+
+Follow views offer **Synthetic** (retained application bytes over reconstructed TCP)
+and **Synthetic+Decoded**. The latter currently requires complete retained HTTP/2
+frames and decoded HPACK metadata for every header block. It writes literal HPACK
+names/values without Huffman or dynamic-table references, and replaces available
+complete gzip/deflate bodies using exact enrichment ranges. For transformed bodies,
+Content-Encoding and Content-Length are removed; DATA and header blocks are reframed.
+TCP sequence numbers, packet lengths and checksums are regenerated.
+
+Missing header context, incomplete inflate coverage, unsupported PUSH_PROMISE or
+non-H2 traffic produces an explicit error, not a partially rewritten download.
+Use Synthetic in those cases. Original retained bytes are never modified.
+Both filenames and PCAPNG section comments identify the synthetic nature of the export.
+
 Small, fast C++ webhook observer/controller for Smithproxy. The C++ backend uses
 `lmhpp` and `libmicrohttpd`; the frontend is a separate static application and
 can run on another machine.
@@ -57,11 +87,18 @@ interfaces, but keeps the Smithproxy API and callback hop on loopback.
 The first milestone intentionally returns immediately: content is unchanged and
 access requests are accepted. No request waits for a UI action.
 
-The Inspection editor keeps four local Python drafts. **Run on selected** sends
-the draft and selected payload to backend CPython and previews its result.
-**Deploy to backend** publishes a separate active snapshot; editing a draft does
-not change the deployed script. **Stop backend** disables automatic execution.
-Closing the browser does not stop a deployed script. JavaScript and Pyodide
+**Payloads** contains flows, counters and the payload viewer. **Inspection** contains
+a named local script library, editor/output and a separate ordered backend chain.
+The original four Python slots are imported into the library on first use.
+Drafts are retained in this browser; **Save to library** updates the saved version,
+not the backend. **Export script** downloads the editor source as `.py`.
+**Run on selected** sends the draft and selected payload to backend CPython and
+previews its result without deploying. **Deploy saved version** validates syntax
+and the optional session filter and creates a **disabled** chain item. Enable it
+explicitly after testing. Updating an existing enabled item replaces its deployed
+snapshot only after validation succeeds. Validation does not prove runtime correctness.
+Items execute top-down, in displayed order; reorder with arrows and **Apply order**.
+Closing the browser does not stop enabled backend items. JavaScript and Pyodide
 browser execution have been removed. API fields include bytes, text, side,
 session metadata, L7 ranges/bytes/encodings, annotations and enrichments.
 Returning `None` preserves content; returning text or bytes proposes replacement.
@@ -83,10 +120,68 @@ Headless clients use authenticated JSON endpoints (`X-Spider-Token`):
 - `POST /api/inspection`: `{ "script": "return api.bytes.upper()", "enabled": true, "scope": "all" }`.
 - `POST /api/inspection/rules`: same `rules` and `bypass_all` schema as the traffic-rules WebSocket message.
 
+Chain mutations use `POST /api/inspection` with the current `revision` from GET
+and an `operation`. Stale revisions are rejected, rather than overwriting another
+editor's changes. Operations:
+
+- `deploy`: `name`, `script`, `scope` (`rules` or `all`), optional `filter`
+  (SessionFilter expression, e.g. `dst port 443`), optional existing deployment `id`.
+- `enable`: `id`, boolean `enabled`. Enabling validates syntax again without
+  executing user code. New deployments are always disabled.
+- `reorder`: `ids`, every deployment ID exactly once in the desired order.
+- `remove`: `id`, removes only the deployed snapshot, not a local library script.
+
+At most 16 items can be deployed. Each message uses a consistent chain snapshot;
+changes affect subsequent messages. Each item gets the previous item's replacement.
+`None` means continue unchanged, not stop the chain. After a replacement, original
+L7 offsets/annotations and parsed enrichments are cleared for subsequent items
+(re-enrichment of rewritten content is not implemented yet). The entire chain
+has a 3-second worker wall-time budget. An error stops the chain and passes the
+original payload, not partially rewritten content. Per-item counters, last-run
+timestamps and version numbers are returned in `chain`; test runs count only in
+the global counters. Legacy single-script configuration is retained until the
+first chain operation, which preserves the legacy deployment as a chain item.
+
 Scope `rules` executes only INSPECT matches; `all` executes all content except
 PASS, FORGET, bypassed and auto-accepted callbacks. Deployment and rules currently
 live in server memory: after a backend restart, redeploy through these endpoints.
 They survive browser disconnects. Test runs never apply replacements to traffic.
+
+### Collection
+
+Right-click an endpoint and use **Toggle Collection**. The neutral `▣` badge is
+independent of the endpoint's Focus/Inspect color. Collection is a backend rule
+(`mode: "collect"`) and continues without a browser. Address rules and Sift
+labels/globs are supported. Hostname groups/globs are matched against the backend's
+observed hostname-to-address mappings, including later observations; no historical
+traffic is recovered. CIDR collection is not exposed yet.
+
+Matching content gets the same available enrichment as focused/inspected content.
+The backend writes one self-contained `spider-sample-v1` JSON per matching rule
+**before any script modifications**, with base64 original content, the full current
+event metadata, enrichment metadata/binary content, capture time, collection identity
+and available bounded session history. It is a snapshot, not a guaranteed complete
+connection capture: missing earlier protocol state is not fabricated.
+
+Collection does not enable scripts or manual interception. It also runs for
+passed/bypassed traffic; a matching FORGET rule does not suppress future callbacks
+while Collection needs them. Already-forgotten connections cannot be retroactively
+re-enabled. Rules are in memory until restart; sample files persist.
+
+`SPIDER_COLLECTION_DIR` sets the destination (default `collections` relative to the
+backend working directory). The supplied systemd service uses
+`/var/lib/smithproxy-spider/collections`. Directories have a readable sanitized
+endpoint prefix and stable hash; wildcard/path characters never become paths.
+Files are private (`0600`), directories owner-only, and completed samples appear
+by rename after flushing. `SPIDER_COLLECTION_MAX_BYTES` sets a **total store budget**
+(default 1 GiB, existing files counted at startup). Reaching it stops saving new
+samples, not traffic. No automatic deletion occurs. Inspection shows saved count,
+bytes, configured path and write errors; counters are per backend lifetime.
+One backend process should own a collection directory.
+
+Snapshots can contain credentials and personal data: restrict access and choose
+retention deliberately. This first version writes synchronously; background queues,
+collection browsing/indexing and replay into the editor are deferred.
 
 The **API Reference** tab loads the connected backend's generated schema. Search
 types and fields, expand entries for availability, descriptions and examples,
@@ -261,3 +356,44 @@ command only when a fresh test identity and configuration are wanted:
 ```sh
 tools/run-test-smithproxy.sh reset
 ```
+
+### Inspection editor
+
+The Inspection workspace uses a locally bundled CodeMirror 6 editor: Python
+highlighting, line numbers, folding, undo/redo, search and four-space indentation.
+`Ctrl+Space` opens API completion; Enter or Tab accepts a suggestion.
+Completion uses the backend's `/api/inspection/schema`, including indexed header
+access (`api.http1.headers[0].`). It is not a Python language server: inferred
+local variables and legacy helpers absent from that schema are not completed.
+Python execution and deployment validation remain on the backend.
+
+The checked-in `frontend/vendor/inspection-editor.js` needs no CDN or npm at
+runtime. To rebuild after editing `tools/editor/editor.js`:
+
+```sh
+cd tools/editor
+npm ci
+npm run build
+```
+
+Commit the bundle and generated license notices together with source changes.
+
+### Frontend freshness in the lab
+
+`tools/run-test-spider.sh` serves the UI with `tools/serve-frontend.py`.
+The server fingerprints the actual HTML/JS/CSS (including dirty changes), adds
+that version to asset URLs and disables HTTP caching. The header shows the loaded
+UI fingerprint, separate from the backend's event revision.
+Open pages check for updates every 30 seconds and on returning to the tab.
+Updates require an explicit reload confirmation because payloads are memory-only.
+
+For a standalone frontend:
+
+```sh
+python3 tools/serve-frontend.py 18763 --directory frontend
+```
+
+An existing `python3 -m http.server` process must be replaced once; copying new
+files alone does not change its cache policy or enable the version endpoint.
+Other static hosts must supply equivalent asset stamping/version metadata and
+cache headers; the UI reports `UI development` when served without stamping.
