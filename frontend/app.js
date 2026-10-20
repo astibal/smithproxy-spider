@@ -19,6 +19,7 @@ let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flow
 let payloadScope = localStorage.getItem('spider-payload-scope') === 'l7' ? 'l7' : 'wire';
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let replacementBase64 = null;
+let replacementPayload = null;
 let activeTab = 'workbench-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
 let inspectionPayloadsReceived = 0, inspectionLastSeenAt = 0;
 const inspectionIngress = [];
@@ -90,7 +91,7 @@ try {
     value: rule.value || rule.address,
     mode: rule.mode === 'ignore' ? 'forget' : rule.mode,
   })).filter(rule => rule && typeof rule.value === 'string' &&
-    ['pass', 'focus', 'inspect', 'forget'].includes(rule.mode));
+    ['pass', 'focus', 'inspect', 'forget', 'collect'].includes(rule.mode));
 } catch (_) {}
 let endpointAggregates = [];
 try {
@@ -192,15 +193,41 @@ async function bootstrapAndConnect() {
 byId('script-language').value = scriptLanguage;
 const savedSidebarWidth = Number(localStorage.getItem('spider-sidebar-width'));
 if (savedSidebarWidth >= 280) byId('sidebar').style.width = `${savedSidebarWidth}px`;
+let sidebarCollapsed = localStorage.getItem('spider-sidebar-collapsed') === 'true';
 if ('ResizeObserver' in window) {
   new ResizeObserver(entries => {
-    if (window.innerWidth > 800) {
-      localStorage.setItem('spider-sidebar-width', String(Math.round(entries[0].contentRect.width)));
+    if (!sidebarCollapsed && window.innerWidth > 800 && entries[0].contentRect.width >= 280) {
+      localStorage.setItem('spider-sidebar-width', String(Math.round(entries[0].target.getBoundingClientRect().width)));
     }
   }).observe(byId('sidebar'));
 }
 const sidebarResizer = byId('sidebar-resizer');
+const sidebarRail = document.createElement('div');
+sidebarRail.className = 'sidebar-rail';
+document.querySelector('main').classList.add('sidebar-layout');
+sidebarResizer.before(sidebarRail);
+sidebarRail.append(sidebarResizer);
+const sidebarToggle = document.createElement('button');
+sidebarToggle.id = 'sidebar-toggle';
+sidebarToggle.type = 'button';
+sidebarToggle.className = 'secondary sidebar-toggle';
+sidebarToggle.setAttribute('aria-controls', 'sidebar');
+sidebarRail.append(sidebarToggle);
+function setSidebarCollapsed(collapsed) {
+  sidebarCollapsed = collapsed;
+  byId('sidebar').hidden = collapsed;
+  sidebarResizer.hidden = collapsed;
+  document.querySelector('main').classList.toggle('sidebar-collapsed', collapsed);
+  sidebarToggle.textContent = collapsed ? '›' : '‹';
+  sidebarToggle.title = collapsed ? 'Show Traffic / Status sidebar' : 'Hide Traffic / Status sidebar';
+  sidebarToggle.setAttribute('aria-label', sidebarToggle.title);
+  sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
+  localStorage.setItem('spider-sidebar-collapsed', String(collapsed));
+}
+sidebarToggle.onclick = () => setSidebarCollapsed(!sidebarCollapsed);
+setSidebarCollapsed(sidebarCollapsed);
 sidebarResizer.onpointerdown = event => {
+  if (sidebarCollapsed) return;
   const sidebar = byId('sidebar');
   const startX = event.clientX, startWidth = sidebar.getBoundingClientRect().width;
   sidebarResizer.setPointerCapture(event.pointerId);
@@ -280,15 +307,11 @@ endpointLimit.onchange = () => {
   renderEndpointBuilder();
 };
 const workbenchLayout = byId('workbench-layout');
-const savedPayloadPane = Number(localStorage.getItem('spider-payload-pane'));
 const savedPayloadListHeight = Number(localStorage.getItem('spider-payload-list-height'));
 const savedPayloadViewHeight = Number(localStorage.getItem('spider-payload-view-height'));
 const savedCodeSize = Number(localStorage.getItem('spider-code-size'));
 let codeSize = savedCodeSize >= 11 && savedCodeSize <= 22 ? savedCodeSize : 13;
-if (savedPayloadPane >= 20 && savedPayloadPane <= 75) {
-  workbenchLayout.style.setProperty('--payload-pane', `${savedPayloadPane}%`);
-}
-workbenchLayout.style.setProperty('--code-size', `${codeSize}px`);
+document.querySelector('.workspace').style.setProperty('--code-size', `${codeSize}px`);
 workbenchLayout.style.setProperty('--payload-list-height', `${savedPayloadListHeight >= 80 ? savedPayloadListHeight : 155}px`);
 workbenchLayout.style.setProperty('--payload-view-height', `${savedPayloadViewHeight >= 80 ? savedPayloadViewHeight : 300}px`);
 
@@ -356,6 +379,18 @@ function ruleLabel(rule) {
 function expandedTrafficRules() {
   const expanded = [];
   for (const rule of trafficRules) {
+    if (rule.mode === 'collect' && ['session', 'filter'].includes(rule.kind)) {
+      expanded.push({...rule});
+      continue;
+    }
+    if (rule.mode === 'collect' && rule.kind === 'address') {
+      expanded.push({id: rule.id, kind: rule.kind, value: rule.value, address: rule.value, mode: rule.mode});
+      continue;
+    }
+    if (rule.mode === 'collect' && ['hostname-glob', 'hostname-suffix'].includes(rule.kind)) {
+      expanded.push({id: rule.id, kind: rule.kind, value: rule.value, mode: rule.mode});
+      continue;
+    }
     if (rule.kind === 'sift' || rule.kind === 'sift-glob') {
       expanded.push({id: rule.id, kind: rule.kind, value: rule.value, mode: rule.mode});
       continue;
@@ -381,7 +416,7 @@ function renderTrafficRules() {
   byId('focus-indicator').hidden = !trafficRules.some(rule => rule.mode === 'focus');
   byId('bypass-indicator').hidden = !bypassAll;
   byId('bypass-all').setAttribute('aria-pressed', String(bypassAll));
-  const counts = {pass: 0, focus: 0, inspect: 0, forget: 0};
+  const counts = {pass: 0, focus: 0, inspect: 0, forget: 0, collect: 0};
   for (const rule of trafficRules) ++counts[rule.mode];
   const breakdown = Object.entries(counts).filter(([, count]) => count)
     .map(([mode, count]) => `${mode.toUpperCase()} ${count}`).join(' · ');
@@ -678,8 +713,38 @@ function aggregateForAddress(address) {
 }
 
 function trafficRuleFor(address) {
-  return trafficRules.find(rule => rule.kind === 'address' && rule.value === address) ||
-    trafficRules.find(rule => rule.kind !== 'address' && addressMatchesAggregate(address, rule));
+  return trafficRules.find(rule => rule.mode !== 'collect' && rule.kind === 'address' && rule.value === address) ||
+    trafficRules.find(rule => rule.mode !== 'collect' && rule.kind !== 'address' && addressMatchesAggregate(address, rule));
+}
+
+function restoreTrafficRules(rules) {
+  const normalized = rules.map(rule => ({
+    ...rule, kind: rule.kind || 'address', value: rule.value || rule.address,
+  }));
+  // The backend stores expanded IP rules; recover their GUI aggregate identity
+  // only when every child agrees. Never resurrect a locally saved stale mode.
+  for (const aggregate of endpointAggregates) {
+    const children = normalized.filter(rule => rule.kind === 'address' &&
+      rule.id === `${aggregate.id}@${rule.value}`);
+    if (!children.length || new Set(children.map(rule => rule.mode)).size !== 1) continue;
+    for (const child of children) normalized.splice(normalized.indexOf(child), 1);
+    normalized.push({...aggregate, mode: children[0].mode,
+      matches: children.reduce((sum, rule) => sum + (rule.matches || 0), 0)});
+  }
+  return normalized;
+}
+
+function collectionBadge(button, target) {
+  const rule = trafficRules.find(rule => rule.mode === 'collect' &&
+    ((rule.kind === target.kind && rule.value === target.value) ||
+     (target.kind === 'address' && addressMatchesAggregate(target.value, rule))));
+  if (!rule) return;
+  const badge = document.createElement('span');
+  badge.className = 'collection-badge';
+  badge.textContent = '▣';
+  badge.title = 'Collection enabled on backend — original payload and metadata';
+  badge.setAttribute('aria-label', 'Collection enabled');
+  button.append(badge);
 }
 
 function endpointRulePriority(address) {
@@ -995,20 +1060,94 @@ function attachEndpointScrollHint(target) {
   requestAnimationFrame(refresh);
 }
 
-function renderEndpointBuilder() {
-  const now = Date.now();
-
+const endpointWidthDefaults = {src: 1, dst: 1, dport: .65};
+let endpointWidths = {...endpointWidthDefaults};
+try {
+  const saved = JSON.parse(localStorage.getItem('spider-endpoint-widths') || '{}');
+  for (const key of Object.keys(endpointWidths)) {
+    if (Number.isFinite(saved[key]) && saved[key] > 0 && saved[key] < 100) endpointWidths[key] = saved[key];
+  }
+} catch (_) {}
+function layoutEndpointColumns() {
   const enabledDimensions = sessionGroupOrder.filter(key => sessionGroupsEnabled.has(key));
   const columns = byId('endpoint-columns');
   columns.style.gridTemplateColumns = enabledDimensions.length
-    ? enabledDimensions.map(key => key === 'dport'
-      ? 'minmax(52px,max-content)' : 'minmax(0,1fr)').join(' ')
+    ? enabledDimensions.map(key => `minmax(44px,${endpointWidths[key]}fr)`).join(' ')
     : '1fr';
-  for (const column of columns.children) {
+  for (const column of columns.querySelectorAll(':scope > [data-dimension]')) {
     const dimension = column.dataset.dimension;
     column.hidden = !sessionGroupsEnabled.has(dimension);
     column.style.order = String(sessionGroupOrder.indexOf(dimension));
+    const handle = columns.querySelector(`.endpoint-column-resizer[data-owner="${dimension}"]`);
+    if (handle) {
+      const index = enabledDimensions.indexOf(dimension);
+      handle.dataset.next = enabledDimensions[index + 1] || '';
+      handle.style.gridColumn = `${index + 1} / ${index + 2}`;
+      handle.style.gridRow = '1 / 2';
+      handle.hidden = index < 0 || index === enabledDimensions.length - 1;
+      handle.setAttribute('aria-valuenow', String(Math.round(100 * endpointWidths[dimension] /
+        enabledDimensions.reduce((sum, key) => sum + endpointWidths[key], 0))));
+    }
   }
+}
+for (const column of byId('endpoint-columns').querySelectorAll(':scope > [data-dimension]')) {
+  const key = column.dataset.dimension;
+  const handle = document.createElement('span');
+  handle.className = 'endpoint-column-resizer';
+  handle.dataset.owner = key;
+  handle.tabIndex = 0;
+  handle.setAttribute('role', 'separator');
+  handle.setAttribute('aria-orientation', 'vertical');
+  handle.setAttribute('aria-label', `Resize ${key === 'src' ? 'Sources' : key === 'dst' ? 'Destinations' : 'Ports'} column`);
+  handle.setAttribute('aria-valuemin', '0');
+  handle.setAttribute('aria-valuemax', '100');
+  handle.title = 'Drag to resize · arrow keys · double-click to reset';
+  const resizePair = () => {
+    const next = handle.dataset.next;
+    const other = byId('endpoint-columns').querySelector(`[data-dimension="${next}"]`);
+    if (!other) return null;
+    return {next, width: column.getBoundingClientRect().width,
+      total: column.getBoundingClientRect().width + other.getBoundingClientRect().width,
+      weight: endpointWidths[key] + endpointWidths[next]};
+  };
+  const applyWidth = (pair, width) => {
+    const minimum = Math.min(52, pair.total / 3);
+    const fraction = Math.max(minimum, Math.min(pair.total - minimum, width)) / pair.total;
+    endpointWidths[key] = pair.weight * fraction;
+    endpointWidths[pair.next] = pair.weight * (1 - fraction);
+    layoutEndpointColumns();
+    localStorage.setItem('spider-endpoint-widths', JSON.stringify(endpointWidths));
+  };
+  handle.onpointerdown = event => {
+    if (event.button !== 0) return;
+    const pair = resizePair();
+    if (!pair) return;
+    event.preventDefault();
+    handle.focus();
+    const start = event.clientX;
+    handle.setPointerCapture(event.pointerId);
+    handle.onpointermove = move => applyWidth(pair, pair.width + move.clientX - start);
+  };
+  handle.onpointerup = handle.onpointercancel = handle.onlostpointercapture = () => { handle.onpointermove = null; };
+  handle.onkeydown = event => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    const pair = resizePair();
+    if (!pair) return;
+    event.preventDefault();
+    applyWidth(pair, pair.width + (event.key === 'ArrowLeft' ? -12 : 12));
+  };
+  handle.ondblclick = () => {
+    const pair = resizePair();
+    if (pair) applyWidth(pair, pair.total * endpointWidthDefaults[key] /
+      (endpointWidthDefaults[key] + endpointWidthDefaults[pair.next]));
+  };
+  byId('endpoint-columns').append(handle);
+}
+layoutEndpointColumns();
+
+function renderEndpointBuilder() {
+  const now = Date.now();
+  layoutEndpointColumns();
 
   const portTarget = byId('observed-ports');
   portTarget.replaceChildren();
@@ -1045,6 +1184,7 @@ function renderEndpointBuilder() {
     count.textContent = `${matches.length} labels · ${matches.reduce((sum, [, value]) => sum + value, 0)}`;
     button.append(label, count);
     button.oncontextmenu = event => openEndpointMenu(event, target);
+    collectionBadge(button, target);
     siftTarget.append(button);
   }
   for (const [classification, countValue] of [...observedSift]
@@ -1061,6 +1201,7 @@ function renderEndpointBuilder() {
     button.title = 'This rule takes effect after Sift classifies the flow; earlier payloads may already have passed.';
     button.oncontextmenu = event => openEndpointMenu(event,
       {id, kind: 'sift', value: classification});
+    collectionBadge(button, {kind: 'sift', value: classification});
     siftTarget.append(button);
   }
 
@@ -1080,6 +1221,7 @@ function renderEndpointBuilder() {
     button.append(address, count);
     decorateExpiringEndpoint(button, data, now);
     button.oncontextmenu = event => openEndpointMenu(event, host);
+    collectionBadge(button, {kind: 'address', value: host});
     sourceTarget.append(button);
   }
   attachEndpointScrollHint(sourceTarget);
@@ -1103,6 +1245,7 @@ function renderEndpointBuilder() {
       `${members.reduce((sum, [, data]) => sum + data.count, 0)}`;
     button.append(label, count);
     button.oncontextmenu = event => openEndpointMenu(event, aggregate);
+    collectionBadge(button, aggregate);
     destinationTarget.append(button);
   }
   const destinations = [...observedDestinations]
@@ -1120,6 +1263,7 @@ function renderEndpointBuilder() {
     hostButton.append(address, count);
     decorateExpiringEndpoint(hostButton, data, now);
     hostButton.oncontextmenu = event => openEndpointMenu(event, host);
+    collectionBadge(hostButton, {kind: 'address', value: host});
     destinationTarget.append(hostButton);
   }
   attachEndpointScrollHint(destinationTarget);
@@ -1271,7 +1415,7 @@ function scheduleRender(eventsChanged = false, payloadsChanged = false) {
     if (payloadsDirty && activeTab === 'workbench-tab') {
       if (selectedPayload) {
         payloadBytes = recordPayloadBytes(selectedPayload);
-        replacementBase64 = null;
+        if (replacementPayload !== selectedPayload) replacementBase64 = null;
         renderPayload();
       }
       renderPayloadList();
@@ -1404,7 +1548,7 @@ function appendAnnotationRail(target, record, wireBytes) {
   return true;
 }
 
-function appendAnnotatedPayload(target, bytes, annotations, mode) {
+function appendAnnotatedPayload(target, bytes, annotations, mode, segments = null) {
   if (!annotations.length) return false;
   const annotationAt = offset => annotations.find(item => offset >= item.start && offset < item.end);
   const appendRun = (text, annotation) => {
@@ -1440,7 +1584,14 @@ function appendAnnotatedPayload(target, bytes, annotations, mode) {
   }
   for (let offset = 0; offset < bytes.length; offset += 16) {
     const end = Math.min(offset + 16, bytes.length);
-    target.append(document.createTextNode(`${offset.toString(16).padStart(8, '0')}  `));
+    const label = `${offset.toString(16).padStart(8, '0')}  `;
+    if (segments?.find(segment => offset >= segment.start && offset < segment.end)?.changedOffset) {
+      const changed = document.createElement('span');
+      changed.className = 'inflated-offset';
+      changed.title = 'Offset in the expanded view, not the original wire offset';
+      changed.textContent = label;
+      target.append(changed);
+    } else target.append(document.createTextNode(label));
     appendRange(offset, end, (start, stop) => Array.from(bytes.subarray(start, stop),
       value => value.toString(16).padStart(2, '0')).join(' ') + (stop < end ? ' ' : ''));
     const used = (end - offset) * 3 - 1;
@@ -1450,6 +1601,27 @@ function appendAnnotatedPayload(target, bytes, annotations, mode) {
     target.append(document.createTextNode(`|${end < bytes.length ? '\n' : ''}`));
   }
   return true;
+}
+
+function renderProjectedPayload(target, bytes, projection, record, mode, annotationsEnabled) {
+  const annotations = [];
+  const original = annotationsEnabled ? contentAnnotations(record) : [];
+  for (const segment of projection.segments) {
+    if (segment.wireStart === null) {
+      annotations.push({start: segment.start, end: segment.end, kind: 'inflated'});
+    } else {
+      for (const annotation of original) {
+        const from = Math.max(segment.wireStart, annotation.start);
+        const to = Math.min(segment.wireStart + segment.end - segment.start, annotation.end);
+        if (to > from) annotations.push({...annotation,
+          start: segment.start + from - segment.wireStart,
+          end: segment.start + to - segment.wireStart});
+      }
+    }
+  }
+  // Even a range yielding no bytes can shift subsequent display offsets.
+  if (!annotations.length) annotations.push({start: 0, end: bytes.length, kind: 'plain'});
+  appendAnnotatedPayload(target, bytes, annotations, mode, projection.segments);
 }
 
 function l7PayloadSummary(view) {
@@ -1642,20 +1814,26 @@ function sniffHumanContentType(bytes) {
   return printable / inspected.length >= 0.85 ? 'text/plain' : null;
 }
 
+function enrichmentTitle(metadata = {}) {
+  const label = metadata.source?.kind ? annotationLabel({kind: metadata.source.kind})
+    : metadata.operation === 'hpack.decode' ? 'H2 headers' : 'Content';
+  return `${label}${metadata.operation ? ` (${metadata.operation})` : ''}`;
+}
+
 function humanRepresentation(record, records, fallbackBytes) {
   const enrichments = record?.enrichments || [];
   const payloadItem = [...enrichments].reverse().find(item => item?.payload?.length);
   if (payloadItem) {
     const contentType = enrichmentContentType(record, payloadItem, records);
     return {...humanContentKind(contentType), contentType, bytes: payloadItem.payload,
-      operation: payloadItem.metadata?.operation || 'derived content'};
+      operation: enrichmentTitle(payloadItem.metadata)};
   }
   const headerItem = [...enrichments].reverse().find(item => enrichmentHeaders(item).length);
   if (headerItem) {
     const headers = enrichmentHeaders(headerItem);
     const startLine = enrichmentStartLine(headerItem);
-    return {kind: 'headers', contentType: 'HTTP fields', operation: headerItem.metadata?.operation ||
-      'decoded headers', text: `${startLine ? `${startLine}\n` : ''}${headers.map(field =>
+    return {kind: 'headers', contentType: 'HTTP fields', operation: enrichmentTitle(headerItem.metadata),
+      text: `${startLine ? `${startLine}\n` : ''}${headers.map(field =>
         `${field.name}: ${field.value ?? ''}`).join('\n')}`};
   }
   const l7 = l7PayloadView(record);
@@ -1871,9 +2049,9 @@ function appendEnrichmentView(card, item, contentType) {
   return [button, floating];
 }
 
-function appendInlineEnrichments(target, record, records) {
+function appendInlineEnrichments(target, record, records, items = record.enrichments || []) {
   target.replaceChildren();
-  for (const item of record.enrichments || []) {
+  for (const item of items) {
     const metadata = item?.metadata || {};
     const headers = enrichmentHeaders(item);
     const card = document.createElement('details');
@@ -1881,7 +2059,7 @@ function appendInlineEnrichments(target, record, records) {
     card.open = true;
     const summary = document.createElement('summary');
     const operation = document.createElement('b');
-    operation.textContent = metadata.operation || 'derived content';
+    operation.textContent = enrichmentTitle(metadata);
     const description = document.createElement('span');
     const streamId = enrichmentStreamId(item);
     let contentType = metadata.content_type || 'application/octet-stream';
@@ -1905,11 +2083,13 @@ function appendInlineEnrichments(target, record, records) {
     provenance.textContent = parts.join(' · ');
     provenance.title = 'Origin of the ranges and metadata used to produce this derived view';
     summary.append(operation, description, provenance);
+    addExplicitFold(card, summary);
     card.append(summary);
     const view = appendEnrichmentView(card, item, contentType);
     if (view) summary.append(...view);
     if (headers.length) {
       const fields = document.createElement('pre');
+      fields.className = 'decoded-header-fields';
       const startLine = enrichmentStartLine(item);
       fields.textContent = `${startLine ? `${startLine}\n` : ''}${headers.map(field =>
         `${field.name}: ${field.value ?? ''}`).join('\n')}`;
@@ -1928,8 +2108,163 @@ function appendInlineEnrichments(target, record, records) {
   }
 }
 
+function addExplicitFold(card, summary) {
+  summary.tabIndex = -1;
+  summary.addEventListener('click', event => event.preventDefault());
+  summary.addEventListener('keydown', event => {
+    if (event.target === summary && ['Enter', ' '].includes(event.key)) event.preventDefault();
+  });
+  const fold = document.createElement('button');
+  fold.type = 'button';
+  fold.className = 'payload-fold';
+  const update = () => {
+    fold.textContent = card.open ? '▾' : '▸';
+    fold.setAttribute('aria-expanded', String(card.open));
+    fold.setAttribute('aria-label', card.open ? 'Collapse payload' : 'Expand payload');
+  };
+  fold.onclick = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    card.open = !card.open;
+    update();
+  };
+  card.addEventListener('toggle', update);
+  update();
+  summary.prepend(fold);
+}
+
+function inflateEdits(item, wireLength) {
+  const ranges = item.metadata?.source?.ranges;
+  if (!Array.isArray(ranges) || !ranges.length) return null;
+  const decoded = item.metadata.source.decoded_ranges ||
+    (ranges.length === 1 ? [[0, item.payload.length]] : null);
+  if (!Array.isArray(decoded) || decoded.length !== ranges.length) return null;
+  let wireEnd = 0, decodedEnd = 0;
+  const edits = [];
+  for (let i = 0; i < ranges.length; i++) {
+    const range = ranges[i], output = decoded[i];
+    if (!Array.isArray(range) || !Array.isArray(output) ||
+        range.length !== 2 || output.length !== 2 ||
+        ![...range, ...output].every(Number.isInteger)) return null;
+    const [start, end] = range, [from, to] = output;
+    if (start < wireEnd || end <= start || end > wireLength ||
+        from !== decodedEnd || to < from || to > item.payload.length) return null;
+    edits.push({start, end, bytes: item.payload.subarray(from, to)});
+    wireEnd = end; decodedEnd = to;
+  }
+  return decodedEnd === item.payload.length ? edits : null;
+}
+
+function projectInflate(record, item, wireBytes) {
+  const source = payloadScope === 'l7' ? l7PayloadView(record, wireBytes).ranges
+    : [{start: 0, end: wireBytes.length}];
+  const segments = [];
+  let length = 0, originalOffset = 0;
+  function add(bytes, wireStart, baseOffset) {
+    if (!bytes.length) return;
+    segments.push({start: length, end: length + bytes.length, bytes, wireStart,
+      changedOffset: wireStart === null || length !== baseOffset});
+    length += bytes.length;
+  }
+  for (const range of source) {
+    let cursor = range.start;
+    for (const edit of item.edits) {
+      if (edit.end <= range.start || edit.start >= range.end) continue;
+      // Do not guess how a partial range maps to decoded output.
+      if (edit.start < range.start || edit.end > range.end) return null;
+      add(wireBytes.subarray(cursor, edit.start), cursor, originalOffset + cursor - range.start);
+      add(edit.bytes, null, originalOffset + edit.start - range.start);
+      cursor = edit.end;
+    }
+    add(wireBytes.subarray(cursor, range.end), cursor, originalOffset + cursor - range.start);
+    originalOffset += range.end - range.start;
+  }
+  const bytes = new Uint8Array(length);
+  for (const segment of segments) bytes.set(segment.bytes, segment.start);
+  return {bytes, segments};
+}
+
+function decompressedText(record, records) {
+  const items = (record?.enrichments || []).filter(item =>
+    /^(gzip|deflate)\.inflate$/.test(item?.metadata?.operation || '') && item.payload?.length);
+  // Do not merge separate streams or silently hide additional decoded fragments.
+  if (items.length !== 1) return null;
+  const item = items[0];
+  const edits = inflateEdits(item, recordPayloadBytes(record).length);
+  if (!edits) return null;
+  let contentType = enrichmentContentType(record, item, records);
+  if (contentType.split(';', 1)[0] === 'application/octet-stream')
+    contentType = sniffHumanContentType(item.payload) || contentType;
+  return humanContentKind(contentType).kind === 'text'
+    ? {...item, edits, contentType, metadata: {...item.metadata, content_type: contentType}} : null;
+}
+
+function flowPayloadSource(record, records, followed, wireBytes) {
+  const decoded = decompressedText(record, records);
+  const projection = decoded && projectInflate(record, decoded, wireBytes);
+  const derived = projection && !followed.originalPayloads?.has(String(record.revision))
+    ? {...decoded, ...projection} : null;
+  return {derived, bytes: derived ? derived.bytes : flowPayloadBytes(record, wireBytes),
+    previewRecord: decoded ? {...record, enrichments: []} : record};
+}
+
 function attachInlineEnrichments(container, record, records, followed) {
   if (!record?.enrichments?.length) return null;
+  let decoded = decompressedText(record, records);
+  if (decoded && !projectInflate(record, decoded, recordPayloadBytes(record))) decoded = null;
+  if (decoded) {
+    for (const rail of container.querySelectorAll('.content-annotation-rail')) {
+      rail.title = 'Original wire annotations — offsets refer to compressed/original bytes, not inflated content';
+      rail.setAttribute('aria-label', 'Original wire content annotations');
+    }
+    followed.originalPayloads ||= new Set();
+    const revision = String(record.revision);
+    const active = !followed.originalPayloads.has(revision);
+    container.classList.toggle('derived-payload', active);
+    const marker = enrichmentMarker({enrichments: [decoded]}, () => {
+      if (followed.originalPayloads.has(revision)) followed.originalPayloads.delete(revision);
+      else followed.originalPayloads.add(revision);
+      const workspace = byId(followed.id).closest('.workspace');
+      const scroll = workspace.scrollTop;
+      followed.renderedMode = null;
+      renderFlowTab(followed.key);
+      requestAnimationFrame(() => { workspace.scrollTop = scroll; });
+    }, active);
+    marker.title += active ? '\nShowing decompressed text · click for original payload'
+      : '\nShowing original payload · click for decompressed text';
+    // Inflated bytes replace only the body view, not sibling enrichments
+    // (e.g. HPACK headers from the same HTTP/2 payload).
+    const remaining = record.enrichments.filter(item => item.payload !== decoded.payload);
+    if (!remaining.length) return marker;
+    followed.openEnrichments ||= new Set();
+    const body = container.querySelector(':scope > .flow-payload-content, :scope > pre');
+    const bodyIndex = record.enrichments.findIndex(item => item.payload === decoded.payload);
+    const panels = [];
+    for (const [items, before] of [
+      [record.enrichments.slice(0, bodyIndex), true],
+      [record.enrichments.slice(bodyIndex + 1), false],
+    ]) {
+      if (!items.length) continue;
+      const panel = document.createElement('div');
+      panel.className = 'inline-enrichments';
+      panel.hidden = !followed.openEnrichments.has(revision);
+      appendInlineEnrichments(panel, record, records, items);
+      if (before) body.before(panel);
+      else body.after(panel);
+      panels.push(panel);
+    }
+    const detailsMarker = enrichmentMarker({enrichments: remaining}, () => {
+      const hidden = !panels[0].hidden;
+      for (const panel of panels) panel.hidden = hidden;
+      detailsMarker.setAttribute('aria-pressed', String(!hidden));
+      if (hidden) followed.openEnrichments.delete(revision);
+      else followed.openEnrichments.add(revision);
+    }, !panels[0].hidden);
+    const markers = document.createElement('span');
+    markers.className = 'flow-payload-badges';
+    markers.append(detailsMarker, marker);
+    return markers;
+  }
   followed.openEnrichments ||= new Set();
   const revision = String(record.revision);
   const panel = document.createElement('div');
@@ -2108,15 +2443,8 @@ function setPayloadMode(mode) {
 
 function setCodeSize(next) {
   codeSize = Math.max(11, Math.min(22, next));
-  workbenchLayout.style.setProperty('--code-size', `${codeSize}px`);
+  document.querySelector('.workspace').style.setProperty('--code-size', `${codeSize}px`);
   localStorage.setItem('spider-code-size', String(codeSize));
-}
-
-function setPayloadPane(clientX) {
-  const bounds = workbenchLayout.getBoundingClientRect();
-  const percent = Math.max(20, Math.min(75, (clientX - bounds.left) / bounds.width * 100));
-  workbenchLayout.style.setProperty('--payload-pane', `${percent}%`);
-  localStorage.setItem('spider-payload-pane', percent.toFixed(1));
 }
 
 function renderPayloadList() {
@@ -2377,9 +2705,43 @@ function scopeLabel(scope, records = []) {
   return `${resolvedAddress(scope.sourceHost)}:* → * · ${count} connections · ${destinations} destinations · live`;
 }
 
-function openFlowTab(sessionId, type = 'connection') {
+const followPreferenceKeys = ['view', 'expanded', 'collapsed', 'laneFit', 'laneWidth', 'laneFont',
+  'payloadCaps', 'keepAll', 'timeMode', 'l7Context', 'annotations', 'human', 'laneOrder'];
+let restoringFollowTabs = false;
+function saveFollowTabs() {
+  if (restoringFollowTabs) return;
+  try {
+    localStorage.setItem(`spider-follow-tabs:${baseUrl()}`, JSON.stringify({
+      active: activeTab,
+      tabs: [...followedFlows.values()].map(flow => ({
+        scope: Object.fromEntries(['key', 'type', 'sessionId', 'label', 'title', 'sourceHost',
+          'destinationHost', 'destinationPort'].map(key => [key, flow[key]])),
+        preferences: Object.fromEntries(followPreferenceKeys.map(key => [key, flow[key]])),
+        visibleLanes: [...flow.visibleLanes], laneWidths: [...flow.laneWidths],
+      })),
+    }));
+  } catch (_) {}
+}
+function restoreFollowTabs() {
+  restoringFollowTabs = true;
+  try {
+    const saved = JSON.parse(localStorage.getItem(`spider-follow-tabs:${baseUrl()}`) || 'null');
+    for (const item of (saved?.tabs || []).slice(0, 100)) {
+      const scope = item.scope;
+      if (!scope || typeof scope.key !== 'string' || typeof scope.title !== 'string' ||
+          !['connection', 'service', 'client'].includes(scope.type)) continue;
+      openFlowTab(scope.sessionId || scope.key, scope.type, item);
+    }
+    if (saved?.active && byId(saved.active)?.classList.contains('tab-panel')) showTab(saved.active);
+  } catch (_) {
+    // Invalid or unavailable browser storage must not prevent startup.
+  } finally { restoringFollowTabs = false; }
+}
+window.addEventListener('pagehide', saveFollowTabs);
+
+function openFlowTab(sessionId, type = 'connection', saved = null) {
   if (!sessionId) return;
-  const scope = flowScope(sessionId, type);
+  const scope = saved?.scope || flowScope(sessionId, type);
   const id = flowTabId(scope.key);
   if (!followedFlows.has(scope.key)) {
     const followed = {...scope, id, evicted: 0,
@@ -2390,6 +2752,14 @@ function openFlowTab(sessionId, type = 'connection') {
       keepAll: false, timeMode: 'elapsed',
       l7Context: false, annotations: true, human: false};
     followed.laneWidths = new Map();
+    if (saved) {
+      for (const key of followPreferenceKeys) {
+        if (saved.preferences?.[key] !== undefined) followed[key] = saved.preferences[key];
+      }
+      followed.visibleLanes = new Set(saved.visibleLanes || []);
+      followed.initializedLanes = new Set(followed.laneOrder);
+      followed.laneWidths = new Map(saved.laneWidths || []);
+    }
     followedFlows.set(scope.key, followed);
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.tab = id; button.className = 'flow-tab-button';
@@ -2409,6 +2779,7 @@ function openFlowTab(sessionId, type = 'connection') {
   }
   renderFlowTab(scope.key);
   showTab(id);
+  saveFollowTabs();
 }
 
 function closeFlowTab(scopeKey) {
@@ -2419,6 +2790,7 @@ function closeFlowTab(scopeKey) {
   followedFlows.delete(scopeKey);
   byId('flow-tab-separator').hidden = followedFlows.size === 0;
   if (activeTab === followed.id) showTab('workbench-tab');
+  saveFollowTabs();
 }
 
 function flowDisplayBytes(followed, side, bytes) {
@@ -2476,9 +2848,12 @@ function flowLaneColor(followed, sessionId) {
 function renderFlowStreamPayload(chunk, bytes, level, context = null) {
   const limits = [640, 8192, bytes.length];
   const limit = Math.min(bytes.length, limits[level] ?? limits[0]);
-  const content = chunk.querySelector('pre');
+  const content = chunk.querySelector(':scope > .flow-payload-content > pre');
   content.replaceChildren();
-  if (!context || !appendL7Context(content, context.record, context.wireBytes, 'ascii', limit)) {
+  if (chunk.inflatedView) {
+    const {projection, record, annotations} = chunk.inflatedView;
+    renderProjectedPayload(content, bytes.subarray(0, limit), projection, record, 'ascii', annotations);
+  } else if (!context || !appendL7Context(content, context.record, context.wireBytes, 'ascii', limit)) {
     appendMixedAscii(content, bytes.subarray(0, limit));
   }
   const remaining = bytes.length - limit;
@@ -2548,7 +2923,7 @@ function clearFollowedFlow(followed) {
   scheduleRender(false, true);
 }
 
-function exportFollowedFlow(followed, records) {
+function exportFollowedFlow(followed, records, decoded = false) {
   const packets = [];
   for (const record of records) {
     const info = record.event.details?.info || {};
@@ -2562,6 +2937,7 @@ function exportFollowedFlow(followed, records) {
       destinationPort: Number(connection.destinationPort),
       side: info.side === 'R' ? 'R' : 'L',
       payload: recordPayloadBytes(record),
+      enrichments: record.enrichments || [],
       timestampMs: Number(record.event.spider_received_at_ms),
     });
   }
@@ -2570,8 +2946,14 @@ function exportFollowedFlow(followed, records) {
       'No retained payload had a usable IP connection tuple.', 'warn');
     return;
   }
-  const bytes = SpiderPcapng.build(packets);
-  const filename = `spider-${followed.type}-${Date.now()}.pcapng`;
+  let bytes;
+  try { bytes = SpiderPcapng.build(packets, {decoded}); }
+  catch (error) {
+    addActivity('system', 'PCAPNG', 'Decoded export unavailable', error.message, 'warn');
+    alert(`Synthetic+Decoded: ${error.message}\nUse Synthetic to export retained original bytes.`);
+    return;
+  }
+  const filename = `spider-${followed.type}-synthetic${decoded ? '-decoded' : ''}-${Date.now()}.pcapng`;
   const link = document.createElement('a');
   link.href = URL.createObjectURL(new Blob([bytes], {type: 'application/x-pcapng'}));
   link.download = filename;
@@ -2579,6 +2961,18 @@ function exportFollowedFlow(followed, records) {
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   addActivity('system', 'PCAPNG', `${filename} exported`,
     `${packets.length} retained payload blocks from ${new Set(packets.map(packet => packet.sessionId)).size} synthetic TCP flow(s).`);
+}
+
+function addFlowDirection(card, side) {
+  const gutter = document.createElement('span');
+  gutter.className = `flow-direction-gutter ${side}`;
+  gutter.setAttribute('aria-hidden', 'true');
+  for (let index = 0; index < 3; index++) {
+    const arrow = document.createElement('span');
+    arrow.textContent = side === 'R' ? '<' : '>';
+    gutter.append(arrow);
+  }
+  card.append(gutter);
 }
 
 function renderFlowTab(scopeKey) {
@@ -2610,13 +3004,15 @@ function renderFlowTab(scopeKey) {
       '<button type="button" data-flow-annotations title="Show Smithproxy protocol annotations over each payload">Annotations</button>' +
       '<button type="button" data-flow-expand="all">Expand all</button>' +
       '<button type="button" data-flow-expand="none">Collapse all</button>' +
-      '<button type="button" data-export-pcapng title="Export retained wire payloads as synthetic TCP traffic">PCAPNG</button>' +
+      '<select data-export-mode aria-label="PCAPNG export mode"><option value="synthetic">Synthetic</option><option value="decoded">Synthetic+Decoded</option></select>' +
+      '<button type="button" data-export-pcapng title="Export retained payloads as synthetic TCP traffic; decoded mode rebuilds H2 with literal HPACK and inflated bodies">PCAPNG</button>' +
       '<span class="lane-layout-controls"><button type="button" data-lane-fit>Fit width</button>' +
       '<button type="button" data-lane-width="-1" title="Narrower lanes">W−</button>' +
       '<button type="button" data-lane-width="1" title="Wider lanes">W+</button>' +
       '<label class="lane-width-slider" title="Uniform width of expanded lanes"><input type="range" min="120" max="640" step="10" data-lane-width-slider><output></output></label>' +
       '<button type="button" data-lane-font="-1" title="Smaller lane font">A−</button>' +
       '<button type="button" data-lane-font="1" title="Larger lane font">A+</button></span></div></div>' +
+      '<div class="flow-collection-toolbar"><button type="button" data-flow-collect aria-pressed="false">▣ Collect</button> <small data-collect-status></small></div>' +
       '<div class="flow-cache-toolbar"><label class="flow-keep-all"><input type="checkbox" data-keep-all> Keep all</label>' +
       '<label>View <input class="flow-view-limit" type="number" min="1" max="8192" step="1"> MiB</label>' +
       '<label>L bytes <select data-payload-cap="L"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
@@ -2626,6 +3022,28 @@ function renderFlowTab(scopeKey) {
       '<div class="flow-gap flow-eviction" hidden></div>' +
       '<div class="flow-gap flow-window" hidden></div><div class="flow-stream"></div>';
     const toolbar = panel.querySelector('.flow-follow-toolbar');
+    panel.querySelector('[data-flow-collect]').onclick = async () => {
+      const button = panel.querySelector('[data-flow-collect]');
+      button.disabled = true;
+      const id = `collect-flow:${followed.key}`;
+      const existing = trafficRules.some(rule => rule.id === id && rule.mode === 'collect');
+      const rule = followed.type === 'connection'
+        ? {kind: 'session', value: followed.sessionId}
+        : {kind: 'filter', value: `src host ${followed.sourceHost}` +
+          (followed.type === 'service' ? ` and dst host ${followed.destinationHost} and dst port ${followed.destinationPort}` : '')};
+      try {
+        const rules = expandedTrafficRules().filter(r => r.id !== id);
+        if (!existing) rules.push({id, mode: 'collect', ...rule});
+        const result = await inspectionRequest('/rules', {rules, bypass_all: bypassAll});
+        if (result.errors?.length) throw new Error(JSON.stringify(result.errors));
+        trafficRules = restoreTrafficRules(result.rules);
+        renderTrafficRules();
+        renderEndpointBuilder();
+        await refreshBackendInspection();
+        renderFlowTab(scopeKey);
+      } catch (error) { panel.querySelector('[data-collect-status]').textContent = error.message; }
+      finally { button.disabled = false; }
+    };
     const updateToolbarHeight = () => panel.style.setProperty(
       '--flow-toolbar-height', `${toolbar.getBoundingClientRect().height}px`);
     new ResizeObserver(updateToolbarHeight).observe(toolbar);
@@ -2658,7 +3076,7 @@ function renderFlowTab(scopeKey) {
     panel.querySelector('[data-export-pcapng]').onclick = () => {
       const exportRecords = payloadRecords.filter(record => scopeMatches(followed, record))
         .sort((a, b) => a.revision - b.revision);
-      exportFollowedFlow(followed, exportRecords);
+      exportFollowedFlow(followed, exportRecords, panel.querySelector('[data-export-mode]').value === 'decoded');
     };
     panel.querySelector('[data-flow-expand="all"]').onclick = () => {
       followed.expanded = true;
@@ -2745,6 +3163,9 @@ function renderFlowTab(scopeKey) {
     };
     panel.querySelector('[data-clear-flow]').onclick = () => clearFollowedFlow(followed);
   }
+  const collecting = trafficRules.some(rule => rule.id === `collect-flow:${followed.key}` && rule.mode === 'collect');
+  panel.querySelector('[data-flow-collect]').setAttribute('aria-pressed', String(collecting));
+  panel.querySelector('[data-collect-status]').textContent = collecting ? 'Collecting on backend · future payloads + metadata' : '';
   for (const button of panel.querySelectorAll('[data-flow-view]')) {
     button.setAttribute('aria-pressed', String(button.dataset.flowView === followed.view));
   }
@@ -2816,6 +3237,7 @@ function renderFlowTab(scopeKey) {
     stream.replaceChildren();
     delete stream.dataset.layoutKey;
     delete stream.dataset.renderKind;
+    delete stream.dataset.responseDecorationKey;
     followed.renderedMode = renderMode;
   }
   if (followed.view === 'lanes') {
@@ -2834,13 +3256,14 @@ function renderFlowTab(scopeKey) {
     if (rendered.has(recordRevision)) continue;
     const info = record.event.details?.info || {};
     const wireBytes = recordPayloadBytes(record);
-    const completeBytes = flowPayloadBytes(record, wireBytes);
+    const {derived, bytes: completeBytes, previewRecord} = flowPayloadSource(record, records, followed, wireBytes);
     const side = info.side === 'R' ? 'R' : 'L';
     const bytes = flowDisplayBytes(followed, side, completeBytes);
     const chunk = followed.view === 'stream'
       ? document.createElement('article') : document.createElement('details');
     chunk.className = `${followed.view === 'stream' ? 'flow-stream-chunk' : 'flow-chunk'} ${side}`;
     chunk.dataset.revision = recordRevision;
+    if (derived) chunk.inflatedView = {projection: derived, record, annotations: followed.annotations};
     const direction = document.createElement('b');
     direction.textContent = side;
     const metadata = document.createElement('small');
@@ -2865,20 +3288,26 @@ function renderFlowTab(scopeKey) {
           const next = Number(expand.dataset.nextLevel || 0);
           followed.cardLevels.set(record.revision, next);
           renderFlowStreamPayload(chunk, bytes, next,
-            followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
+            !derived && followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
         };
         metadata.append(document.createElement('br'), expand);
       }
-      if (followed.annotations && !followed.human) appendAnnotationRail(payload, record, wireBytes);
+      if (followed.annotations && (!followed.human || derived)) appendAnnotationRail(payload, record, wireBytes);
       payload.append(content);
       chunk.append(direction, metadata, payload);
       const enriched = attachInlineEnrichments(chunk, record, records, followed);
       if (enriched) badges.append(enriched);
-      if (followed.human) renderHumanPreview(content, record, records, bytes);
+      if (followed.human && !derived) renderHumanPreview(content, previewRecord, records, bytes);
       else renderFlowStreamPayload(chunk, bytes, followed.cardLevels.get(record.revision) || 0,
-        followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
+        !derived && followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null);
     } else {
       const summary = document.createElement('summary');
+      for (const node of [...metadata.childNodes]) {
+        if (node.nodeType !== Node.TEXT_NODE) continue;
+        const label = document.createElement('span');
+        label.textContent = node.textContent;
+        node.replaceWith(label);
+      }
       summary.append(direction, metadata);
       const expand = document.createElement('button');
       expand.type = 'button';
@@ -2893,30 +3322,43 @@ function renderFlowTab(scopeKey) {
       };
       summary.append(expand);
       const content = document.createElement('pre');
-      if (followed.human) {
-        renderHumanPreview(content, record, records, bytes);
-      } else if (!(followed.l7Context && payloadScope === 'l7' &&
-                   appendL7Context(content, record, wireBytes, payloadMode, bytes.length))) {
-        const annotations = followed.annotations && payloadScope === 'wire'
-          ? contentAnnotations(record, bytes.length) : [];
-        if (!appendAnnotatedPayload(content, bytes, annotations, payloadMode)) {
-          content.textContent = payloadMode === 'hex'
-            ? encodeHex(bytes) : new TextDecoder().decode(bytes);
+      let previewLimit = 4096;
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'payload-preview-more';
+      const renderPreview = () => {
+        content.replaceChildren();
+        const shown = bytes.subarray(0, previewLimit);
+        if (derived) {
+          renderProjectedPayload(content, shown, derived, record,
+            followed.human ? 'ascii' : payloadMode, followed.annotations);
+        } else if (followed.human) {
+          renderHumanPreview(content, previewRecord, records, shown, previewLimit);
+        } else if (!(followed.l7Context && payloadScope === 'l7' &&
+                     appendL7Context(content, record, wireBytes, payloadMode, shown.length))) {
+          const annotations = followed.annotations && payloadScope === 'wire'
+            ? contentAnnotations(record, shown.length) : [];
+          if (!appendAnnotatedPayload(content, shown, annotations, payloadMode)) {
+            content.textContent = payloadMode === 'hex'
+              ? encodeHex(shown) : new TextDecoder().decode(shown);
+          }
         }
-      }
-      content.onwheel = event => {
-        if (event.shiftKey) return;
-        event.preventDefault();
-        byId(followed.id).closest('.workspace').scrollBy({top: event.deltaY});
+        more.hidden = shown.length >= bytes.length;
+        more.textContent = `Showing ${formatBytes(shown.length)} / ${formatBytes(bytes.length)} · Load next 4 KiB`;
       };
+      more.onclick = () => { previewLimit += 4096; renderPreview(); };
+      renderPreview();
       chunk.open = !followed.collapsed;
+      addExplicitFold(chunk, summary);
       chunk.classList.toggle('expanded', followed.expanded);
       chunk.append(summary);
-      if (followed.annotations && !followed.human) appendAnnotationRail(chunk, record, wireBytes);
+      if (followed.annotations && (!followed.human || derived)) appendAnnotationRail(chunk, record, wireBytes);
       chunk.append(content);
       const enriched = attachInlineEnrichments(chunk, record, records, followed);
       if (enriched) badges.append(enriched);
+      content.after(more);
     }
+    addFlowDirection(chunk, side);
     stream.append(chunk);
   }
   const empty = stream.querySelector('.empty');
@@ -3009,9 +3451,12 @@ function laneStepLabel(delta) {
 function renderLaneCardPayload(card, bytes, level, context = null, human = null) {
   const limits = [320, 4096, bytes.length];
   const limit = Math.min(bytes.length, limits[level] ?? limits[0]);
-  const preview = card.querySelector('pre');
+  const preview = card.querySelector(':scope > pre');
   preview.replaceChildren();
-  if (human) {
+  if (card.inflatedView) {
+    const {projection, record, annotations} = card.inflatedView;
+    renderProjectedPayload(preview, bytes.subarray(0, limit), projection, record, 'ascii', annotations);
+  } else if (human) {
     renderHumanPreview(preview, human.record, human.records, bytes, limits[level] ?? limits[0]);
   } else if (!context || !appendL7Context(preview, context.record, context.wireBytes, 'ascii', limit)) {
     appendMixedAscii(preview, bytes.subarray(0, limit));
@@ -3036,7 +3481,13 @@ function renderLaneCardPayload(card, bytes, level, context = null, human = null)
 }
 
 function decorateLaneResponses(stream, records, followed) {
+  // Polling the same records must not remove/reinsert badges and trigger scroll anchoring.
+  const decorationKey = JSON.stringify(records.map(record =>
+    [record.revision, record.event.spider_received_at_ms]));
+  const previousKey = stream.dataset.responseDecorationKey;
+  stream.dataset.responseDecorationKey = decorationKey;
   const candidates = laneResponseCandidates(records);
+  if (previousKey !== decorationKey) {
   const previousDeltas = lanePreviousDeltas(records);
   for (const badge of stream.querySelectorAll('.lane-step-delta,.lane-delta,.lane-pending')) badge.remove();
   for (const card of stream.querySelectorAll('.lane-card')) card.classList.remove('response-start', 'response-end', 'response-pending');
@@ -3071,6 +3522,7 @@ function decorateLaneResponses(stream, records, followed) {
     const head = card.querySelector('.lane-card-head');
     head?.insertBefore(badge, head.querySelector('.lane-card-expand'));
   }
+  }
   cancelAnimationFrame(followed.connectorFrame || 0);
   followed.connectorFrame = requestAnimationFrame(() => {
     for (const connector of stream.querySelectorAll('.lane-response-link')) connector.remove();
@@ -3098,9 +3550,11 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
   const previousScroll = workspace.scrollTop;
   if (!(followed.laneWidths instanceof Map)) followed.laneWidths = new Map();
   const laneIds = [...new Set(records.map(record => record.event.id))];
+  followed.initializedLanes ||= new Set();
   for (const laneId of laneIds) {
-    if (followed.laneOrder.includes(laneId)) continue;
-    followed.laneOrder.push(laneId);
+    if (!followed.laneOrder.includes(laneId)) followed.laneOrder.push(laneId);
+    if (followed.initializedLanes.has(laneId)) continue;
+    followed.initializedLanes.add(laneId);
     if (followed.visibleLanes.size < 2) followed.visibleLanes.add(laneId);
   }
   followed.laneOrder = followed.laneOrder.filter(laneId => laneIds.includes(laneId));
@@ -3121,6 +3575,7 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
   const rebuild = stream.dataset.layoutKey !== layoutKey;
   if (rebuild) {
     stream.replaceChildren();
+    delete stream.dataset.responseDecorationKey;
     stream.dataset.layoutKey = layoutKey;
     const header = document.createElement('div');
     header.className = 'lane-row lane-header';
@@ -3217,10 +3672,12 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
       const info = record.event.details?.info || {};
       const side = info.side === 'R' ? 'R' : 'L';
       const wireBytes = recordPayloadBytes(record);
-      const completeBytes = flowPayloadBytes(record, wireBytes);
+      const {derived, bytes: completeBytes, previewRecord} = flowPayloadSource(record, records, followed, wireBytes);
       const bytes = flowDisplayBytes(followed, side, completeBytes);
       const card = document.createElement('article');
       card.className = `lane-card ${side}`;
+      addFlowDirection(card, side);
+      if (derived) card.inflatedView = {projection: derived, record, annotations: followed.annotations};
       card.dataset.revision = String(record.revision);
       card.style.gridColumn = String(visibleIndex + 2);
       card.style.setProperty('--lane-color', `hsl(${(followed.laneOrder.indexOf(record.event.id) * 67) % 360} 62% 62%)`);
@@ -3238,20 +3695,20 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
           const next = Number(expand.dataset.nextLevel || 0);
           followed.cardLevels.set(record.revision, next);
           renderLaneCardPayload(card, bytes, next,
-            followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null,
-            followed.human ? {record, records} : null);
+            !derived && followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null,
+            followed.human ? {record: previewRecord, records} : null);
           decorateLaneResponses(stream, records, followed);
         };
         head.append(expand);
       }
       card.append(head);
-      if (followed.annotations && !followed.human) appendAnnotationRail(card, record, wireBytes);
+      if (followed.annotations && (!followed.human || derived)) appendAnnotationRail(card, record, wireBytes);
       card.append(preview);
       const enriched = attachInlineEnrichments(card, record, records, followed);
       if (enriched) head.append(enriched);
       renderLaneCardPayload(card, bytes, followed.cardLevels.get(record.revision) || 0,
-        followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null,
-        followed.human ? {record, records} : null);
+        !derived && followed.l7Context && payloadScope === 'l7' ? {record, wireBytes} : null,
+        followed.human ? {record: previewRecord, records} : null);
       row.append(card);
     } else if (hiddenIndex >= 0) {
       const tick = document.createElement('button');
@@ -3275,7 +3732,7 @@ function renderLaneBoard(stream, records, followed, scopeKey) {
     time.title = laneTimeTitle(record, timeOrigin);
   }
   decorateLaneResponses(stream, records, followed);
-  if (rebuild) requestAnimationFrame(() => { workspace.scrollTop = previousScroll; });
+  if (rebuild) workspace.scrollTop = previousScroll;
 }
 
 function appendMixedAscii(target, bytes) {
@@ -3521,6 +3978,11 @@ async function refreshBackendInspection() {
   inspectionPollInFlight = true;
   try {
     const state = await inspectionRequest();
+    if (state.traffic_rules) {
+      trafficRules = restoreTrafficRules(state.traffic_rules.rules);
+      bypassAll = state.traffic_rules.bypass_all;
+    }
+    window.dispatchEvent(new CustomEvent('inspection-state', {detail: state}));
     inspectionRuns.completed = state.runs;
     inspectionRuns.failed = state.errors;
     inspectionRuns.running = state.running;
@@ -3533,12 +3995,14 @@ async function refreshBackendInspection() {
     renderInspectionOverview();
   } catch (error) {
     byId('backend-inspection-status').textContent = error.message;
+    window.dispatchEvent(new CustomEvent('inspection-unavailable', {detail: error.message}));
   } finally {
     inspectionPollInFlight = false;
   }
 }
 
 function displayScriptResult(data, automatic = false, replaceOutput = true) {
+  replacementPayload = selectedPayload;
   const scriptStatus = byId('script-status');
   if (replaceOutput) {
     byId('script-output').textContent = [...(data.logs || []), ...(data.error ? [data.error] : [])].join('\n');
@@ -3721,6 +4185,15 @@ function showTab(tabId) {
   if (tabId === 'hostnames-tab') renderHostnames();
   if (tabId === 'diagnostics-tab') renderDiagnostics();
   if (tabId === 'workbench-tab') scheduleRender(false, true);
+  if (tabId === 'inspection-tab') {
+    followPayload = false;
+    byId('follow-payload').setAttribute('aria-pressed', 'false');
+    const info = selectedPayload?.event?.details?.info || {};
+    byId('inspection-input-context').textContent = selectedPayload
+      ? `Input: r${selectedPayload.revision} · ${info.side || '?'} · ${info.session || selectedPayload.event.id}`
+      : `Input: ${payloadBytes.length} B sample`;
+    refreshBackendInspection();
+  }
   for (const [sessionId, followed] of followedFlows) {
     if (followed.id === tabId) renderFlowTab(sessionId);
   }
@@ -3759,7 +4232,7 @@ function connectEventSocket() {
       : {type: 'subscribe', after: revision}));
     socket.send(JSON.stringify({type: 'live-edit', enabled: liveEdit}));
     inspectionRequest().then(state => {
-      trafficRules = state.traffic_rules.rules.map(rule => ({...rule, value: rule.value || rule.address}));
+      trafficRules = restoreTrafficRules(state.traffic_rules.rules);
       bypassAll = state.traffic_rules.bypass_all;
       renderTrafficRules();
       renderEndpointBuilder();
@@ -3829,6 +4302,7 @@ function connectEventSocket() {
 }
 
 function decideSelected(action) {
+  if (selectedPayload?.collectedSample) return;
   const decisionId = selectedPayload?.event?.decision?.id;
   if (!decisionId) return;
   const message = {type: 'decision', decision_id: decisionId, action};
@@ -4118,11 +4592,6 @@ byId('follow-payload').onclick = () => {
   byId('follow-payload').setAttribute('aria-pressed', String(followPayload));
   if (followPayload && payloadRecords.length) selectPayload(payloadRecords[payloadRecords.length - 1], true);
 };
-byId('sample-payload').onclick = () => {
-  selectedPayload = null;
-  payloadBytes = new TextEncoder().encode('GET / HTTP/1.1\r\nHost: example.test\r\n\r\n');
-  renderPayload();
-};
 byId('live-edit').onclick = () => {
   liveEdit = !liveEdit;
   byId('live-edit').setAttribute('aria-pressed', String(liveEdit));
@@ -4180,22 +4649,6 @@ payloadViewDivider.onkeydown = event => {
   const delta = event.key === 'ArrowUp' ? -20 : 20;
   setPayloadViewSplit(byId('payload-list').getBoundingClientRect().height + delta,
     byId('payload-viewer').querySelector('.payload-view-body').getBoundingClientRect().height - delta);
-};
-const workbenchDivider = byId('workbench-divider');
-workbenchDivider.onpointerdown = event => {
-  workbenchDivider.setPointerCapture(event.pointerId);
-  setPayloadPane(event.clientX);
-};
-workbenchDivider.onpointermove = event => {
-  if (workbenchDivider.hasPointerCapture(event.pointerId)) setPayloadPane(event.clientX);
-};
-workbenchDivider.onkeydown = event => {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-  event.preventDefault();
-  const current = parseFloat(getComputedStyle(workbenchLayout).getPropertyValue('--payload-pane')) || 42;
-  const next = Math.max(20, Math.min(75, current + (event.key === 'ArrowLeft' ? -2 : 2)));
-  workbenchLayout.style.setProperty('--payload-pane', `${next}%`);
-  localStorage.setItem('spider-payload-pane', String(next));
 };
 for (const button of document.querySelectorAll('#script-slots button')) {
   button.onclick = () => loadScriptSlot(Number(button.dataset.slot));
@@ -4420,6 +4873,81 @@ byId('load-backend-script').onclick = async () => {
     localStorage.setItem(scriptStorageKey(), current.script);
   } catch (error) { byId('backend-inspection-status').textContent = error.message; }
 };
+byId('open-inspection').onclick = () => showTab('inspection-tab');
+async function openSamplePicker() {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'sample-picker';
+  dialog.innerHTML = '<div class="section-head"><h2>Collected samples · backend</h2><button data-close>Close</button></div>' +
+    '<div class="sample-picker-tools"><button data-live>Live payloads</button><button data-refresh>Refresh</button>' +
+    '<button data-prev>Previous</button><button data-next>Next</button><span data-status role="status"></span></div>' +
+    '<div class="sample-picker-layout"><div data-list></div><section><p data-summary>Select a sample.</p>' +
+    '<button data-use disabled>Use in Inspection</button><pre data-preview></pre></section></div>';
+  document.body.append(dialog);
+  let offset = 0, next = null, sample = null, generation = 0;
+  const status = dialog.querySelector('[data-status]');
+  const use = dialog.querySelector('[data-use]');
+  const close = () => { ++generation; dialog.close(); dialog.remove(); };
+  dialog.querySelector('[data-close]').onclick = close;
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+  dialog.querySelector('[data-live]').onclick = () => { close(); showTab('workbench-tab'); };
+  async function load() {
+    const request = ++generation;
+    sample = null; use.disabled = true;
+    dialog.querySelector('[data-preview]').textContent = '';
+    status.textContent = 'Loading…';
+    try {
+      const result = await inspectionRequest(`/collections?offset=${offset}`);
+      if (request !== generation) return;
+      if (!Array.isArray(result.items)) throw new Error('Collection browser requires the updated backend.');
+      next = result.next;
+      dialog.querySelector('[data-prev]').disabled = offset === 0;
+      dialog.querySelector('[data-next]').disabled = next === null;
+      status.textContent = `${result.total} samples · ${offset + (result.items.length ? 1 : 0)}–${offset + result.items.length}`;
+      const list = dialog.querySelector('[data-list]');
+      list.replaceChildren();
+      for (const item of result.items) {
+        const button = document.createElement('button');
+        button.textContent = item.id;
+        button.onclick = async () => {
+          const selection = ++generation;
+          sample = null; use.disabled = true;
+          dialog.querySelector('[data-summary]').textContent = 'Loading sample…';
+          try {
+            const data = await inspectionRequest(`/sample?id=${encodeURIComponent(item.id)}`);
+            if (selection !== generation) return;
+            if (data.format !== 'spider-sample-v1') throw new Error('Unsupported sample format');
+            sample = data; use.disabled = false;
+            dialog.querySelector('[data-summary]').textContent =
+              `${data.collection.endpoint} · ${new Date(data.captured_at_ms).toLocaleString()} · ${data.event.details?.info?.session || data.event.id}`;
+            // Bounded, inert text preview: never interpret captured content as HTML.
+            dialog.querySelector('[data-preview]').textContent = JSON.stringify(data, null, 2).slice(0, 30000);
+          } catch (error) {
+            if (selection === generation) dialog.querySelector('[data-summary]').textContent = error.message;
+          }
+        };
+        list.append(button);
+      }
+    } catch (error) { if (request === generation) status.textContent = error.message; }
+  }
+  use.onclick = () => {
+    if (!sample) return;
+    const record = {event: sample.event, revision: `sample:${sample.captured_at_ms}`, decided: true,
+      collectedSample: true,
+      sessionContext: sample.session_context,
+      enrichments: (sample.enrichments || []).map(item => ({
+        metadata: item.metadata, payload: decodeBase64(item.content || ''),
+      }))};
+    selectPayload(record, false);
+    close(); showTab('inspection-tab');
+  };
+  dialog.querySelector('[data-refresh]').onclick = load;
+  dialog.querySelector('[data-prev]').onclick = () => { offset = Math.max(0, offset - 100); load(); };
+  dialog.querySelector('[data-next]').onclick = () => { if (next !== null) { offset = next; load(); } };
+  dialog.showModal();
+  await load();
+}
+byId('inspection-select-input').textContent = 'Choose sample';
+byId('inspection-select-input').onclick = openSamplePicker;
 loadScriptSlot(1);
 renderSessionGroupControls();
 renderTrafficRules();
@@ -4427,7 +4955,8 @@ renderActivity();
 updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
 showTab('workbench-tab');
+restoreFollowTabs();
 setInterval(() => {
-  if (activeTab === 'workbench-tab') refreshBackendInspection();
+  if (activeTab === 'workbench-tab' || activeTab === 'inspection-tab') refreshBackendInspection();
 }, 1000);
 bootstrapAndConnect();
