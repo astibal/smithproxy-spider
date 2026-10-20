@@ -57,17 +57,56 @@ interfaces, but keeps the Smithproxy API and callback hop on loopback.
 The first milestone intentionally returns immediately: content is unchanged and
 access requests are accepted. No request waits for a UI action.
 
-The browser UI includes a Payload workbench. A WebSocket carries all events with
-monotonic revisions and replays a bounded in-memory log after short disconnects.
-The UI retains `connection-content` callbacks within configurable payload-count
-and memory budgets, displays the newest chunk first, preserves base64 data as
-bytes, and offers four slots per language stored in local storage. Python is the
-default; JavaScript remains available as a browser-side language. Both APIs expose
-payload bytes, decoded text, direction, session metadata, and captured output.
-Python runs in a persistent Pyodide WebAssembly worker and additionally provides
-a compact `api.hexdump()` helper. Returning text or bytes creates a replacement
-preview; returning `None` (Python) or `undefined` (JavaScript) keeps the payload
-unchanged. Each run has a two-second limit after the Python runtime is loaded.
+The Inspection editor keeps four local Python drafts. **Run on selected** sends
+the draft and selected payload to backend CPython and previews its result.
+**Deploy to backend** publishes a separate active snapshot; editing a draft does
+not change the deployed script. **Stop backend** disables automatic execution.
+Closing the browser does not stop a deployed script. JavaScript and Pyodide
+browser execution have been removed. API fields include bytes, text, side,
+session metadata, L7 ranges/bytes/encodings, annotations and enrichments.
+Returning `None` preserves content; returning text or bytes proposes replacement.
+
+Backend scripting requires `SPIDER_TOKEN` and Python 3 (located at build time).
+Scripts are trusted administrator code with the service user's OS permissions,
+not sandboxed untrusted code. Each invocation runs in a fresh process with a
+sanitized environment, 256 MiB address-space limit, 2 CPU seconds, 3 wall seconds,
+50,000 captured output characters and a 1 MiB replacement limit. At most four
+workers execute concurrently; overload and execution errors leave live content
+unchanged. The server retains counters and the latest 20 outputs. This first
+runtime version does not retain Python globals between invocations.
+
+Headless clients use authenticated JSON endpoints (`X-Spider-Token`):
+
+- `GET /api/inspection`: deployed source, state, counters, recent output and traffic rules.
+- `GET /api/inspection/schema`: generated typed Python API reference for this backend build.
+- `POST /api/inspection/run`: `{ "script": "return api.bytes.upper()", "event": { "details": { "info": { "content": "YWJj" } } } }`.
+- `POST /api/inspection`: `{ "script": "return api.bytes.upper()", "enabled": true, "scope": "all" }`.
+- `POST /api/inspection/rules`: same `rules` and `bypass_all` schema as the traffic-rules WebSocket message.
+
+Scope `rules` executes only INSPECT matches; `all` executes all content except
+PASS, FORGET, bypassed and auto-accepted callbacks. Deployment and rules currently
+live in server memory: after a backend restart, redeploy through these endpoints.
+They survive browser disconnects. Test runs never apply replacements to traffic.
+
+The **API Reference** tab loads the connected backend's generated schema. Search
+types and fields, expand entries for availability, descriptions and examples,
+and insert examples at the editor cursor. Typing `api.` or pressing Ctrl+Space
+opens basic member suggestions; arrows select, Tab inserts, Escape dismisses.
+Hover a suggestion for its description. This is an initial integration, not a
+Python language server or full IDE.
+
+The typed preview exposes `api.message.bytes/size`,
+`api.metadata.session_id/side/payload_layer` and
+`api.http1.available/method/target/status/headers`. The HTTP/1 view consumes
+`http1.parse-head` enrichment: no complete head means `available == False`,
+nullable fields are `None`, and headers are empty. A complete head does not imply
+a complete body; only the first decoded head is exposed in this initial slice.
+Header order and duplicate names are preserved. Views are read-only snapshots.
+
+Definitions, types, descriptions, availability and examples live together in
+`src/inspection_api.py`. CMake embeds those definitions into the Python worker and
+generates its schema with `tools/generate-inspection-schema.py`. Editing this file
+triggers regeneration on the next build. No separate browser field list is needed.
 
 Live edit is opt-in. When enabled, each new content callback waits up to ten
 seconds for `accept`, `accept-session`, `replace`, or `discard`. Accept-session
@@ -85,9 +124,9 @@ Payloads and Flows. `FORGET` accepts the current payload and permanently
 declines future content callbacks for every matching connection. `FOCUS` makes
 unmatched traffic implicit PASS while
 at least one focus rule exists. `INSPECT` is non-exclusive and always runs the
-selected browser script, even when Live edit is disabled; its result is returned
-as accept or replace. First match wins. Rules and ordering are stored by the
-browser, restored on reconnect, and carry live backend match counters.
+deployed backend script when enabled, even when Live edit is disabled; its result
+is returned as unchanged or replace. First match wins. Rules are owned by the
+backend; the browser loads them on reconnect and shows live match counters.
 
 Focused and inspected HTTP traffic can carry chained SXBN enrichment envelopes.
 Spider parses complete HTTP/1 message heads and maintains independent HPACK

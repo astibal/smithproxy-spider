@@ -5,6 +5,8 @@
 #include "session_store.hpp"
 #include "smithproxy_manager.hpp"
 #include "webhook.hpp"
+#include "inspection.hpp"
+#include "inspection_schema.hpp"
 #include "binary_envelope.hpp"
 #include "websocket_hub.hpp"
 
@@ -50,13 +52,14 @@ public:
         const std::string_view m(method);
         return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/ready" ||
                                p == "/api/status" || p == "/api/sessions" ||
-                               p == "/api/diagnostics" ||
+                               p == "/api/diagnostics" || p == "/api/inspection" || p == "/api/inspection/schema" ||
                                p == "/api/hostnames" ||
                                p == "/api/session-history" || p == "/api/session" ||
                                p == "/api/events" || p == "/api/events/ws")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
                (m == "DELETE" && p == "/api/session-history") ||
                (m == "POST" && p == "/api/config/smithproxy") ||
+               (m == "POST" && (p == "/api/inspection" || p == "/api/inspection/run" || p == "/api/inspection/rules")) ||
                (m == "POST" && p == callback_path());
     }
 
@@ -149,13 +152,30 @@ private:
                     event = nlohmann::json::parse(body);
                 }
                 const auto reply = process_webhook(store_, decisions_, event,
-                                                   payload_view, &enrichment_);
+                                                   payload_view, &enrichment_, &inspection_);
                 return json_response(reply.status, reply.body);
             } catch (const nlohmann::json::exception&) {
                 return json_response(400, {{"error", "invalid JSON"}});
             }
         }
         if (!authenticated(connection)) return json_response(401, {{"error", "unauthorized"}});
+        if (method == "GET" && url == "/api/inspection/schema")
+            return {200, "application/json", inspection_schema_json};
+        if (url.starts_with("/api/inspection")) {
+            if (config_.token.empty()) return json_response(403, {{"error", "SPIDER_TOKEN is required for backend scripting"}});
+            try {
+                if (method == "GET") {
+                    auto state = inspection_.status();
+                    state["traffic_rules"] = decisions_.traffic_rule_status();
+                    return json_response(200, state);
+                }
+                const auto request = nlohmann::json::parse(body);
+                if (!request.is_object()) return json_response(400, {{"error", "JSON object required"}});
+                if (url == "/api/inspection/run") return json_response(200, inspection_.run(request));
+                if (url == "/api/inspection/rules") return json_response(200, decisions_.set_traffic_rules(request));
+                return json_response(200, inspection_.configure(request));
+            } catch (const std::exception& e) { return json_response(400, {{"error", e.what()}}); }
+        }
         if (method == "GET" && url == "/api/status") return json_response(200, store_.status());
         if (method == "GET" && url == "/api/diagnostics") {
             return json_response(200, {
@@ -243,6 +263,7 @@ private:
     DecisionBroker& decisions_;
     EnrichmentEngine& enrichment_;
     WebSocketHub& websocket_;
+    Inspection inspection_;
     std::atomic_uint64_t requests_total_{};
     std::atomic_uint64_t response_bytes_{};
     std::atomic_uint64_t callback_requests_{};
@@ -275,6 +296,7 @@ int run_http_server(const ServerConfig& config, SessionStore& store,
         if (message.value("type", "") == "traffic-rules-status-request") {
             return std::optional<nlohmann::json>{decisions.traffic_rule_status()};
         }
+        if (message.value("type", "") == "script-available") return std::nullopt;
         decisions.handle_message(message);
         return std::nullopt;
     }, [&decisions] {

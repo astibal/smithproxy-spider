@@ -8,10 +8,8 @@ const smithproxyVerify = byId('smithproxy-verify'), configureStatus = byId('conf
 let revision = 0, timer, eventRecords = [], historyRecords = [], selectedSessionId = null;
 let selectedSessionDetail = null;
 let payloadRecords = [], selectedPayload = null, payloadBytes = new Uint8Array(), scriptSlot = 1;
-let scriptLanguage = localStorage.getItem('spider-script-language') === 'javascript'
-  ? 'javascript' : 'python';
-let pythonWorker = null, pythonWorkerReady = null, pythonRequestId = 0;
-const pythonRequests = new Map();
+let scriptLanguage = 'python';
+let inspectionPollInFlight = false;
 const flowRecords = new Map();
 const startedConnections = new Set();
 const liveSiftClassifications = new Map();
@@ -22,6 +20,9 @@ let payloadScope = localStorage.getItem('spider-payload-scope') === 'l7' ? 'l7' 
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let replacementBase64 = null;
 let activeTab = 'workbench-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
+let inspectionPayloadsReceived = 0, inspectionLastSeenAt = 0;
+const inspectionIngress = [];
+const inspectionRuns = {completed: 0, failed: 0, running: 0};
 let payloadCacheBytes = 0, payloadsDropped = 0, payloadBytesDropped = 0, evictionTimes = [];
 let evictionActivityPending = 0, evictionActivityTimer = null;
 let pollInFlight = false;
@@ -110,21 +111,6 @@ const activityFilters = {rule: true, sift: true, system: true};
 let flowViewLimitMiB = Math.max(1, Math.min(8192,
   Number(localStorage.getItem('spider-flow-view-limit-mib')) || 2));
 const eventFilters = {ping: false, sessions: false, status: true, other: false};
-const defaultJavascriptScript = `// api.bytes        Uint8Array with the original payload
-// api.text         UTF-8 decoded view
-// api.l7           detected body state, ranges, encodings, bytes, and text
-// api.enrichments  decoded/derived metadata and bytes
-// api.side         "L" (client) or "R" (server)
-// api.sessionId    Smithproxy session identifier
-// api.sessionLabel endpoints and detected protocol
-// api.print(...)   append to Script output
-//
-// Return undefined/null to keep the payload unchanged.
-// Return a string, Uint8Array, or ArrayBuffer to replace it.
-
-api.print(api.sessionId, api.side, api.bytes.length + " bytes");
-return undefined;
-`;
 const defaultPythonScript = `# api.bytes          original payload as bytes
 # api.text           UTF-8 decoded view
 # api.l7_bytes       concatenated detected L7 body ranges
@@ -151,7 +137,7 @@ function scriptStorageKey(slot = scriptSlot) {
 }
 
 function defaultScript() {
-  return scriptLanguage === 'python' ? defaultPythonScript : defaultJavascriptScript;
+  return defaultPythonScript;
 }
 
 const suggestedBackend = `${location.protocol}//${location.hostname}:18080`;
@@ -2134,6 +2120,7 @@ function setPayloadPane(clientX) {
 }
 
 function renderPayloadList() {
+  renderInspectionOverview();
   const list = byId('payload-list');
   const flows = [...flowRecords.values()].sort((a, b) =>
     Number(b.active) - Number(a.active) || b.lastRevision - a.lastRevision);
@@ -3363,6 +3350,60 @@ function updateFlowActivity(activeItems) {
   return changed;
 }
 
+function pulseInspectionMetric(id, value) {
+  const target = byId(id);
+  if (!target) return;
+  const next = String(value);
+  if (target.textContent === next) return;
+  target.textContent = next;
+  target.classList.remove('metric-pulse');
+  void target.offsetWidth;
+  target.classList.add('metric-pulse');
+}
+
+function renderInspectionOverview() {
+  const now = Date.now();
+  while (inspectionIngress.length && inspectionIngress[0].at < now - 10000) inspectionIngress.shift();
+  const active = [...flowRecords.values()].filter(flow => flow.active);
+  const pending = payloadRecords.filter(record =>
+    record.event.decision?.state === 'pending' && !record.decided).length;
+  const recentBytes = inspectionIngress.reduce((total, item) => total + item.bytes, 0);
+  pulseInspectionMetric('inspection-received', inspectionPayloadsReceived);
+  pulseInspectionMetric('inspection-active-flows', active.length);
+  pulseInspectionMetric('inspection-pending', pending);
+  pulseInspectionMetric('inspection-rate', `${formatBytes(Math.round(recentBytes / 10))}/s`);
+  pulseInspectionMetric('inspection-runs', inspectionRuns.completed);
+  pulseInspectionMetric('inspection-errors', inspectionRuns.failed);
+  byId('inspection-run-detail').textContent = `${inspectionRuns.running} running · manual + automatic`;
+  const lastSeen = byId('inspection-last-seen');
+  if (lastSeen) lastSeen.textContent = inspectionLastSeenAt
+    ? `last payload ${Math.max(0, Math.floor((now - inspectionLastSeenAt) / 1000))}s ago`
+    : 'waiting for traffic';
+  const strip = byId('inspection-flow-strip');
+  if (!strip) return;
+  strip.replaceChildren();
+  const hot = [...flowRecords.values()]
+    .sort((a, b) => Number(b.active) - Number(a.active) || b.lastRevision - a.lastRevision)
+    .slice(0, 6);
+  if (!hot.length) {
+    strip.className = 'inspection-flow-strip empty';
+    strip.textContent = 'No inspected payloads yet.';
+    return;
+  }
+  strip.className = 'inspection-flow-strip';
+  for (const flow of hot) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `inspection-flow-chip${flow.active ? ' active' : ''}`;
+    const total = flow.L.count + flow.R.count;
+    button.innerHTML = `<i></i><span>${escapeHtml(flowListLabel(flow.label || flow.id, false))}</span>` +
+      `<b>${total}</b><small>L ${flow.L.count} / R ${flow.R.count}</small>`;
+    button.title = flow.label || flow.id;
+    button.onclick = () => { if (flow.latest) selectPayload(flow.latest, false); };
+    strip.append(button);
+  }
+}
+
 function selectPayload(record, follow = false) {
   selectedPayload = record;
   followPayload = follow;
@@ -3412,12 +3453,21 @@ function ingestEvent(record) {
        typeof record.event.details?.info?.content === 'string')) {
     record.cacheBytes = payloadSize(record);
     payloadRecords.push(record);
+    const receivedBytes = recordPayloadBytes(record).length;
+    inspectionPayloadsReceived += 1;
+    inspectionLastSeenAt = Date.now();
+    while (inspectionIngress.length && inspectionIngress[0].at < inspectionLastSeenAt - 10000) inspectionIngress.shift();
+    const bucket = Math.floor(inspectionLastSeenAt / 1000) * 1000;
+    if (inspectionIngress.at(-1)?.at === bucket) inspectionIngress.at(-1).bytes += receivedBytes;
+    else inspectionIngress.push({at: bucket, bytes: receivedBytes});
     payloadCacheBytes += record.cacheBytes;
     updateFlowRecord(record);
     if (followPayload || !selectedPayload) selectedPayload = record;
     trimPayloadCache();
-    if (record.event.decision?.state === 'pending' && record.event.decision?.mode === 'inspect') {
-      runInspectionScript(record);
+    if (record.event.inspection) {
+      record.inspectOutput = {...record.event.inspection, replacement: null};
+      record.inspectResult = record.event.inspection.ok ? 'backend completed' : 'backend error';
+      record.decided = true;
     }
   }
   if (record.event.action === 'connection-stop') {
@@ -3437,123 +3487,55 @@ function loadScriptSlot(number) {
   }
 }
 
-function executeJavascriptScript(record) {
-  return new Promise(resolve => {
-    const worker = new Worker('script-worker.js');
-    const info = record?.event?.details?.info || {};
-    const bytes = recordPayloadBytes(record);
-    const timeout = setTimeout(() => {
-      worker.terminate();
-      resolve({ok: false, logs: [], error: 'Script exceeded the 2 s execution limit.'});
-    }, 2000);
-    worker.onmessage = ({data}) => {
-      clearTimeout(timeout);
-      worker.terminate();
-      resolve(data);
-    };
-    worker.onerror = event => {
-      clearTimeout(timeout);
-      worker.terminate();
-      resolve({ok: false, logs: [], error: event.message || 'Script worker failed.'});
-    };
-    worker.postMessage({script: byId('script-editor').value, bytes: Array.from(bytes),
-      l7: scriptL7Metadata(record, bytes),
-      enrichments: scriptEnrichments(record),
-      side: info.side || '', sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
+async function inspectionRequest(path = '', body = undefined) {
+  const response = await fetch(baseUrl() + '/api/inspection' + path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: {...headers(), 'Content-Type': 'application/json'},
+    ...(body === undefined ? {} : {body: JSON.stringify(body)}),
   });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Inspection request failed');
+  return result;
 }
 
-function stopPythonWorker(error) {
-  if (pythonWorker) pythonWorker.terminate();
-  pythonWorker = null;
-  pythonWorkerReady = null;
-  for (const pending of pythonRequests.values()) {
-    clearTimeout(pending.timeout);
-    pending.resolve({ok: false, logs: [], error});
-  }
-  pythonRequests.clear();
-}
-
-function ensurePythonWorker() {
-  if (pythonWorkerReady) return pythonWorkerReady;
-  pythonWorker = new Worker('python-worker.mjs', {type: 'module'});
-  pythonWorkerReady = new Promise((resolve, reject) => {
-    pythonWorker.onmessage = ({data}) => {
-      if (data.type === 'ready') { resolve(); return; }
-      if (data.type === 'init-error') {
-        reject(new Error(data.error));
-        stopPythonWorker(`Python initialization failed: ${data.error}`);
-        return;
-      }
-      const pending = pythonRequests.get(data.id);
-      if (!pending) return;
-      clearTimeout(pending.timeout);
-      pythonRequests.delete(data.id);
-      pending.resolve(data);
-    };
-    pythonWorker.onerror = event => {
-      const message = event.message || 'Python WebAssembly worker failed';
-      reject(new Error(message));
-      stopPythonWorker(message);
-    };
-  });
-  return pythonWorkerReady;
-}
-
-async function executePythonScript(record) {
-  const info = record?.event?.details?.info || {};
+async function executeScript(record) {
+  const bytes = record ? recordPayloadBytes(record) : payloadBytes.slice();
+  const event = record?.event || {id: '', details: {info: {}}};
   try {
-    await ensurePythonWorker();
+    return await inspectionRequest('/run', {
+      script: byId('script-editor').value,
+      event: {...event, details: {...event.details, info: {...event.details?.info, content: encodeBase64(bytes)}}},
+      enrichments: (record?.enrichments || []).map(item => ({
+        metadata: item.metadata || {}, content: encodeBase64(item.payload || new Uint8Array()),
+      })),
+    });
   } catch (error) {
-    return {ok: false, logs: [], error: `Python initialization failed: ${error.message}`};
+    return {ok: false, replacement: null, logs: [], error: error.message};
+  } finally {
+    refreshBackendInspection();
   }
-  return new Promise(resolve => {
-    const id = ++pythonRequestId;
-    const timeout = setTimeout(() => {
-      stopPythonWorker('Python script exceeded the 2 s execution limit.');
-    }, 2000);
-    pythonRequests.set(id, {resolve, timeout});
-    pythonWorker.postMessage({id, script: byId('script-editor').value,
-      content: info.content || encodeBase64(recordPayloadBytes(record)), side: info.side || '',
-      l7: scriptL7Metadata(record, recordPayloadBytes(record)),
-      enrichments: scriptEnrichments(record),
-      sessionId: record?.event?.id || '', sessionLabel: info.session || ''});
-  });
 }
 
-function executeScript(record) {
-  return scriptLanguage === 'python'
-    ? executePythonScript(record) : executeJavascriptScript(record);
-}
-
-async function runInspectionScript(record) {
-  if (record.inspectRunning || record.decided) return;
-  record.inspectRunning = true;
-  const result = await executeScript(record);
-  if (record.decided) return;
-  const decisionId = record.event.decision?.id;
-  if (!decisionId) return;
-  socketSend(result.ok && result.replacement !== null
-    ? {type: 'decision', decision_id: decisionId, action: 'replace', content: result.replacement}
-    : {type: 'decision', decision_id: decisionId, action: 'accept'});
-  record.decided = true;
-  record.inspectOutput = result;
-  record.inspectResult = result.ok ? (result.replacement === null ? 'unchanged' : 'replaced') : 'script failed; accepted';
-  appendInspectionOutput(record, result);
-  if (selectedPayload === record) displayScriptResult(result, true, false);
-  scheduleRender(false, true);
-}
-
-function appendInspectionOutput(record, data) {
-  const info = record.event.details?.info || {};
-  const messages = [...(data.logs || []), ...(data.error ? [data.error] : [])];
-  const outcome = !data.ok ? 'failed · accepted'
-    : data.replacement === null ? 'unchanged' : `replace · ${decodeBase64(data.replacement).length} B`;
-  const block = [`[r${record.revision} ${info.side || '?'} ${record.event.id}] ${outcome}`,
-    ...messages.map(line => `  ${line}`)].join('\n');
-  const output = byId('script-output');
-  output.textContent = `${output.textContent}${output.textContent ? '\n' : ''}${block}`.slice(-50000);
-  output.scrollTop = output.scrollHeight;
+async function refreshBackendInspection() {
+  if (inspectionPollInFlight) return;
+  inspectionPollInFlight = true;
+  try {
+    const state = await inspectionRequest();
+    inspectionRuns.completed = state.runs;
+    inspectionRuns.failed = state.errors;
+    inspectionRuns.running = state.running;
+    byId('backend-inspection-status').textContent = state.enabled
+      ? 'Backend enabled · ' + state.scope + ' · revision ' + state.revision
+      : 'Backend stopped · revision ' + state.revision;
+    byId('backend-inspection-output').textContent = state.recent.map(run =>
+      '[' + run.run_id + ' ' + run.session_id + '] ' + (run.ok ? 'ok' : 'error') + '\n' +
+      [...(run.logs || []), ...(run.error ? [run.error] : [])].join('\n')).join('\n\n');
+    renderInspectionOverview();
+  } catch (error) {
+    byId('backend-inspection-status').textContent = error.message;
+  } finally {
+    inspectionPollInFlight = false;
+  }
 }
 
 function displayScriptResult(data, automatic = false, replaceOutput = true) {
@@ -3776,9 +3758,13 @@ function connectEventSocket() {
       ? {type: 'subscribe', tail: true}
       : {type: 'subscribe', after: revision}));
     socket.send(JSON.stringify({type: 'live-edit', enabled: liveEdit}));
-    socket.send(JSON.stringify({type: 'traffic-rules', bypass_all: bypassAll,
-      rules: expandedTrafficRules()}));
-    socket.send(JSON.stringify({type: 'script-available', available: true}));
+    inspectionRequest().then(state => {
+      trafficRules = state.traffic_rules.rules.map(rule => ({...rule, value: rule.value || rule.address}));
+      bypassAll = state.traffic_rules.bypass_all;
+      renderTrafficRules();
+      renderEndpointBuilder();
+      refreshBackendInspection();
+    }).catch(error => { byId('backend-inspection-status').textContent = error.message; });
   };
   socket.onmessage = message => {
     ++frontendDiagnostics.wsMessages;
@@ -4328,6 +4314,22 @@ document.addEventListener('keydown', event => {
     byId('flow-menu').hidden = true;
   }
 });
+for (const button of document.querySelectorAll('[data-copy-target]')) {
+  button.onclick = async event => {
+    event.preventDefault();
+    const target = byId(button.dataset.copyTarget);
+    const value = 'value' in target ? target.value : target.textContent;
+    try {
+      await navigator.clipboard.writeText(value || '');
+      const original = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(() => { button.textContent = original; }, 900);
+    } catch (_) {
+      target.focus?.();
+      target.select?.();
+    }
+  };
+}
 byId('payload-memory-limit').value = payloadMemoryLimit;
 byId('payload-record-limit').value = payloadRecordLimit;
 byId('event-record-limit').value = eventRecordLimit;
@@ -4385,6 +4387,39 @@ byId('clear-history').onclick = async () => {
     sessionDetail.className = 'error';
   }
 };
+document.querySelector('.inspection-metrics').insertAdjacentHTML('beforeend',
+  '<div class="inspection-metric"><span>Script runs</span><strong id="inspection-runs">0</strong><small id="inspection-run-detail">0 running · manual + automatic</small></div>' +
+  '<div class="inspection-metric attention"><span>Script errors</span><strong id="inspection-errors">0</strong><small>failed runs</small></div>');
+document.querySelector('.editor-api-hint').textContent = 'Python runs on backend · Run previews · Deploy enables live execution';
+byId('script-language').innerHTML = '<option value="python">Python · backend</option>';
+const backendTools = document.createElement('div');
+backendTools.className = 'workbench-tools';
+backendTools.innerHTML = '<select id="inspection-scope" aria-label="Deployment scope"><option value="rules">INSPECT rules</option><option value="all">All non-bypassed content</option></select><button id="deploy-script">Deploy to backend</button><button id="stop-backend-script" class="secondary">Stop backend</button><button id="load-backend-script" class="secondary">Load deployed script</button><span id="backend-inspection-status">Backend not connected</span>';
+document.querySelector('.workbench-script').append(backendTools);
+const backendOutput = document.createElement('details');
+backendOutput.innerHTML = '<summary>Backend run history (latest 20)</summary><pre id="backend-inspection-output"></pre>';
+document.querySelector('.workbench-output').append(backendOutput);
+byId('deploy-script').onclick = async () => {
+  try {
+    await inspectionRequest('', {script: byId('script-editor').value, enabled: true, scope: byId('inspection-scope').value});
+    await refreshBackendInspection();
+  } catch (error) { byId('backend-inspection-status').textContent = error.message; }
+};
+byId('stop-backend-script').onclick = async () => {
+  try {
+    const current = await inspectionRequest();
+    await inspectionRequest('', {...current, enabled: false});
+    await refreshBackendInspection();
+  } catch (error) { byId('backend-inspection-status').textContent = error.message; }
+};
+byId('load-backend-script').onclick = async () => {
+  try {
+    const current = await inspectionRequest();
+    byId('script-editor').value = current.script;
+    byId('inspection-scope').value = current.scope;
+    localStorage.setItem(scriptStorageKey(), current.script);
+  } catch (error) { byId('backend-inspection-status').textContent = error.message; }
+};
 loadScriptSlot(1);
 renderSessionGroupControls();
 renderTrafficRules();
@@ -4392,4 +4427,7 @@ renderActivity();
 updateCacheStats();
 setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : 'ascii');
 showTab('workbench-tab');
+setInterval(() => {
+  if (activeTab === 'workbench-tab') refreshBackendInspection();
+}, 1000);
 bootstrapAndConnect();
