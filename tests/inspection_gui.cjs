@@ -478,6 +478,32 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     await page.locator('#open-saved-sessions').click();
     await page.locator('.sample-picker [data-list] button').click();
     await page.waitForFunction(() => followedFlows.get('saved:saved-test')?.savedRecords?.length > 0);
+    const idleRendering = await page.evaluate(async () => {
+      const original = renderFlowTab;
+      let calls = 0;
+      renderFlowTab = (...args) => { calls++; return original(...args); };
+      const tick = () => new Promise(resolve => requestAnimationFrame(resolve));
+      try {
+        await tick(); calls = 0;
+        for (let i = 0; i < 5; i++) { scheduleRender(true, true); await tick(); }
+        const saved = calls;
+        const live = [...followedFlows.values()].find(flow => !flow.savedId);
+        showTab(live.id);
+        scheduleRender(true, true); await tick(); calls = 0;
+        for (let i = 0; i < 5; i++) { scheduleRender(true, true); await tick(); }
+        const unchanged = calls;
+        Object.defineProperty(document, 'hidden', {configurable: true, value: true});
+        scheduleRender(true, true);
+        const hiddenScheduled = renderFrame !== null;
+        original(live.key);
+        const deferred = live.renderDeferred;
+        delete document.hidden;
+        document.dispatchEvent(new Event('visibilitychange'));
+        await tick();
+        return {saved, unchanged, hiddenScheduled, deferred, resumed: !live.renderDeferred};
+      } finally { delete document.hidden; renderFlowTab = original; }
+    });
+    assert.deepEqual(idleRendering, {saved: 0, unchanged: 0, hiddenScheduled: false, deferred: true, resumed: true});
     assert.deepEqual(errors, []);
     console.log('Inspection GUI smoke test passed: library/save/deploy/enable/draft separation.');
   } finally { await browser.close(); }

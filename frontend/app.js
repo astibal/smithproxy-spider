@@ -344,6 +344,7 @@ function addActivity(category, action, subject, effect = '', severity = 'info') 
 }
 
 function renderActivity() {
+  if (document.hidden) return;
   const target = byId('activity-list');
   const visible = activityRecords.filter(item => activityFilters[item.category] !== false).slice().reverse();
   target.replaceChildren();
@@ -414,6 +415,7 @@ function syncTrafficRules() {
 }
 
 function renderTrafficRules() {
+  if (document.hidden) return;
   const target = byId('traffic-rules');
   byId('focus-indicator').hidden = !trafficRules.some(rule => rule.mode === 'focus');
   byId('bypass-indicator').hidden = !bypassAll;
@@ -533,6 +535,7 @@ function renderSessionBranch(target, items, dimensions, depth = 0, parentPath = 
 }
 
 function renderActiveSessions(items) {
+  if (document.hidden) return;
   sessions.replaceChildren();
   if (!items.length) {
     sessions.textContent = 'none';
@@ -1372,6 +1375,7 @@ function trimPayloadCache() {
 }
 
 function updateCacheStats() {
+  if (document.hidden) return;
   const cutoff = Date.now() - 60000;
   evictionTimes = evictionTimes.filter(time => time >= cutoff);
   const limitBytes = payloadMemoryLimit * 1024 * 1024;
@@ -1408,9 +1412,11 @@ function updateCacheStats() {
 function scheduleRender(eventsChanged = false, payloadsChanged = false) {
   eventsDirty ||= eventsChanged;
   payloadsDirty ||= payloadsChanged;
+  if (document.hidden) return;
   if (renderFrame !== null) return;
   renderFrame = requestAnimationFrame(() => {
     renderFrame = null;
+    if (document.hidden) return;
     if (eventsDirty && activeTab === 'events-tab') {
       renderEvents();
       eventsDirty = false;
@@ -1426,12 +1432,40 @@ function scheduleRender(eventsChanged = false, payloadsChanged = false) {
     }
     if (payloadsDirty || activeTab.startsWith('flow-follow-')) {
       for (const sessionId of followedFlows.keys()) {
-        if (activeTab === followedFlows.get(sessionId).id) renderFlowTab(sessionId);
+        const flow = followedFlows.get(sessionId);
+        if (activeTab !== flow.id || flow.savedId) continue;
+        // Live traffic elsewhere must not repaint an unchanged (possibly completed) flow.
+        const records = followedRecords(flow);
+        const messages = flow.view === 'messages'
+          ? eventRecords.filter(record => scopeMatchesEvent(flow, record)) : [];
+        const inputs = records.flatMap(record => [record, record.enrichments,
+          record.enrichments?.length, record.cacheBytes, record.decided]);
+        for (const id of new Set(records.map(record => record.event.id))) {
+          inputs.push(liveSiftClassifications.get(id), flowRecords.get(id)?.active,
+            startedConnections.has(id), incompleteReplaySessions.has(id));
+        }
+        inputs.push(...messages);
+        if (flow.liveRenderInputs?.length === inputs.length &&
+            inputs.every((value, index) => value === flow.liveRenderInputs[index])) continue;
+        flow.liveRenderInputs = inputs;
+        renderFlowTab(sessionId);
       }
       payloadsDirty = false;
     }
   });
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  renderActivity();
+  renderTrafficRules();
+  renderActiveSessions(activeSessionRecords);
+  updateCacheStats();
+  for (const flow of followedFlows.values()) {
+    if (flow.id === activeTab && flow.renderDeferred) renderFlowTab(flow.key);
+  }
+  scheduleRender();
+});
 
 function decodeBase64(value) {
   const binary = atob(value || '');
@@ -3218,6 +3252,8 @@ function renderFlowTab(scopeKey) {
   const followed = followedFlows.get(scopeKey);
   const panel = followed && byId(followed.id);
   if (!panel) return;
+  if (document.hidden || panel.hidden) { followed.renderDeferred = true; return; }
+  followed.renderDeferred = false;
   const retained = followedRecords(followed);
   const records = [];
   let displayBytes = 0;
@@ -3772,8 +3808,10 @@ function decorateLaneResponses(stream, records, followed) {
   }
   cancelAnimationFrame(followed.connectorFrame || 0);
   followed.connectorFrame = requestAnimationFrame(() => {
+    if (document.hidden || byId(followed.id)?.hidden) return;
     for (const connector of stream.querySelectorAll('.lane-response-link')) connector.remove();
     const board = stream.getBoundingClientRect();
+    const connectors = document.createDocumentFragment();
     for (const [revision, link] of candidates.starts) {
       const start = stream.querySelector(`.lane-card[data-revision="${revision}"]`);
       const end = stream.querySelector(`.lane-card[data-revision="${link.end}"]`);
@@ -3787,8 +3825,9 @@ function decorateLaneResponses(stream, records, followed) {
       connector.style.top = `${a.bottom - board.top}px`;
       connector.style.height = `${height}px`;
       connector.title = 'Candidate L→R direction transition';
-      stream.append(connector);
+      connectors.append(connector);
     }
+    stream.append(connectors);
   });
 }
 
@@ -4222,6 +4261,7 @@ async function executeScript(record) {
 }
 
 async function refreshBackendInspection() {
+  if (document.hidden) return;
   if (inspectionPollInFlight) return;
   inspectionPollInFlight = true;
   try {
@@ -4572,6 +4612,7 @@ function decideSelected(action) {
 }
 
 async function poll() {
+  if (document.hidden) return;
   if (pollInFlight) return;
   pollInFlight = true;
   const pollStarted = performance.now();
