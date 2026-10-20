@@ -380,6 +380,34 @@ def main():
                         assert chain[1][0]["operation"] == "http1.parse-head"
                     finally:
                         websocket.close()
+                    inspection_url = f"http://127.0.0.1:{spider_port}/api/inspection"
+                    schema = get_json(inspection_url + '/schema', 'frontend-key')
+                    assert schema['version'] == '0.1'
+                    assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == ['message', 'metadata', 'http1']
+                    assert schema['types']['Message']['fields'][0]['type'] == 'bytes'
+                    try:
+                        post_json(inspection_url + '/run', {'script': 'return None'})
+                        raise AssertionError('unauthenticated script execution allowed')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 401
+                    sample = {'action': 'connection-content', 'id': 'headless-api',
+                              'details': {'info': {'content': 'YWJj', 'side': 'L',
+                              'session': 'tcp_10.0.0.1:10+tcp_10.0.0.2:20'}}}
+                    _, result = post_json(inspection_url + '/run',
+                        {'script': 'api.print(len(api.bytes))\nreturn api.bytes.upper()',
+                         'event': sample}, 'frontend-key')
+                    assert result['replacement'] == 'QUJD' and result['logs'] == ['3']
+                    post_json(inspection_url + '/rules', {'rules': [
+                        {'address': '10.0.0.1', 'mode': 'inspect'}]}, 'frontend-key')
+                    post_json(inspection_url, {'script': 'return api.bytes.upper()',
+                        'enabled': True, 'scope': 'rules'}, 'frontend-key')
+                    _, result = post_json(callback, sample)
+                    assert result['action'] == 'replace' and result['content'] == 'QUJD'
+                    state = get_json(inspection_url, 'frontend-key')
+                    assert state['enabled'] and state['runs'] == 2
+                    post_json(inspection_url, {'script': 'return api.bytes.upper()',
+                        'enabled': False, 'scope': 'rules'}, 'frontend-key')
+                    assert post_json(callback, sample)[1]['action'] == 'unchanged'
                     return 0
             except OSError:
                 pass

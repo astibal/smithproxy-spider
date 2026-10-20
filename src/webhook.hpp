@@ -15,10 +15,12 @@ struct WebhookReply {
 class SessionStore;
 class DecisionBroker;
 class EnrichmentEngine;
+class Inspection;
 
 [[nodiscard]] WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
                                            const nlohmann::json& event,
                                            std::optional<std::string_view> raw_payload = std::nullopt,
-                                           EnrichmentEngine* enrichment = nullptr);
+                                           EnrichmentEngine* enrichment = nullptr,
+                                           Inspection* inspection = nullptr);
 
 } // namespace spider

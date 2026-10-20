@@ -17,6 +17,15 @@ if(NOT nlohmann_json_FOUND)
     add_library(nlohmann_json::nlohmann_json ALIAS spider_nlohmann_json)
 endif()
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_worker.py" INSPECTION_WORKER_SOURCE)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py" INSPECTION_API_SOURCE)
+set(INSPECTION_WORKER_SOURCE "${INSPECTION_API_SOURCE}\n${INSPECTION_WORKER_SOURCE}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_worker.py src/inspection_api.py tools/generate-inspection-schema.py)
+configure_file(src/inspection_worker.hpp.in generated/inspection_worker.hpp @ONLY)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate-inspection-schema.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py" "${CMAKE_CURRENT_BINARY_DIR}/generated/inspection_schema.hpp"
+    COMMAND_ERROR_IS_FATAL ANY)
 
 add_library(spider_protocol
     src/binary_envelope.cpp
@@ -26,6 +35,7 @@ target_link_libraries(spider_protocol PUBLIC nlohmann_json::nlohmann_json)
 target_compile_options(spider_protocol PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 
 add_library(spider_core
+    src/inspection.cpp
     src/decision_broker.cpp
     src/content_decoding_enrichment.cpp
     src/enrichment.cpp
@@ -37,6 +47,8 @@ add_library(spider_core
     src/webhook.cpp
 )
 target_include_directories(spider_core PUBLIC src)
+target_include_directories(spider_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(spider_core PRIVATE SPIDER_PYTHON="${Python3_EXECUTABLE}")
 target_link_libraries(spider_core PUBLIC spider_protocol nlohmann_json::nlohmann_json
     PkgConfig::CURL PkgConfig::NGHTTP2)
 target_link_libraries(spider_core PUBLIC ZLIB::ZLIB)
@@ -48,6 +60,7 @@ add_executable(smithproxy-spider
     src/websocket_hub.cpp
 )
 target_include_directories(smithproxy-spider PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
     src
     external/lmhpp/include
 )
@@ -56,6 +69,11 @@ target_compile_options(smithproxy-spider PRIVATE -Wall -Wextra -Wpedantic -Wconv
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(inspection_tests tests/inspection_test.cpp)
+    target_link_libraries(inspection_tests PRIVATE spider_core)
+    target_compile_options(inspection_tests PRIVATE -UNDEBUG)
+    add_test(NAME inspection_tests COMMAND inspection_tests)
+    set_tests_properties(inspection_tests PROPERTIES TIMEOUT 15)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(spider_tests tests/session_store_test.cpp)
     target_link_libraries(spider_tests PRIVATE spider_core)

@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr const char* inspection_worker_source = R"SPIDER_PY(@INSPECTION_WORKER_SOURCE@)SPIDER_PY";
