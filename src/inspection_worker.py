@@ -12,6 +12,13 @@ resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
 resource.setrlimit(resource.RLIMIT_FSIZE, (2 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 request = json.load(sys.stdin)
+if 'language_action' in request:
+    try:
+        json.dump(language_query(request), sys.stdout)
+    except Exception as error:
+        json.dump({'ok': False, 'error': str(error)[:1000]}, sys.stdout)
+    sys.exit(0)
+
 class Output:
     def __init__(self):
         self.text = ''

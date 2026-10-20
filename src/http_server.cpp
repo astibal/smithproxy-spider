@@ -62,7 +62,7 @@ public:
                (m == "DELETE" && p == "/api/session-history") ||
                (m == "POST" && (p == "/api/config/smithproxy" || p == "/api/enrichment/replay")) ||
                (m == "POST" && (p == "/api/inspection" || p == "/api/inspection/run" || p == "/api/inspection/rules" ||
-                               p == "/api/inspection/saved-flows")) ||
+                               p == "/api/inspection/saved-flows" || p == "/api/inspection/language")) ||
                (m == "POST" && p == callback_path());
     }
 
@@ -208,6 +208,7 @@ private:
                 if (!request.is_object()) return json_response(400, {{"error", "JSON object required"}});
                 if (url == "/api/inspection/saved-flows") return json_response(200, inspection_.collection.save_flow(request));
                 if (url == "/api/inspection/run") return json_response(200, inspection_.run(request));
+                if (url == "/api/inspection/language") return json_response(200, inspection_.language(request));
                 if (url == "/api/inspection/rules") return json_response(200, decisions_.set_traffic_rules(request));
                 return json_response(200, inspection_.configure(request));
             } catch (const std::exception& e) { return json_response(400, {{"error", e.what()}}); }

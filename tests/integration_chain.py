@@ -389,6 +389,20 @@ def main():
                     assert 'Http2' in schema['types']
                     assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == ['message', 'metadata', 'http1', 'http2']
                     assert schema['types']['Message']['fields'][0]['type'] == 'bytes'
+                    language_request = {'script': 'h2 = api.http2\nh2.',
+                                        'language_action': 'complete', 'line': 2, 'column': 3}
+                    try:
+                        post_json(inspection_url + '/language', language_request)
+                        raise AssertionError('unauthenticated language service allowed')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 401
+                    before_analysis = get_json(inspection_url, 'frontend-key')['runs']
+                    _, analysis = post_json(inspection_url + '/language', language_request, 'frontend-key')
+                    if analysis['ok']:
+                        assert 'frames' in [item['label'] for item in analysis['items']]
+                    else:
+                        assert 'requires Jedi' in analysis['error']
+                    assert get_json(inspection_url, 'frontend-key')['runs'] == before_analysis
                     try:
                         post_json(inspection_url + '/run', {'script': 'return None'})
                         raise AssertionError('unauthenticated script execution allowed')

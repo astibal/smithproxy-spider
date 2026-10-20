@@ -1,5 +1,27 @@
 # Smithproxy Spider
 
+### Python editor type inference
+
+The editor uses an authenticated backend language service (`POST /api/inspection/language`)
+powered by optional **Jedi** in the Python interpreter selected by CMake. Install Jedi
+in that interpreter's environment (for a system Python, the distribution's `python3-jedi`
+package). Without it or with an older backend, direct `api.…` schema completion still works;
+the editor shows the fallback status and an explanatory tooltip.
+
+- Ctrl+Space completes aliases, loop elements and ordinary Python values.
+- Hover shows inferred definitions/documentation; Ctrl+Shift+Space shows call parameters.
+- Syntax diagnostics are underlined. This is not a full type checker: invalid attribute
+  diagnostics and complete control-flow narrowing are not guaranteed.
+
+Typed properties and examples are generated from the same API schema as the reference.
+Analysis includes the hidden `def __spider_script(api: SpiderApi)` wrapper, and maps
+positions back to the visible script. Python source is analyzed, not executed, and no
+traffic samples are sent with editor requests. The transport is a small HTTP API, not
+a general-purpose LSP endpoint. One isolated analysis worker (separate from execution
+slots), a 64 KiB script limit and a 2.5 s wall-clock limit bound each query. Requests
+are serialized, debounced for typing, and discarded when the document/backend changes.
+No Node.js or Python runtime is added to the browser.
+
 ### Read-only HTTP/2 inspection API
 
 `api.http2.frames` exposes annotated frame headers (offset, declared length, numeric

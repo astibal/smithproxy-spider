@@ -160,6 +160,21 @@ nlohmann::json Inspection::status() const {
             {"runs", runs_}, {"errors", errors_}, {"running", running_.load()}, {"recent", recent_},
             {"chain", chain_}, {"collection", collection.status()}};
 }
+nlohmann::json Inspection::language(nlohmann::json request) {
+    if (!request.contains("script") || !request["script"].is_string() ||
+        request["script"].get_ref<const std::string&>().size() > 65536 ||
+        !request.contains("language_action") || !request["language_action"].is_string())
+        return failure("Invalid language request");
+    if (analyzing_.fetch_add(1) >= 1) { --analyzing_; return failure("Language service busy"); }
+    nlohmann::json result;
+    try {
+        result = execute({{"script", request["script"]}, {"language_action", request["language_action"]},
+            {"line", request.value("line", nlohmann::json())},
+            {"column", request.value("column", nlohmann::json())}, {"timeout_ms", 2500}});
+    } catch (const std::exception& error) { result = failure(error.what()); }
+    --analyzing_;
+    return result;
+}
 nlohmann::json Inspection::run(nlohmann::json request) {
     if (!request.contains("script") || !request["script"].is_string() || request["script"].get_ref<const std::string&>().size() > 65536)
         return failure("script must be a string up to 64 KiB");

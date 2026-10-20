@@ -1,6 +1,7 @@
 import {basicSetup} from 'codemirror';
 import {EditorState, Prec} from '@codemirror/state';
-import {EditorView, keymap} from '@codemirror/view';
+import {EditorView, keymap, hoverTooltip} from '@codemirror/view';
+import {linter} from '@codemirror/lint';
 import {indentWithTab} from '@codemirror/commands';
 import {python} from '@codemirror/lang-python';
 import {indentUnit, syntaxTree, syntaxHighlighting, HighlightStyle} from '@codemirror/language';
@@ -11,6 +12,75 @@ const textarea = document.getElementById('script-editor');
 const setNativeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
 let schema = null, schemaBackend = '', view;
 const currentBackend = () => document.getElementById('backend').value.replace(/\/$/, '');
+let languageQueue = Promise.resolve();
+const languageStatus = document.createElement('small');
+languageStatus.className = 'editor-language-status';
+languageStatus.textContent = 'Python help: API schema';
+textarea.parentElement.after(languageStatus);
+function queryLanguage(action, state, pos) {
+  const backend = currentBackend(), doc = state.doc;
+  // Serialize editor analysis; stale queued requests never reach the backend.
+  const job = async () => {
+    if (document.hidden || view.dom.closest('.tab-panel')?.hidden || view.state.doc !== doc || currentBackend() !== backend ||
+        !window.spiderLanguageRequest) return null;
+    const line = doc.lineAt(pos);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3500);
+    try {
+      const result = await window.spiderLanguageRequest({language_action: action,
+        script: doc.toString(), line: line.number,
+        column: [...doc.sliceString(line.from, pos)].length}, controller.signal);
+      if (view.state.doc !== doc || currentBackend() !== backend) return null;
+      if (!result.ok) throw new Error(result.error || 'Language service unavailable');
+      languageStatus.textContent = 'Python help: backend Jedi · static analysis';
+      languageStatus.title = 'Script is analyzed, never executed. Diagnostics cover syntax, not full type checking.';
+      return result;
+    } catch (error) {
+      if (view.state.doc === doc && currentBackend() === backend) {
+        languageStatus.textContent = 'Python help: API schema fallback';
+        languageStatus.title = error.message;
+      }
+      return null;
+    } finally { clearTimeout(timer); }
+  };
+  const result = languageQueue.then(job, job);
+  languageQueue = result.catch(() => null);
+  return result;
+}
+async function completePython(context) {
+  const node = syntaxTree(context.state).resolveInner(context.pos, -1);
+  if (/Comment|String/.test(node.name)) return null;
+  const direct = completeApi(context);
+  if (direct) return direct;
+  const word = context.matchBefore(/\w*/);
+  if (!context.explicit && !context.matchBefore(/\.\w*$/)) return null;
+  const result = await queryLanguage('complete', context.state, context.pos);
+  if (!result || context.aborted) return null;
+  const kinds = {function: 'function', class: 'class', module: 'namespace', property: 'property'};
+  return {from: word?.from ?? context.pos, options: (result.items || []).map(item => ({
+    label: item.label, type: kinds[item.type] || 'variable', detail: item.detail, info: item.info,
+  })), validFor: /^\w*$/};
+}
+const pythonHover = hoverTooltip(async (editor, pos) => {
+  const state = editor.state;
+  const result = await queryLanguage('hover', state, pos);
+  if (!result?.items?.length || editor.state.doc !== state.doc) return null;
+  return {pos, create() {
+    const dom = document.createElement('pre');
+    dom.style.cssText = 'white-space:pre-wrap;max-width:480px;max-height:320px;overflow:auto;padding:8px';
+    dom.textContent = result.items.map(item => `${item.detail}\n${item.info}`).join('\n\n');
+    return {dom};
+  }};
+}, {hoverTime: 500});
+async function signatureHelp(editor) {
+  const result = await queryLanguage('signature', editor.state, editor.state.selection.main.head);
+  if (result) {
+    languageStatus.textContent = result.items?.length
+      ? result.items.map(item => `${item.label}${item.index === null ? '' : ` · parameter ${item.index + 1}`}`).join(' | ')
+      : 'No function call at cursor';
+    languageStatus.title = (result.items || []).map(item => item.info).join('\n\n');
+  }
+}
 function completeApi(context) {
   if (!schema || schemaBackend !== currentBackend()) return null;
   const node = syntaxTree(context.state).resolveInner(context.pos, -1);
@@ -32,7 +102,8 @@ function completeApi(context) {
     from: context.pos - prefix.length,
     options: fields.map(field => ({
       label: field.name, type: 'property', detail: field.type,
-      info: [field.description, field.availability, field.access].filter(Boolean).join('\n\n'),
+      info: [field.description, field.availability, field.access,
+        field.example ? `Example:\n${field.example}` : ''].filter(Boolean).join('\n\n'),
     })),
     validFor: /^\w*$/,
   };
@@ -62,8 +133,22 @@ function state(doc) {
   return EditorState.create({doc, extensions: [
     basicSetup, python(), indentUnit.of('    '), theme, syntaxHighlighting(colors),
     EditorView.lineWrapping,
-    Prec.high(keymap.of([{key: 'Tab', run: acceptCompletion}, indentWithTab])),
-    autocompletion({override: [completeApi], activateOnTyping: true, activateOnTypingDelay: 250}),
+    Prec.high(keymap.of([{key: 'Tab', run: acceptCompletion},
+      {key: 'Mod-Shift-Space', run: editor => { signatureHelp(editor); return true; }}, indentWithTab])),
+    autocompletion({override: [completePython], activateOnTyping: true, activateOnTypingDelay: 350}),
+    pythonHover,
+    linter(async editor => {
+      const state = editor.state;
+      if (!editor.hasFocus || document.hidden) return [];
+      const result = await queryLanguage('diagnostics', state, state.selection.main.head);
+      if (!result || editor.state.doc !== state.doc) return [];
+      return (result.diagnostics || []).filter(item => item.line >= 1 && item.line <= state.doc.lines).map(item => {
+        const line = state.doc.line(item.line);
+        const column = [...line.text].slice(0, item.column).join('').length;
+        const from = Math.min(line.to, line.from + column);
+        return {from, to: Math.min(line.to, from + 1), severity: 'error', message: item.message};
+      });
+    }, {delay: 900}),
     EditorView.contentAttributes.of({'aria-label': 'Inspection script editor', spellcheck: 'false'}),
     EditorView.updateListener.of(update => {
       if (update.docChanged) {
@@ -94,7 +179,7 @@ textarea.focus = () => view.focus();
 textarea.hidden = true;
 const help = document.createElement('small');
 help.className = 'editor-shortcuts';
-help.textContent = 'Ctrl+Space: API · Enter / Tab: accept suggestion · Tab / Shift+Tab: indent · Ctrl+F: find · Esc then Tab: leave editor';
+help.textContent = 'Ctrl+Space: completion · Ctrl+Shift+Space: parameters · Hover: type/help · Enter / Tab: accept · Ctrl+F: find';
 textarea.parentElement.after(help);
 window.spiderEditor = {
   setSchema(value, backend) { schema = value; schemaBackend = backend; },

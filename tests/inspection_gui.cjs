@@ -34,6 +34,12 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
       if (request.method() === 'OPTIONS') return route.fulfill({status: 204, headers: {
         'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*'}});
       let body = {};
+      if (request.url().endsWith('/api/inspection/language')) {
+        const output = require('node:child_process').execFileSync('python3', ['-c',
+          'import sys,json; sys.path.insert(0,"src"); import inspection_language as l; from inspection_api import api_schema; l.api_schema=api_schema; print(json.dumps(l.language_query(json.load(sys.stdin))))'],
+          {input: request.postData(), encoding: 'utf8', timeout: 5000});
+        body = JSON.parse(output);
+      }
       if (request.url().endsWith('/api/inspection/saved-flows') && request.method() === 'POST') {
         savedFlow = {...request.postDataJSON(), id: 'saved-test', format: 'spider-flow-v1', saved_at_ms: 123};
         body = {id: savedFlow.id, name: savedFlow.name, records: savedFlow.records.length};
@@ -179,6 +185,15 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     await editor.press('Control+Space');
     await page.getByRole('option').filter({hasText: 'stream_id'}).click();
     assert.equal(await page.locator('#script-editor').inputValue(), 'api.http2.frames[0].stream_id');
+    await editor.fill('h2 = api.http2\nfor frame in h2.frames:\n    frame.');
+    await editor.press('Control+Space');
+    await page.locator('.cm-completionLabel').filter({hasText: /^stream_id$/}).click();
+    assert.equal(await page.locator('#script-editor').inputValue(), 'h2 = api.http2\nfor frame in h2.frames:\n    frame.stream_id');
+    await editor.fill('api.hexdump(');
+    await editor.press('Control+Shift+Space');
+    await page.locator('.editor-language-status').filter({hasText: 'limit'}).waitFor();
+    await editor.fill('if True\n    return None');
+    await page.locator('.cm-lintRange-error, .cm-lintPoint-error').first().waitFor({state: 'attached'});
     await editor.fill('# api.http1.');
     await editor.press('Control+Space');
     assert.equal(await page.locator('.cm-tooltip-autocomplete').count(), 0);

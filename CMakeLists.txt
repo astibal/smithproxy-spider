@@ -20,8 +20,9 @@ find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_worker.py" INSPECTION_WORKER_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py" INSPECTION_API_SOURCE)
-set(INSPECTION_WORKER_SOURCE "${INSPECTION_API_SOURCE}\n${INSPECTION_WORKER_SOURCE}")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_worker.py src/inspection_api.py tools/generate-inspection-schema.py)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_language.py" INSPECTION_LANGUAGE_SOURCE)
+set(INSPECTION_WORKER_SOURCE "${INSPECTION_API_SOURCE}\n${INSPECTION_LANGUAGE_SOURCE}\n${INSPECTION_WORKER_SOURCE}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_worker.py src/inspection_api.py src/inspection_language.py tools/generate-inspection-schema.py)
 configure_file(src/inspection_worker.hpp.in generated/inspection_worker.hpp @ONLY)
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate-inspection-schema.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py" "${CMAKE_CURRENT_BINARY_DIR}/generated/inspection_schema.hpp"
@@ -76,6 +77,8 @@ if(BUILD_TESTING)
     add_test(NAME inspection_tests COMMAND inspection_tests)
     add_test(NAME inspection_api_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_api_test.py)
+    add_test(NAME inspection_language_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_language_test.py)
     set_tests_properties(inspection_tests PROPERTIES TIMEOUT 15)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(spider_tests tests/session_store_test.cpp)
