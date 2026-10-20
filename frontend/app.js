@@ -108,7 +108,9 @@ try {
 let bypassAll = localStorage.getItem('spider-bypass-all') === 'true';
 const aggregateMembers = new Map();
 let activityRecords = [], activitySequence = 0, activityUnread = 0;
-const activityFilters = {rule: true, sift: true, system: true};
+const activityFilters = {rule: true, sift: false, system: true};
+const incompleteReplaySessions = new Set();
+let enrichmentReplayQueue = Promise.resolve();
 let flowViewLimitMiB = Math.max(1, Math.min(8192,
   Number(localStorage.getItem('spider-flow-view-limit-mib')) || 2));
 const eventFilters = {ping: false, sessions: false, status: true, other: false};
@@ -337,7 +339,7 @@ function addActivity(category, action, subject, effect = '', severity = 'info') 
   const record = {id: ++activitySequence, at: Date.now(), category, action, subject, effect, severity};
   activityRecords.push(record);
   if (activityRecords.length > 500) activityRecords.splice(0, activityRecords.length - 500);
-  if (!byId('activity-drawer').open) ++activityUnread;
+  if (!byId('activity-drawer').open && activityFilters[category] !== false) ++activityUnread;
   renderActivity();
 }
 
@@ -364,8 +366,8 @@ function renderActivity() {
   const unread = byId('activity-unread');
   unread.hidden = activityUnread === 0;
   unread.textContent = `${activityUnread} new`;
-  byId('activity-summary').textContent = activityRecords.length
-    ? `${activityRecords.at(-1).action}: ${activityRecords.at(-1).subject}` : 'ready';
+  byId('activity-summary').textContent = visible.length
+    ? `${visible[0].action}: ${visible[0].subject}` : 'ready';
 }
 
 function ruleLabel(rule) {
@@ -1338,6 +1340,7 @@ function trimPayloadCache() {
   while (payloadRecords.length > payloadRecordLimit || payloadCacheBytes > byteLimit) {
     const removed = payloadRecords.shift();
     if (!removed) break;
+    incompleteReplaySessions.add(removed.event.id);
     const bytes = removed.cacheBytes || payloadSize(removed);
     payloadCacheBytes = Math.max(0, payloadCacheBytes - bytes);
     payloadsDropped += 1;
@@ -2605,6 +2608,7 @@ function flowScope(sessionId, type = 'connection') {
 }
 
 function scopeMatches(scope, record) {
+  if (scope.savedId) return false;
   if (scope.type === 'connection') return record.event.id === scope.sessionId;
   const connection = parseSessionLabel(record.event.details?.info?.session);
   if (!connection || connection.sourceHost !== scope.sourceHost) return false;
@@ -2614,6 +2618,7 @@ function scopeMatches(scope, record) {
 }
 
 function scopeMatchesEvent(scope, record) {
+  if (scope.savedId) return false;
   if (scope.type === 'connection') return record.event.id === scope.sessionId;
   const explicit = record.event.details?.info?.session;
   const label = explicit || flowRecords.get(record.event.id)?.label;
@@ -2625,7 +2630,7 @@ function scopeMatchesEvent(scope, record) {
 }
 
 function renderFlowMessages(stream, followed) {
-  const records = eventRecords.filter(record => scopeMatchesEvent(followed, record))
+  const records = (followed.savedMessages || eventRecords.filter(record => scopeMatchesEvent(followed, record))).slice()
     .sort((a, b) => a.revision - b.revision);
   stream.className = 'flow-stream flow-messages';
   if (stream.dataset.renderKind !== 'messages') {
@@ -2702,7 +2707,7 @@ function scopeLabel(scope, records = []) {
     const connection = parseSessionLabel(record.event.details?.info?.session);
     return connection && `${connection.destinationHost}:${connection.destinationPort}`;
   }).filter(Boolean)).size;
-  return `${resolvedAddress(scope.sourceHost)}:* → * · ${count} connections · ${destinations} destinations · live`;
+  return `${resolvedAddress(scope.sourceHost)}:* → * · ${count} connections · ${destinations} destinations${scope.savedId ? '' : ' · live'}`;
 }
 
 const followPreferenceKeys = ['view', 'expanded', 'collapsed', 'laneFit', 'laneWidth', 'laneFont',
@@ -2715,14 +2720,14 @@ function saveFollowTabs() {
       active: activeTab,
       tabs: [...followedFlows.values()].map(flow => ({
         scope: Object.fromEntries(['key', 'type', 'sessionId', 'label', 'title', 'sourceHost',
-          'destinationHost', 'destinationPort'].map(key => [key, flow[key]])),
+          'destinationHost', 'destinationPort', 'savedId'].map(key => [key, flow[key]])),
         preferences: Object.fromEntries(followPreferenceKeys.map(key => [key, flow[key]])),
         visibleLanes: [...flow.visibleLanes], laneWidths: [...flow.laneWidths],
       })),
     }));
   } catch (_) {}
 }
-function restoreFollowTabs() {
+async function restoreFollowTabs() {
   restoringFollowTabs = true;
   try {
     const saved = JSON.parse(localStorage.getItem(`spider-follow-tabs:${baseUrl()}`) || 'null');
@@ -2730,7 +2735,14 @@ function restoreFollowTabs() {
       const scope = item.scope;
       if (!scope || typeof scope.key !== 'string' || typeof scope.title !== 'string' ||
           !['connection', 'service', 'client'].includes(scope.type)) continue;
-      openFlowTab(scope.sessionId || scope.key, scope.type, item);
+      if (scope.savedId) {
+        openFlowTab(scope.sessionId || scope.key, scope.type, item);
+        try { await openSavedFlow(scope.savedId, item); }
+        catch (error) {
+          const flow = followedFlows.get(scope.key);
+          if (flow) { flow.replayStatus = `Saved session unavailable: ${error.message}`; renderFlowTab(flow.key); }
+        }
+      } else openFlowTab(scope.sessionId || scope.key, scope.type, item);
     }
     if (saved?.active && byId(saved.active)?.classList.contains('tab-panel')) showTab(saved.active);
   } catch (_) {
@@ -2752,6 +2764,10 @@ function openFlowTab(sessionId, type = 'connection', saved = null) {
       keepAll: false, timeMode: 'elapsed',
       l7Context: false, annotations: true, human: false};
     followed.laneWidths = new Map();
+    if (scope.savedId) {
+      followed.savedRecords = saved?.records || [];
+      followed.savedMessages = saved?.messages || [];
+    }
     if (saved) {
       for (const key of followPreferenceKeys) {
         if (saved.preferences?.[key] !== undefined) followed[key] = saved.preferences[key];
@@ -2774,12 +2790,233 @@ function openFlowTab(sessionId, type = 'connection', saved = null) {
     const panel = document.createElement('div');
     panel.id = id; panel.className = 'tab-panel flow-follow-panel'; panel.hidden = true;
     document.querySelector('.workspace').append(panel);
-    addActivity('system', 'FOLLOW', `${scope.title} opened`,
-      'Matching payloads will be appended live while they remain in the browser cache.');
+    addActivity('system', scope.savedId ? 'SAVED SESSION' : 'FOLLOW', `${scope.title} opened`,
+      scope.savedId ? 'Stored snapshot; live traffic is not appended.' :
+        'Matching payloads will be appended live while they remain in the browser cache.');
   }
   renderFlowTab(scope.key);
   showTab(id);
   saveFollowTabs();
+  if (!scope.savedId) replayFollowedFlow(followedFlows.get(scope.key));
+}
+
+function followedRecords(followed) {
+  return (followed.savedRecords || payloadRecords.filter(record => scopeMatches(followed, record)))
+    .slice().sort((a, b) => a.revision - b.revision);
+}
+
+async function saveFollowedFlow(followed) {
+  const name = prompt('Save session as:', followed.title)?.trim();
+  if (!name) return;
+  const records = followedRecords(followed);
+  if (!records.length) { alert('No retained payloads to save.'); return; }
+  followed.savePending = true;
+  renderFlowTab(followed.key);
+  let savedOnBackend = false;
+  try {
+    const scope = Object.fromEntries(['type', 'sessionId', 'label', 'sourceHost', 'destinationHost', 'destinationPort']
+      .map(key => [key, followed[key]]));
+    const snapshot = {name, scope,
+      preferences: Object.fromEntries(followPreferenceKeys.map(key => [key, followed[key]])),
+      visibleLanes: [...followed.visibleLanes], laneWidths: [...followed.laneWidths],
+      messages: followed.savedMessages || eventRecords.filter(record => scopeMatchesEvent(followed, record)),
+      records: records.map(record => ({
+        revision: record.revision,
+        session_context: record.sessionContext,
+        context_complete: record.replayContextComplete ??
+          (startedConnections.has(record.event.id) && !incompleteReplaySessions.has(record.event.id)),
+        event: {...record.event, details: {...record.event.details, info: {
+          ...record.event.details?.info, content: encodeBase64(recordPayloadBytes(record)),
+        }}},
+        enrichments: (record.enrichments || []).map(item => ({
+          metadata: item.metadata, content: encodeBase64(item.payload || new Uint8Array()),
+        })),
+      }))};
+    if (new TextEncoder().encode(JSON.stringify(snapshot)).length > 64 * 1024 * 1024)
+      throw new Error('Saved session exceeds 64 MiB');
+    const result = await inspectionRequest('/saved-flows', snapshot);
+    if (!result.id) throw new Error('Saving sessions requires the updated backend.');
+    savedOnBackend = true;
+    addActivity('system', 'SAVED', name, `${records.length} payloads and metadata stored on backend.`);
+    await openSavedFlow(result.id);
+  } catch (error) { alert(`${savedOnBackend ? 'Session saved, but opening failed' : 'Save session failed'}: ${error.message}`); }
+  finally { followed.savePending = false; renderFlowTab(followed.key); }
+}
+
+async function openSavedFlow(id, savedPreferences = null) {
+  // Collection references share the offline tab lifecycle, without saving a duplicate.
+  const isSample = id.startsWith('sample:');
+  let snapshot;
+  if (isSample) {
+    const sample = await inspectionRequest(`/sample?id=${encodeURIComponent(id.slice(7))}`);
+    if (sample.format !== 'spider-sample-v1' || !sample.event)
+      throw new Error('Unsupported collection sample');
+    snapshot = {
+      format: 'spider-flow-v1',
+      name: `Sample · ${sample.collection?.endpoint || sample.event.id} · ${new Date(sample.captured_at_ms).toLocaleString()}`,
+      scope: {type: 'connection', sessionId: sample.event.id,
+        label: sample.event.details?.info?.session || sample.event.id},
+      records: [{event: sample.event, revision: sample.event.revision || sample.captured_at_ms,
+        context_complete: false, session_context: sample.session_context, enrichments: sample.enrichments}],
+      messages: [],
+    };
+  } else snapshot = await inspectionRequest(`/saved-flow?id=${encodeURIComponent(id)}`);
+  if (snapshot.format !== 'spider-flow-v1' || !Array.isArray(snapshot.records))
+    throw new Error('Unsupported saved session');
+  const records = snapshot.records.map(record => ({
+    event: record.event, revision: record.revision, decided: true, collectedSample: true,
+    sessionContext: record.session_context,
+    replayContextComplete: record.context_complete === true,
+    binaryPayload: decodeBase64(record.event.details?.info?.content || ''),
+    enrichments: (record.enrichments || []).map(item => ({
+      metadata: item.metadata, payload: decodeBase64(item.content || ''),
+    })),
+  }));
+  for (const record of records) {
+    if (record.event.details?.info) delete record.event.details.info.content;
+    record.cacheBytes = payloadSize(record);
+  }
+  const loadedBytes = [...followedFlows.values()].filter(flow => flow.savedId && flow.savedId !== id)
+    .reduce((sum, flow) => sum + flow.savedRecords.reduce((n, record) => n + payloadSize(record), 0), 0);
+  if (loadedBytes + records.reduce((sum, record) => sum + record.cacheBytes, 0) > payloadMemoryLimit * 1024 * 1024)
+    throw new Error('Saved-session memory budget reached; close another saved tab or increase the browser cache budget.');
+  const scope = {...snapshot.scope, key: `saved:${id}`, title: snapshot.name, savedId: id};
+  const existing = followedFlows.get(scope.key);
+  if (existing) {
+    existing.savedRecords = records; existing.savedMessages = snapshot.messages || [];
+    existing.title = snapshot.name; existing.renderedMode = null; existing.replayStatus = '';
+    document.querySelector(`[data-tab="${existing.id}"] span`).textContent = snapshot.name;
+    renderFlowTab(scope.key); showTab(existing.id); saveFollowTabs();
+  } else {
+    openFlowTab(scope.sessionId || scope.key, scope.type, {
+      ...snapshot, ...savedPreferences, scope, records, messages: snapshot.messages || [],
+    });
+  }
+}
+
+async function openSavedFlows() {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'sample-picker';
+  dialog.innerHTML = '<div class="section-head"><h2>Saved sessions · backend</h2><button data-close>Close</button></div>' +
+    '<div class="sample-picker-tools"><button data-prev>Previous</button><button data-next>Next</button><span data-status role="status"></span></div><div data-list></div>';
+  document.body.append(dialog);
+  let offset = 0, next = null;
+  const close = () => { dialog.close(); dialog.remove(); };
+  dialog.querySelector('[data-close]').onclick = close;
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+  const load = async () => {
+    const status = dialog.querySelector('[data-status]');
+    status.textContent = 'Loading…';
+    try {
+      const result = await inspectionRequest(`/saved-flows?offset=${offset}`);
+      if (!Array.isArray(result.items)) throw new Error('Saved sessions require the updated backend.');
+      next = result.next;
+      status.textContent = `${result.total} saved sessions`;
+      dialog.querySelector('[data-prev]').disabled = offset === 0;
+      dialog.querySelector('[data-next]').disabled = next === null;
+      const list = dialog.querySelector('[data-list]'); list.replaceChildren();
+      for (const item of result.items) {
+        const button = document.createElement('button');
+        button.style.display = 'block';
+        button.className = 'sample-row';
+        const title = document.createElement('strong'); title.textContent = item.name;
+        const detail = document.createElement('small');
+        detail.textContent = [item.description, `${item.records} payloads`,
+          item.connections ? `${item.connections} connections` : '',
+          Number.isFinite(item.bytes) ? formatBytes(item.bytes) : '',
+          new Date(item.saved_at_ms).toLocaleString()].filter(Boolean).join(' · ');
+        button.append(title, detail);
+        button.onclick = async () => {
+          button.disabled = true;
+          try { await openSavedFlow(item.id); close(); }
+          catch (error) { status.textContent = error.message; button.disabled = false; }
+        };
+        list.append(button);
+      }
+    } catch (error) { status.textContent = error.message; }
+  };
+  dialog.querySelector('[data-prev]').onclick = () => { offset = Math.max(0, offset - 100); load(); };
+  dialog.querySelector('[data-next]').onclick = () => { if (next !== null) { offset = next; load(); } };
+  dialog.showModal(); await load();
+}
+
+function replayFollowedFlow(followed) {
+  if (!followed || followed.replayPending) return;
+  followed.replayPending = true;
+  followed.replayStatus = 'Enrichment: queued';
+  renderFlowTab(followed.key);
+  const work = async () => {
+    if (followedFlows.get(followed.key) !== followed) return;
+    const records = followedRecords(followed);
+    try {
+      if (!records.length) { followed.replayStatus = 'Enrichment: no retained payloads'; return; }
+      if (records.length > 10000) throw new Error('More than 10000 retained payloads; replay limit reached');
+      followed.replayStatus = `Enrichment: recomputing ${records.length} payloads…`;
+      renderFlowTab(followed.key);
+      const parts = [];
+      let size = 0;
+      for (const record of records) {
+        const event = {...record.event, details: {...record.event.details,
+          info: {...record.event.details?.info}}};
+        delete event.details.info.content;
+        const part = SpiderSxbn.encode({event,
+          context_complete: record.replayContextComplete ??
+            (startedConnections.has(event.id) && !incompleteReplaySessions.has(event.id))},
+        recordPayloadBytes(record));
+        size += part.length;
+        if (size > 64 * 1024 * 1024) throw new Error('Retained replay input exceeds 64 MiB');
+        parts.push(part);
+      }
+      const response = await fetch(baseUrl() + '/api/enrichment/replay', {
+        method: 'POST', headers: {...headers(), 'Content-Type': 'application/octet-stream'},
+        body: new Blob(parts),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || `Replay requires an updated backend (HTTP ${response.status})`);
+      }
+      const envelopes = SpiderSxbn.decode(await response.arrayBuffer());
+      if (followedFlows.get(followed.key) !== followed) return;
+      const summary = envelopes.find(item => item.metadata.type === 'replay-summary')?.metadata;
+      if (!summary) throw new Error('Missing replay summary');
+      const updates = new Map();
+      for (const item of envelopes) {
+        if (item.metadata.type === 'replay-summary') continue;
+        const index = item.metadata.replay_index;
+        if (!Number.isInteger(index) || !records[index]) throw new Error('Invalid replay record index');
+        if (!updates.has(index)) updates.set(index, []);
+        updates.get(index).push(item);
+      }
+      const retained = new Set(followed.savedRecords || payloadRecords);
+      let added = 0;
+      for (const [index, items] of updates) {
+        const record = records[index];
+        if (!retained.has(record)) continue;
+        const operations = new Set(items.map(item => item.metadata.operation));
+        const oldSize = record.cacheBytes || payloadSize(record);
+        record.enrichments = [...(record.enrichments || []).filter(item => !operations.has(item.metadata?.operation)), ...items];
+        record.cacheBytes = payloadSize(record);
+        if (!followed.savedId) payloadCacheBytes += record.cacheBytes - oldSize;
+        added += items.length;
+      }
+      trimPayloadCache();
+      updateCacheStats();
+      followed.replayStatus = `Enrichment: ${added} outputs · ${records.length} payloads` +
+        (summary.incomplete_sessions.length ? ` · ${summary.incomplete_sessions.length} incomplete connection(s), HPACK not reconstructed` : '');
+      for (const flow of followedFlows.values()) {
+        const panel = byId(flow.id), scroll = panel?.scrollTop || 0;
+        flow.renderedMode = null;
+        renderFlowTab(flow.key);
+        if (panel) panel.scrollTop = scroll;
+      }
+      if (selectedPayload && retained.has(selectedPayload)) renderPayload();
+    } catch (error) { followed.replayStatus = `Enrichment: ${error.message}`; }
+    finally {
+      followed.replayPending = false;
+      if (followedFlows.get(followed.key) === followed) renderFlowTab(followed.key);
+    }
+  };
+  enrichmentReplayQueue = enrichmentReplayQueue.then(work, work);
 }
 
 function closeFlowTab(scopeKey) {
@@ -2892,10 +3129,12 @@ function renderFlowStreamLegend(stream, records, followed) {
 }
 
 function clearFollowedFlow(followed) {
+  if (followed.savedId) return;
   const removed = payloadRecords.filter(record => scopeMatches(followed, record));
   if (!removed.length) return;
   const removedSet = new Set(removed);
   const affectedIds = new Set(removed.map(record => record.event.id));
+  for (const id of affectedIds) incompleteReplaySessions.add(id);
   payloadRecords = payloadRecords.filter(record => !removedSet.has(record));
   payloadCacheBytes = payloadRecords.reduce((total, record) =>
     total + (record.cacheBytes || payloadSize(record)), 0);
@@ -2979,8 +3218,7 @@ function renderFlowTab(scopeKey) {
   const followed = followedFlows.get(scopeKey);
   const panel = followed && byId(followed.id);
   if (!panel) return;
-  const retained = payloadRecords.filter(record => scopeMatches(followed, record))
-    .sort((a, b) => a.revision - b.revision);
+  const retained = followedRecords(followed);
   const records = [];
   let displayBytes = 0;
   for (let index = retained.length - 1; index >= 0; --index) {
@@ -2993,6 +3231,7 @@ function renderFlowTab(scopeKey) {
   if (!panel.querySelector('.flow-stream')) {
     panel.innerHTML = '<div class="flow-follow-toolbar"><div class="flow-follow-head"><h2>Follow flow</h2><span class="flow-completeness" hidden></span><small></small>' +
       '<span class="flow-follow-classifications"></span><div class="flow-follow-controls">' +
+      '<button type="button" data-save-flow>Save as…</button><button type="button" data-saved-flows>Saved sessions</button>' +
       '<button type="button" data-flow-view="chunks" aria-pressed="true">Chunks</button>' +
       '<button type="button" data-flow-view="stream" aria-pressed="false">Stream</button>' +
       '<button type="button" data-flow-view="lanes" aria-pressed="false">Lanes</button>' +
@@ -3012,7 +3251,8 @@ function renderFlowTab(scopeKey) {
       '<label class="lane-width-slider" title="Uniform width of expanded lanes"><input type="range" min="120" max="640" step="10" data-lane-width-slider><output></output></label>' +
       '<button type="button" data-lane-font="-1" title="Smaller lane font">A−</button>' +
       '<button type="button" data-lane-font="1" title="Larger lane font">A+</button></span></div></div>' +
-      '<div class="flow-collection-toolbar"><button type="button" data-flow-collect aria-pressed="false">▣ Collect</button> <small data-collect-status></small></div>' +
+      '<div class="flow-collection-toolbar"><button type="button" data-flow-collect aria-pressed="false">▣ Collect</button> <small data-collect-status></small>' +
+      '<button type="button" data-flow-replay title="Recompute enrichment from retained payloads without touching live traffic">Recompute</button><small data-replay-status role="status"></small></div>' +
       '<div class="flow-cache-toolbar"><label class="flow-keep-all"><input type="checkbox" data-keep-all> Keep all</label>' +
       '<label>View <input class="flow-view-limit" type="number" min="1" max="8192" step="1"> MiB</label>' +
       '<label>L bytes <select data-payload-cap="L"><option value="0">all</option><option value="-1">first half</option><option value="64">first 64 B</option><option value="256">first 256 B</option><option value="1024">first 1 KiB</option><option value="4096">first 4 KiB</option><option value="16384">first 16 KiB</option></select></label>' +
@@ -3022,6 +3262,9 @@ function renderFlowTab(scopeKey) {
       '<div class="flow-gap flow-eviction" hidden></div>' +
       '<div class="flow-gap flow-window" hidden></div><div class="flow-stream"></div>';
     const toolbar = panel.querySelector('.flow-follow-toolbar');
+    panel.querySelector('[data-save-flow]').onclick = () => saveFollowedFlow(followed);
+    panel.querySelector('[data-saved-flows]').onclick = openSavedFlows;
+    panel.querySelector('[data-flow-replay]').onclick = () => replayFollowedFlow(followed);
     panel.querySelector('[data-flow-collect]').onclick = async () => {
       const button = panel.querySelector('[data-flow-collect]');
       button.disabled = true;
@@ -3074,8 +3317,7 @@ function renderFlowTab(scopeKey) {
       renderFlowTab(scopeKey);
     };
     panel.querySelector('[data-export-pcapng]').onclick = () => {
-      const exportRecords = payloadRecords.filter(record => scopeMatches(followed, record))
-        .sort((a, b) => a.revision - b.revision);
+      const exportRecords = followedRecords(followed);
       exportFollowedFlow(followed, exportRecords, panel.querySelector('[data-export-mode]').value === 'decoded');
     };
     panel.querySelector('[data-flow-expand="all"]').onclick = () => {
@@ -3164,12 +3406,17 @@ function renderFlowTab(scopeKey) {
     panel.querySelector('[data-clear-flow]').onclick = () => clearFollowedFlow(followed);
   }
   const collecting = trafficRules.some(rule => rule.id === `collect-flow:${followed.key}` && rule.mode === 'collect');
+  panel.querySelector('[data-save-flow]').disabled = !!followed.savePending;
+  panel.querySelector('[data-flow-collect]').hidden = !!followed.savedId;
+  panel.querySelector('[data-clear-flow]').hidden = !!followed.savedId;
+  panel.querySelector('[data-flow-replay]').disabled = !!followed.replayPending;
+  panel.querySelector('[data-replay-status]').textContent = followed.replayStatus || '';
   panel.querySelector('[data-flow-collect]').setAttribute('aria-pressed', String(collecting));
   panel.querySelector('[data-collect-status]').textContent = collecting ? 'Collecting on backend · future payloads + metadata' : '';
   for (const button of panel.querySelectorAll('[data-flow-view]')) {
     button.setAttribute('aria-pressed', String(button.dataset.flowView === followed.view));
   }
-  const flowMessageCount = eventRecords.reduce((count, record) =>
+  const flowMessageCount = followed.savedMessages?.length ?? eventRecords.reduce((count, record) =>
     count + (scopeMatchesEvent(followed, record) ? 1 : 0), 0);
   panel.querySelector('[data-flow-view="messages"]').textContent = `Messages ${flowMessageCount}`;
   for (const button of panel.querySelectorAll('[data-flow-scope]')) {
@@ -3196,19 +3443,19 @@ function renderFlowTab(scopeKey) {
   panel.querySelector('.flow-view-limit').disabled = followed.keepAll;
   panel.querySelector('.flow-view-limit').value = String(flowViewLimitMiB);
   panel.querySelector('.flow-follow-head small').textContent =
-    scopeLabel(followed, records);
+    (followed.savedId ? 'Saved snapshot · ' : '') + scopeLabel(followed, records);
   const visibleConnections = followed.type === 'connection'
     ? new Set([followed.sessionId])
     : new Set(records.map(record => record.event.id).filter(Boolean));
   const incompleteConnections = [...visibleConnections]
-    .filter(id => !startedConnections.has(id));
+    .filter(id => followed.savedId ? records.some(record => record.event.id === id && !record.replayContextComplete) : !startedConnections.has(id));
   const completeness = panel.querySelector('.flow-completeness');
   completeness.hidden = incompleteConnections.length === 0;
   completeness.textContent = incompleteConnections.length > 1
     ? `INCOMPLETE ${incompleteConnections.length}/${visibleConnections.size}` : 'INCOMPLETE';
   completeness.title = incompleteConnections.length
-    ? `connection-start was not observed for: ${incompleteConnections.join(', ')}` : '';
-  panel.querySelector('.flow-follow-head h2').textContent = followed.type === 'client'
+    ? `${followed.savedId ? 'Saved context is incomplete' : 'connection-start was not observed'} for: ${incompleteConnections.join(', ')}` : '';
+  panel.querySelector('.flow-follow-head h2').textContent = followed.savedId ? followed.title : followed.type === 'client'
     ? 'Client activity' : followed.type === 'service' ? 'Follow service' : 'Follow connection';
   const classification = workbenchSiftClassifications(records.at(-1));
   const classificationKey = JSON.stringify(classification);
@@ -3905,6 +4152,7 @@ function ingestEvent(record) {
   }
   if (eventRecords.length > eventRecordLimit) eventRecords.splice(0, eventRecords.length - eventRecordLimit);
   const passed = record.event.decision?.state === 'passed';
+  if (record.event.action === 'connection-content' && passed) incompleteReplaySessions.add(record.event.id);
   if (record.event.action === 'connection-content' && !passed &&
       (record.binaryPayload instanceof Uint8Array ||
        typeof record.event.details?.info?.content === 'string')) {
@@ -4490,6 +4738,7 @@ function connect() {
   payloadRecords = [];
   flowRecords.clear();
   startedConnections.clear();
+  incompleteReplaySessions.clear();
   liveSiftClassifications.clear();
   payloadCacheBytes = 0;
   payloadsDropped = 0;
@@ -4747,6 +4996,7 @@ byId('clear-activity').onclick = event => {
   renderActivity();
 };
 for (const button of document.querySelectorAll('[data-activity-filter]')) {
+  button.setAttribute('aria-pressed', String(activityFilters[button.dataset.activityFilter]));
   button.onclick = event => {
     event.preventDefault();
     const key = button.dataset.activityFilter;
@@ -4803,6 +5053,7 @@ byId('apply-cache-limits').onclick = () => {
   scheduleRender(true, true);
 };
 byId('clear-payloads').onclick = () => {
+  for (const record of payloadRecords) incompleteReplaySessions.add(record.event.id);
   payloadRecords = [];
   flowRecords.clear();
   selectedPayload = null;
@@ -4880,47 +5131,74 @@ async function openSamplePicker() {
   dialog.innerHTML = '<div class="section-head"><h2>Collected samples · backend</h2><button data-close>Close</button></div>' +
     '<div class="sample-picker-tools"><button data-live>Live payloads</button><button data-refresh>Refresh</button>' +
     '<button data-prev>Previous</button><button data-next>Next</button><span data-status role="status"></span></div>' +
+    '<div class="sample-picker-tools"><input data-search aria-label="Search all collected samples" placeholder="Host, HTTP path/status, MIME, encoding…" maxlength="200"><button data-find>Search all samples</button></div>' +
     '<div class="sample-picker-layout"><div data-list></div><section><p data-summary>Select a sample.</p>' +
-    '<button data-use disabled>Use in Inspection</button><pre data-preview></pre></section></div>';
+    '<button data-follow disabled>Open in Follow</button> <button data-use disabled>Use in Inspection</button><pre data-preview></pre></section></div>';
   document.body.append(dialog);
-  let offset = 0, next = null, sample = null, generation = 0;
+  let offset = 0, next = null, sample = null, generation = 0, query = '';
   const status = dialog.querySelector('[data-status]');
   const use = dialog.querySelector('[data-use]');
+  const follow = dialog.querySelector('[data-follow]');
+  let selectedSampleId = null;
   const close = () => { ++generation; dialog.close(); dialog.remove(); };
   dialog.querySelector('[data-close]').onclick = close;
   dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
   dialog.querySelector('[data-live]').onclick = () => { close(); showTab('workbench-tab'); };
   async function load() {
     const request = ++generation;
-    sample = null; use.disabled = true;
+    sample = null; selectedSampleId = null; use.disabled = follow.disabled = true;
     dialog.querySelector('[data-preview]').textContent = '';
+    dialog.querySelector('[data-summary]').textContent = 'Select a sample.';
+    dialog.querySelector('[data-list]').replaceChildren();
     status.textContent = 'Loading…';
     try {
-      const result = await inspectionRequest(`/collections?offset=${offset}`);
+      const result = await inspectionRequest(`/collections?offset=${offset}&q=${encodeURIComponent(query)}`);
       if (request !== generation) return;
       if (!Array.isArray(result.items)) throw new Error('Collection browser requires the updated backend.');
       next = result.next;
       dialog.querySelector('[data-prev]').disabled = offset === 0;
       dialog.querySelector('[data-next]').disabled = next === null;
-      status.textContent = `${result.total} samples · ${offset + (result.items.length ? 1 : 0)}–${offset + result.items.length}`;
+      status.textContent = `${result.total}${query ? ` / ${result.all ?? result.total}` : ''} samples · ${offset + (result.items.length ? 1 : 0)}–${offset + result.items.length} · newest first`;
       const list = dialog.querySelector('[data-list]');
       list.replaceChildren();
       for (const item of result.items) {
         const button = document.createElement('button');
-        button.textContent = item.id;
+        button.className = 'sample-row';
+        button.title = item.error || item.id;
+        const line = (tag, text) => {
+          if (!text) return;
+          const element = document.createElement(tag);
+          element.textContent = text; button.append(element);
+        };
+        line('strong', `${item.side === 'L' ? '→ L' : item.side === 'R' ? '← R' : '?'} · ${item.title || 'Payload'}`);
+        line('span', [item.authority, item.endpoint].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' · '));
+        line('small', [item.captured_at_ms ? new Date(item.captured_at_ms).toLocaleString() : '',
+          ...(item.protocols || []), Number.isFinite(item.bytes) ? formatBytes(item.bytes) : '',
+          item.decoded_bytes ? `decoded ${formatBytes(item.decoded_bytes)}` : ''].filter(Boolean).join(' · '));
+        line('small', item.session || item.session_id);
+        line('small', item.stream_ids?.length ? `H2 stream ${item.stream_ids.join(', ')}` : '');
+        line('small', [...(item.content_types || []), ...(item.encodings || []), ...(item.operations || [])].join(' · '));
+        if (item.error) line('small', item.error);
+        button.disabled = !!item.error;
         button.onclick = async () => {
           const selection = ++generation;
-          sample = null; use.disabled = true;
+          sample = null; selectedSampleId = null; use.disabled = follow.disabled = true;
           dialog.querySelector('[data-summary]').textContent = 'Loading sample…';
           try {
             const data = await inspectionRequest(`/sample?id=${encodeURIComponent(item.id)}`);
             if (selection !== generation) return;
             if (data.format !== 'spider-sample-v1') throw new Error('Unsupported sample format');
-            sample = data; use.disabled = false;
+            sample = data; selectedSampleId = item.id; use.disabled = follow.disabled = false;
+            for (const row of list.querySelectorAll('button')) row.setAttribute('aria-pressed', String(row === button));
             dialog.querySelector('[data-summary]').textContent =
-              `${data.collection.endpoint} · ${new Date(data.captured_at_ms).toLocaleString()} · ${data.event.details?.info?.session || data.event.id}`;
+              `${item.title || 'Payload'} · ${data.collection.endpoint} · ${new Date(data.captured_at_ms).toLocaleString()} · ${data.event.details?.info?.session || data.event.id}`;
             // Bounded, inert text preview: never interpret captured content as HTML.
-            dialog.querySelector('[data-preview]').textContent = JSON.stringify(data, null, 2).slice(0, 30000);
+            const preview = {...data, event: {...data.event, details: {...data.event.details,
+              info: {...data.event.details?.info, content: `[${decodedPayloadSize(data.event.details?.info?.content)} bytes; preserved for Inspection]`}}},
+              enrichments: (data.enrichments || []).map(enrichment => ({
+                ...enrichment, content: `[${decodedPayloadSize(enrichment.content)} decoded bytes]`,
+              }))};
+            dialog.querySelector('[data-preview]').textContent = JSON.stringify(preview, null, 2).slice(0, 30000);
           } catch (error) {
             if (selection === generation) dialog.querySelector('[data-summary]').textContent = error.message;
           }
@@ -4940,7 +5218,29 @@ async function openSamplePicker() {
     selectPayload(record, false);
     close(); showTab('inspection-tab');
   };
+  follow.onclick = async () => {
+    if (!selectedSampleId) return;
+    const request = ++generation;
+    follow.disabled = use.disabled = true;
+    try {
+      await openSavedFlow(`sample:${selectedSampleId}`);
+      if (request === generation) close();
+    } catch (error) {
+      if (request === generation) {
+        status.textContent = `Cannot open sample: ${error.message}`;
+        follow.disabled = use.disabled = false;
+      }
+    }
+  };
   dialog.querySelector('[data-refresh]').onclick = load;
+  const search = () => {
+    query = dialog.querySelector('[data-search]').value.trim();
+    offset = 0; load();
+  };
+  dialog.querySelector('[data-find]').onclick = search;
+  dialog.querySelector('[data-search]').onkeydown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); search(); }
+  };
   dialog.querySelector('[data-prev]').onclick = () => { offset = Math.max(0, offset - 100); load(); };
   dialog.querySelector('[data-next]').onclick = () => { if (next !== null) { offset = next; load(); } };
   dialog.showModal();
@@ -4948,6 +5248,12 @@ async function openSamplePicker() {
 }
 byId('inspection-select-input').textContent = 'Choose sample';
 byId('inspection-select-input').onclick = openSamplePicker;
+const savedSessionsButton = document.createElement('button');
+savedSessionsButton.id = 'open-saved-sessions';
+savedSessionsButton.type = 'button';
+savedSessionsButton.textContent = 'Saved sessions';
+savedSessionsButton.onclick = openSavedFlows;
+byId('follow-payload').after(savedSessionsButton);
 loadScriptSlot(1);
 renderSessionGroupControls();
 renderTrafficRules();

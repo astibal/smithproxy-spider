@@ -19,6 +19,7 @@
 #include <memory>
 #include <string_view>
 #include <chrono>
+#include <mutex>
 
 namespace spider {
 namespace {
@@ -54,12 +55,14 @@ public:
                                p == "/api/status" || p == "/api/sessions" ||
                                p == "/api/diagnostics" || p == "/api/inspection" || p == "/api/inspection/schema" ||
                                p == "/api/hostnames" || p == "/api/inspection/collections" || p == "/api/inspection/sample" ||
+                               p == "/api/inspection/saved-flows" || p == "/api/inspection/saved-flow" ||
                                p == "/api/session-history" || p == "/api/session" ||
                                p == "/api/events" || p == "/api/events/ws")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
                (m == "DELETE" && p == "/api/session-history") ||
-               (m == "POST" && p == "/api/config/smithproxy") ||
-               (m == "POST" && (p == "/api/inspection" || p == "/api/inspection/run" || p == "/api/inspection/rules")) ||
+               (m == "POST" && (p == "/api/config/smithproxy" || p == "/api/enrichment/replay")) ||
+               (m == "POST" && (p == "/api/inspection" || p == "/api/inspection/run" || p == "/api/inspection/rules" ||
+                               p == "/api/inspection/saved-flows")) ||
                (m == "POST" && p == callback_path());
     }
 
@@ -74,7 +77,10 @@ public:
         auto& state = *static_cast<RequestState*>(*ptr);
 
         if (*upload_data_size > 0) {
-            if (state.request_data.size() + *upload_data_size > config_.max_body_bytes) {
+            const auto limit = (std::string_view(url) == "/api/enrichment/replay" ||
+                std::string_view(url) == "/api/inspection/saved-flows") &&
+                !config_.token.empty() && authenticated(connection) ? 64U * 1024U * 1024U : config_.max_body_bytes;
+            if (state.request_data.size() + *upload_data_size > limit) {
                 state.too_large = true;
             } else if (!state.too_large) {
                 state.request_data.append(upload_data, *upload_data_size);
@@ -159,15 +165,36 @@ private:
             }
         }
         if (!authenticated(connection)) return json_response(401, {{"error", "unauthorized"}});
+        if (method == "POST" && url == "/api/enrichment/replay") {
+            if (config_.token.empty()) return json_response(403, {{"error", "SPIDER_TOKEN required for replay"}});
+            static std::mutex replay_mutex;
+            std::unique_lock lock(replay_mutex, std::try_to_lock);
+            if (!lock.owns_lock()) return json_response(409, {{"error", "Another enrichment replay is running"}});
+            try {
+                std::vector<SxbnEnvelope> records;
+                std::string error;
+                if (!decode_sxbn_chain(body, records, error)) return json_response(400, {{"error", error}});
+                return {200, "application/octet-stream", EnrichmentEngine::replay(records)};
+            } catch (const std::exception& e) { return json_response(400, {{"error", e.what()}}); }
+        }
         if (method == "GET" && url == "/api/inspection/schema")
             return {200, "application/json", inspection_schema_json};
         if (url.starts_with("/api/inspection")) {
             if (config_.token.empty()) return json_response(403, {{"error", "SPIDER_TOKEN is required for backend scripting"}});
             try {
                 if (method == "GET") {
+                    if (url == "/api/inspection/saved-flows") {
+                        const char* offset = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "offset");
+                        return json_response(200, inspection_.collection.list_flows(offset ? std::stoull(offset) : 0));
+                    }
+                    if (url == "/api/inspection/saved-flow") {
+                        const char* id = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "id");
+                        return json_response(200, inspection_.collection.read_flow(id ? id : ""));
+                    }
                     if (url == "/api/inspection/collections") {
                         const char* offset = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "offset");
-                        return json_response(200, inspection_.collection.list(offset ? std::stoull(offset) : 0));
+                        const char* query = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "q");
+                        return json_response(200, inspection_.collection.list(offset ? std::stoull(offset) : 0, query ? query : ""));
                     }
                     if (url == "/api/inspection/sample") {
                         const char* id = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "id");
@@ -179,6 +206,7 @@ private:
                 }
                 const auto request = nlohmann::json::parse(body);
                 if (!request.is_object()) return json_response(400, {{"error", "JSON object required"}});
+                if (url == "/api/inspection/saved-flows") return json_response(200, inspection_.collection.save_flow(request));
                 if (url == "/api/inspection/run") return json_response(200, inspection_.run(request));
                 if (url == "/api/inspection/rules") return json_response(200, decisions_.set_traffic_rules(request));
                 return json_response(200, inspection_.configure(request));
