@@ -76,11 +76,10 @@ output = Output()
 response = {'ok': False, 'replacement': None}
 try:
     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-        api = Api(request)
         source = 'def __spider_script(api):\n' + textwrap.indent(request['script'] or 'pass', '    ')
         namespace = {}
         exec(compile(source, '<inspection>', 'exec'), namespace)
-        result = namespace['__spider_script'](api)
+        result = None if request.get('validate_only') else namespace['__spider_script'](Api(request))
         if isinstance(result, str):
             result = result.encode()
         if result is not None and not isinstance(result, (bytes, bytearray, memoryview)):

@@ -543,6 +543,11 @@ int main() {
     assert(inflated_chunked != chunked_output.end());
     assert(inflated_chunked->payload == plain_content);
     assert(inflated_chunked->metadata["finished"] == true);
+    const auto& decoded_ranges = inflated_chunked->metadata["source"]["decoded_ranges"];
+    assert(decoded_ranges.size() == 2);
+    assert(decoded_ranges[0][0] == 0);
+    assert(decoded_ranges[0][1] == decoded_ranges[1][0]);
+    assert(decoded_ranges[1][1] == plain_content.size());
 
     const auto h2_gzip_one = compress_payload("stream one", 16 + MAX_WBITS);
     const auto h2_gzip_two = compress_payload("stream two", 16 + MAX_WBITS);

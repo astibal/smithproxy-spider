@@ -72,6 +72,7 @@ private:
     std::unordered_map<std::string, std::shared_ptr<Ticket>> pending_;
     std::unordered_set<std::string> accepted_sessions_;
     std::unordered_map<std::string, std::unordered_set<std::string>> session_classifications_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> hostnames_;
     std::vector<AutoAcceptRule> auto_accept_rules_;
     std::vector<TrafficRule> traffic_rules_;
 };

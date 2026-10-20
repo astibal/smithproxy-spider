@@ -10,17 +10,30 @@ DecisionBroker::DecisionBroker(const std::chrono::milliseconds timeout) : timeou
 
 std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& event) {
     if (event.value("action", "") != "connection-content") return {};
+    event.erase("collections"); // only backend rules may select capture destinations
     const auto session = event.value("id", "");
     std::scoped_lock lock(mutex_);
-    if (bypass_all_) {
-        event["decision"] = {{"state", "passed"}, {"reason", "bypass-all"}};
-        return {};
-    }
     const auto focus_active = std::ranges::any_of(traffic_rules_,
         [](const TrafficRule& rule) { return rule.mode == "focus"; });
     TrafficRule* matched = nullptr;
     for (auto& rule : traffic_rules_) {
-        const auto matches = rule.kind == "sift"
+        const auto hostname_match = [&] {
+            for (const auto& [address, names] : hostnames_) {
+                const auto pattern = rule.kind == "hostname-suffix" ? "*." + rule.value : rule.value;
+                if (!std::ranges::any_of(names, [&](const auto& name) {
+                    return fnmatch(pattern.c_str(), name.c_str(), FNM_CASEFOLD) == 0 ||
+                        (rule.kind == "hostname-suffix" && name == rule.value);
+                })) continue;
+                std::string error;
+                auto filter = SessionFilter::compile("host " + address, error);
+                if (filter && filter->matches(event)) return true;
+            }
+            return false;
+        };
+        const auto matches = rule.kind == "session" ? session == rule.value
+            : (rule.kind == "hostname-glob" || rule.kind == "hostname-suffix")
+            ? hostname_match()
+            : rule.kind == "sift"
             ? session_classifications_[session].contains(rule.value)
             : rule.kind == "sift-glob"
             ? std::ranges::any_of(session_classifications_[session], [&](const auto& value) {
@@ -28,13 +41,26 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
               })
             : rule.filter && rule.filter->matches(event);
         if (matches) {
+            if (rule.mode == "collect") {
+                ++rule.matches;
+                if (!event.contains("collections")) event["collections"] = nlohmann::json::array();
+                event["collections"].push_back({{"id", rule.id}, {"endpoint", rule.value}});
+                continue;
+            }
+            if (matched) continue;
             matched = &rule;
             ++rule.matches;
-            break;
         }
     }
+    if (bypass_all_) {
+        event["decision"] = {{"state", "passed"}, {"reason", "bypass-all"}};
+        return {};
+    }
     if (matched && matched->mode == "forget") {
-        event["decision"] = {{"state", "forgotten"}, {"reason", "rule"}};
+        // A collector still needs future callbacks; do not tell Smithproxy to stop them.
+        event["decision"] = event.contains("collections")
+            ? nlohmann::json{{"state", "passed"}, {"reason", "collection-retains-callbacks"}}
+            : nlohmann::json{{"state", "forgotten"}, {"reason", "rule"}};
         return {};
     }
     if ((matched && matched->mode == "pass") || (!matched && focus_active)) {
@@ -194,21 +220,28 @@ nlohmann::json DecisionBroker::set_traffic_rules(const nlohmann::json& message) 
             auto mode = rule.value("mode", "");
             if (mode == "ignore") mode = "forget"; // migrate pre-FORGET clients
             std::string error;
-            const auto sift_rule = kind == "sift" || kind == "sift-glob";
+            const auto sift_rule = kind == "sift" || kind == "sift-glob" ||
+                (mode == "collect" && (kind == "session" || kind == "hostname-glob" || kind == "hostname-suffix"));
+            const bool scope_filter = mode == "collect" && kind == "filter";
             auto filter = sift_rule ? std::optional<SessionFilter>{} : SessionFilter::compile(
-                "(src host " + address + " or dst host " + address + ")", error);
-            if ((sift_rule ? value.empty() : address.empty()) ||
+                scope_filter ? value : "(src host " + address + " or dst host " + address + ")", error);
+            if ((sift_rule || scope_filter ? value.empty() : address.empty()) ||
                 (mode != "pass" && mode != "focus" && mode != "inspect" &&
-                                    mode != "forget")) {
+                                    mode != "forget" && mode != "collect")) {
                 errors.push_back({{"address", address}, {"error", "invalid address or mode"}});
             } else if (!sift_rule && !filter) {
                 errors.push_back({{"address", address}, {"error", error}});
             } else {
-                next.push_back({id.empty() ? mode + ":" + (sift_rule ? value : address) : id,
-                                kind, sift_rule ? value : address, address, mode,
+                next.push_back({id.empty() ? mode + ":" + (sift_rule || scope_filter ? value : address) : id,
+                                kind, sift_rule || scope_filter ? value : address, address, mode,
                                 std::move(filter)});
             }
         }
+    }
+    if (!errors.empty()) {
+        auto status = traffic_rule_status();
+        status["errors"] = std::move(errors);
+        return status;
     }
     {
         std::scoped_lock lock(mutex_);
@@ -242,6 +275,18 @@ nlohmann::json DecisionBroker::traffic_rule_status() const {
 
 void DecisionBroker::observe(const nlohmann::json& event) {
     std::scoped_lock lock(mutex_);
+    if (event.value("action", "") == "hostname-info") {
+        const auto list = event.value("details", nlohmann::json::object())
+            .value("info", nlohmann::json::object()).value("list", nlohmann::json::array());
+        for (const auto& item : list) {
+            if (!item.is_object() || !item.value("address", nlohmann::json::array()).is_array()) continue;
+            auto name = item.value("hostname", "");
+            if (name.empty()) continue;
+            if (name.back() == '.') name.pop_back();
+            for (const auto& address : item["address"])
+                if (address.is_string() && hostnames_.size() < 10000) hostnames_[address.get<std::string>()].insert(name);
+        }
+    }
     const auto session = event.value("id", "");
     if (event.value("action", "") == "connection-stop") {
         accepted_sessions_.erase(session);

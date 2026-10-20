@@ -53,7 +53,7 @@ public:
         return (m == "GET" && (p == "/" || p == "/api/health" || p == "/api/ready" ||
                                p == "/api/status" || p == "/api/sessions" ||
                                p == "/api/diagnostics" || p == "/api/inspection" || p == "/api/inspection/schema" ||
-                               p == "/api/hostnames" ||
+                               p == "/api/hostnames" || p == "/api/inspection/collections" || p == "/api/inspection/sample" ||
                                p == "/api/session-history" || p == "/api/session" ||
                                p == "/api/events" || p == "/api/events/ws")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
@@ -165,6 +165,14 @@ private:
             if (config_.token.empty()) return json_response(403, {{"error", "SPIDER_TOKEN is required for backend scripting"}});
             try {
                 if (method == "GET") {
+                    if (url == "/api/inspection/collections") {
+                        const char* offset = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "offset");
+                        return json_response(200, inspection_.collection.list(offset ? std::stoull(offset) : 0));
+                    }
+                    if (url == "/api/inspection/sample") {
+                        const char* id = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "id");
+                        return json_response(200, inspection_.collection.read(id ? id : ""));
+                    }
                     auto state = inspection_.status();
                     state["traffic_rules"] = decisions_.traffic_rule_status();
                     return json_response(200, state);
