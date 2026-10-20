@@ -171,6 +171,14 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     await editor.press('Control+Space');
     await page.getByRole('option').filter({hasText: 'name'}).click();
     assert.equal(await page.locator('#script-editor').inputValue(), 'api.http1.headers[0].name');
+    await editor.fill('api.http2.header_blocks[0].headers[0].');
+    await editor.press('Control+Space');
+    await page.getByRole('option').filter({hasText: 'value'}).click();
+    assert.equal(await page.locator('#script-editor').inputValue(), 'api.http2.header_blocks[0].headers[0].value');
+    await editor.fill('api.http2.frames[0].');
+    await editor.press('Control+Space');
+    await page.getByRole('option').filter({hasText: 'stream_id'}).click();
+    assert.equal(await page.locator('#script-editor').inputValue(), 'api.http2.frames[0].stream_id');
     await editor.fill('# api.http1.');
     await editor.press('Control+Space');
     assert.equal(await page.locator('.cm-tooltip-autocomplete').count(), 0);

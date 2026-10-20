@@ -1,5 +1,29 @@
 # Smithproxy Spider
 
+### Read-only HTTP/2 inspection API
+
+`api.http2.frames` exposes annotated frame headers (offset, declared length, numeric
+type, flags, stream ID and completeness). `payload` is a read-only memoryview into
+the current callback; `data` is an unpadded DATA slice only when the frame is complete
+and its padding is valid. No boundaries are guessed and no reassembly is performed
+in Python. A continuation fragment without an annotated frame header is not listed.
+
+`api.http2.header_blocks` exposes every complete backend HPACK enrichment, preserving
+field order, duplicates, pseudo-headers, stream ID, block kind and cross-callback
+provenance. Missing HPACK context means no decoded block, not an empty HTTP head.
+These immutable views do not modify traffic. The backend-generated API reference
+and editor completions use the same typed definitions and examples.
+
+```python
+for block in api.http2.header_blocks:
+    for header in block.headers:
+        api.print(block.stream_id, header.name, header.value)
+for frame in api.http2.frames:
+    if frame.data is not None:
+        api.print(frame.stream_id, len(frame.data), "DATA bytes")
+return None
+```
+
 ### Saved Follow sessions
 
 **Save as…** stores a named snapshot of all currently retained payloads in the Follow

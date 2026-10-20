@@ -385,8 +385,9 @@ def main():
                         websocket.close()
                     inspection_url = f"http://127.0.0.1:{spider_port}/api/inspection"
                     schema = get_json(inspection_url + '/schema', 'frontend-key')
-                    assert schema['version'] == '0.1'
-                    assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == ['message', 'metadata', 'http1']
+                    assert schema['version'] == '0.2'
+                    assert 'Http2' in schema['types']
+                    assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == ['message', 'metadata', 'http1', 'http2']
                     assert schema['types']['Message']['fields'][0]['type'] == 'bytes'
                     try:
                         post_json(inspection_url + '/run', {'script': 'return None'})

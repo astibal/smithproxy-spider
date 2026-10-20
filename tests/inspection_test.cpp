@@ -29,6 +29,12 @@ int main() {
                 {"method", "GET"}, {"target", "/demo"}, {"headers", json::array({
                     {{"name", "X-Test"}, {"value", "one"}}, {{"name", "X-Test"}, {"value", "two"}}})}}}}}}})}});
     assert(result["ok"] == true && result["logs"][0] == "X-Test");
+    result = runtime.run({{"script", "assert api.http2.available\nassert len(api.http2.header_blocks) == 1\nblock = api.http2.header_blocks[0]\nassert block.stream_id == 3\nassert block.headers[0].name == ':method'\nassert block.headers[0].value == 'GET'\nassert api.http2.frames == ()\nreturn None"},
+        {"event", event}, {"enrichments", json::array({{{"metadata", {
+            {"operation", "hpack.decode"}, {"context", "complete"},
+            {"source", {{"stream_id", 3}, {"kind", "h2.headers"}}},
+            {"headers", json::array({{{"name", ":method"}, {"value", "GET"}}})}}}}})}});
+    assert(result["ok"] == true && result["replacement"].is_null());
     assert(run("api.message.size = 99")["ok"] == false);
     assert(run("raise ValueError('bad')")["ok"] == false);
     assert(run("return 123")["ok"] == false);

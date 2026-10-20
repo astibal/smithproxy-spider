@@ -74,6 +74,8 @@ if(BUILD_TESTING)
     target_link_libraries(inspection_tests PRIVATE spider_core)
     target_compile_options(inspection_tests PRIVATE -UNDEBUG)
     add_test(NAME inspection_tests COMMAND inspection_tests)
+    add_test(NAME inspection_api_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_api_test.py)
     set_tests_properties(inspection_tests PROPERTIES TIMEOUT 15)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(spider_tests tests/session_store_test.cpp)
