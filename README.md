@@ -1,9 +1,60 @@
 # Smithproxy Spider
 
+### Saved Follow sessions
+
+**Save as…** stores a named snapshot of all currently retained payloads in the Follow
+scope, their enrichments, retained event messages, context-completeness flags and view
+preferences. It opens a separate saved tab; the live Follow remains separate.
+**Saved sessions** in Payloads or Follow opens the backend catalog, including sessions
+whose tabs were closed. Open saved tabs reload their actual data from the backend on UI
+restart, not from the volatile payload cache.
+
+The collection picker also offers **Open in Follow** for a selected sample. This opens
+an offline tab with its original bytes, annotations, enrichments and stored session
+context, without copying the sample or appending live traffic. Reload restores it from
+the collection. A single sample is explicitly incomplete connection context; **Save as…**
+can create a named snapshot of it.
+
+Snapshots are private files under `$SPIDER_COLLECTION_DIR/saved-sessions`, written via
+an exclusive temporary file and atomic rename. Names are labels, never filesystem paths;
+Save as always creates a new ID, even for the same name. Saved sessions share the collection
+disk budget and are limited to 64 MiB / 10,000 payload records per snapshot. Missing or
+evicted data is not recovered by saving. Saved tabs do not accept live traffic, and cannot
+send live decisions; recomputation affects the open copy until saved again.
+
+Authenticated API: `GET/POST /api/inspection/saved-flows` (list/save) and
+`GET /api/inspection/saved-flow?id=...` (load). A backend update is required.
+
+### Follow enrichment replay
+
+Opening Follow recomputes enrichment from the currently retained browser payloads,
+in arrival order, using an isolated backend decoder. **Recompute** repeats the snapshot
+after more payloads arrive. No scripts, traffic decisions, collection writes or live
+decoder state are involved. Results merge into the existing cards; original bytes
+are unchanged. Replay does not run continuously on each incoming payload.
+
+Known cache eviction, omitted passed payloads or a missing connection-start make
+HPACK context incomplete; replay does not reconstruct HPACK for those sessions.
+Other supported enrichments can still be recovered where the retained bytes suffice.
+Previously available enrichments are preserved when replay cannot produce replacements.
+The status shows processed payloads, output count and incomplete connections.
+
+The authenticated `POST /api/enrichment/replay` accepts an SXBN chain, each envelope
+containing `{event, context_complete}` plus raw payload bytes, and returns enrichment
+envelopes with `replay_index` and a final `replay-summary`. Limits: one replay at a time,
+10,000 records, 64 MiB input, 32 MiB output and a five-second budget checked between
+records. The backend update is required.
+
 ### Collection sample picker
 
 Inspection → **Choose sample** opens a read-only browser of backend collection files,
-100 entries per page. Select a file to preview its saved metadata and use its original
+100 entries per page, newest first. Rows summarize capture time, endpoint/connection,
+direction, wire/decoded sizes, available HTTP method/path/status, authority, MIME type,
+encoding and enrichment operations. Search matches these summaries across the whole
+collection (`q` on the collections endpoint), not just the visible page. Existing
+samples are summarized lazily; summaries are cached in memory with file-change checks.
+Cookie/authorization headers and body contents are not included in the searchable summary.
+Select a file to preview its saved metadata and use its original
 payload/enrichments as offline script input. The preview is capped at 30,000 characters;
 loading a sample is limited to 64 MiB. Saved samples cannot submit live traffic decisions.
 The picker also links back to live Payloads.

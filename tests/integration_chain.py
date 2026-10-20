@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import urllib.request
 import urllib.error
 from http.server import ThreadingHTTPServer
@@ -113,6 +114,8 @@ def main():
     probe.server_close()
     env = os.environ.copy()
     env["SPIDER_TOKEN"] = "frontend-key"
+    collection_directory = tempfile.TemporaryDirectory(prefix="spider-chain-collections-")
+    env["SPIDER_COLLECTION_DIR"] = collection_directory.name
     process = subprocess.Popen([
         binary, "--port", str(spider_port),
         "--smithproxy-url", f"http://127.0.0.1:{api_port}",
@@ -408,6 +411,40 @@ def main():
                     post_json(inspection_url, {'script': 'return api.bytes.upper()',
                         'enabled': False, 'scope': 'rules'}, 'frontend-key')
                     assert post_json(callback, sample)[1]['action'] == 'unchanged'
+                    replay_url = f"http://127.0.0.1:{spider_port}/api/enrichment/replay"
+                    raw_head = b"GET /replay HTTP/1.1\r\nHost: example.test\r\n\r\n"
+                    replay_event = {"action": "connection-content", "id": "offline-replay",
+                        "details": {"info": {"side": "L", "content_annotations": [
+                            [0, 22, "http1.start_line"], [22, len(raw_head), "http1.headers"]]}}}
+                    meta = json.dumps({"event": replay_event, "context_complete": True}).encode()
+                    wire = f"SXBN001:{len(meta):08x}:{len(raw_head):08x}".encode() + meta + raw_head
+                    for auth in (False, True):
+                        request = urllib.request.Request(replay_url, data=wire, headers={
+                            "Content-Type": "application/octet-stream",
+                            **({"X-Spider-Token": "frontend-key"} if auth else {})})
+                        try:
+                            with urllib.request.urlopen(request) as response:
+                                assert auth
+                                replay = decode_sxbn_chain(response.read())
+                                assert replay[-1][0]["type"] == "replay-summary"
+                                assert replay[0][0]["operation"] == "http1.parse-head"
+                        except urllib.error.HTTPError as error:
+                            assert not auth and error.code == 401
+                    saved_url = f"http://127.0.0.1:{spider_port}/api/inspection/saved-flows"
+                    snapshot = {"name": "Persistent investigation", "scope": {"type": "connection"},
+                        "records": [{"revision": 1, "event": sample, "enrichments": []}]}
+                    try:
+                        post_json(saved_url, snapshot)
+                        raise AssertionError("saving sessions accepted a missing token")
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 401
+                    code, saved = post_json(saved_url, snapshot, "frontend-key")
+                    assert code == 200 and saved["name"] == snapshot["name"]
+                    listing = get_json(saved_url, "frontend-key")
+                    assert listing["items"][0]["id"] == saved["id"]
+                    loaded = get_json(f"http://127.0.0.1:{spider_port}/api/inspection/saved-flow?id={saved['id']}", "frontend-key")
+                    assert loaded["records"] == snapshot["records"]
+                    assert loaded["name"] == snapshot["name"]
                     return 0
             except OSError:
                 pass
@@ -422,6 +459,7 @@ def main():
             process.kill()
         api.shutdown()
         api.server_close()
+        collection_directory.cleanup()
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -324,6 +324,27 @@ int main() {
     assert(continuation_output[0].metadata["source"]["stream_id"] == 3);
     assert(continuation_output[0].metadata["source"]["spans_previous_envelopes"] == true);
     assert(continuation_output[0].metadata["headers"][1]["value"] == "/again");
+    // Replay rebuilds HPACK history independently of the live engine and input rule mode.
+    auto replay_first = h2_event("replay", "L", complete_h2_annotations(first_headers.size(), "h2.headers"));
+    replay_first["traffic_rule"] = {{"mode", "pass"}};
+    std::vector<spider::SxbnEnvelope> replay_records{
+        {{{"event", replay_first}, {"context_complete", true}}, first_headers},
+        {{{"event", h2_event("replay", "L", complete_h2_annotations(headers_frame.size(), "h2.headers"))},
+          {"context_complete", true}}, headers_frame},
+        {{{"event", h2_event("replay", "L", complete_h2_annotations(continuation_frame.size(), "h2.continuation"))},
+          {"context_complete", true}}, continuation_frame}};
+    std::vector<spider::SxbnEnvelope> replay_output;
+    std::string replay_error;
+    assert(spider::decode_sxbn_chain(spider::EnrichmentEngine::replay(replay_records), replay_output, replay_error));
+    assert(replay_output.size() == 3);
+    assert(replay_output[1].metadata["headers"][1]["value"] == "/again");
+    assert(replay_output[1].metadata["replay_index"] == 2);
+    assert(replay_records[0].metadata["event"]["traffic_rule"]["mode"] == "pass");
+    replay_records[0].metadata["context_complete"] = false;
+    replay_output.clear();
+    assert(spider::decode_sxbn_chain(spider::EnrichmentEngine::replay(replay_records), replay_output, replay_error));
+    assert(replay_output.size() == 1 && replay_output[0].metadata["outputs"] == 0);
+    assert(replay_output[0].metadata["incomplete_sessions"].size() == 1);
 
     HpackEncoder padded_hpack;
     const auto padded_block = padded_hpack.encode({{":status", "200"},
@@ -467,6 +488,14 @@ int main() {
         });
     assert(recovered_gzip != hpack_gzip_output.end());
     assert(recovered_gzip->payload == hpack_gzip_plain);
+    std::vector<spider::SxbnEnvelope> replay_gzip;
+    assert(spider::decode_sxbn_chain(spider::EnrichmentEngine::replay({
+        {{{"event", hpack_gzip_event}, {"context_complete", true}}, response_wire}}),
+        replay_gzip, replay_error));
+    const auto replay_inflate = std::ranges::find_if(replay_gzip, [](const auto& item) {
+        return item.metadata.value("operation", "") == "gzip.inflate";
+    });
+    assert(replay_inflate != replay_gzip.end() && replay_inflate->payload == hpack_gzip_plain);
     assert(recovered_gzip->metadata["source"]["stream_id"] == 31);
     assert(recovered_gzip->metadata["provenance"]["encoding"] == "spider-hpack");
     assert(hpack_gzip_enrichment.diagnostics()["content_decoding"]

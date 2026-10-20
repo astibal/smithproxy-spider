@@ -193,3 +193,10 @@ main{display:grid;flex:1;min-height:0;grid-template-columns:auto 7px minmax(0,1f
 .sample-picker-layout > div button { display: block; width: 100%; text-align: left; overflow-wrap: anywhere; margin-bottom: 6px; }
 .sample-picker-layout pre { max-height: 50vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .flow-collection-toolbar { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
+.sample-picker-tools { flex-wrap: wrap; }
+.sample-picker-tools input[data-search] { flex: 1; min-width: 220px; }
+.sample-picker .sample-row { padding: 9px 10px; background: #17212c; border: 1px solid var(--line); }
+.sample-picker .sample-row > * { display: block; margin: 3px 0; }
+.sample-picker .sample-row small { color: var(--muted); }
+.sample-picker .sample-row strong { color: var(--text); }
+.sample-picker .sample-row[aria-pressed="true"] { border-color: #668ba6; background: #1d2a37; }

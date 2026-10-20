@@ -2,6 +2,7 @@
 // Serve frontend on 127.0.0.1:18763 first. Backend responses are mocked; no live traffic is modified.
 const {chromium} = require('playwright');
 const assert = require('node:assert/strict');
+const sxbn = require('../frontend/sxbn.js');
 const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3',
   ['-c', 'import sys,json; sys.path.insert(0,"src"); from inspection_api import api_schema; print(json.dumps(api_schema()))'],
   {encoding: 'utf8'}));
@@ -17,6 +18,8 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
       recent: [], chain: [], traffic_rules: {rules: [], bypass_all: false},
       collection: {saved: 0, bytes: 0, limit_bytes: 1000000, directory: '/tmp/samples', errors: 0, last_error: ''}};
     const writes = [];
+    let replayTest = false;
+    let savedFlow = null;
     let frontendVersion = 'aaaaaaaaaaaa';
     await page.route('http://127.0.0.1:18763/', async route => {
       const response = await route.fetch();
@@ -31,8 +34,31 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
       if (request.method() === 'OPTIONS') return route.fulfill({status: 204, headers: {
         'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*'}});
       let body = {};
-      if (request.url().includes('/api/inspection/collections?')) body = {
-        items: [{id: 'endpoint-test/123.json', endpoint: 'test'}], total: 1, next: null};
+      if (request.url().endsWith('/api/inspection/saved-flows') && request.method() === 'POST') {
+        savedFlow = {...request.postDataJSON(), id: 'saved-test', format: 'spider-flow-v1', saved_at_ms: 123};
+        body = {id: savedFlow.id, name: savedFlow.name, records: savedFlow.records.length};
+      }
+      if (request.url().includes('/api/inspection/saved-flows?')) body = {
+        items: savedFlow ? [{id: savedFlow.id, name: savedFlow.name, records: savedFlow.records.length, saved_at_ms: 123}] : [],
+        total: savedFlow ? 1 : 0, next: null};
+      if (request.url().includes('/api/inspection/saved-flow?')) body = savedFlow;
+      if (request.url().endsWith('/api/enrichment/replay')) {
+        const inputs = sxbn.decode(request.postDataBuffer());
+        const outputs = (replayTest ? inputs : []).map((item, replay_index) => sxbn.encode({
+          type: 'enrichment', operation: 'test.replay', replay_index, replayed: true,
+        }, new TextEncoder().encode('replayed')));
+        outputs.push(sxbn.encode({type: 'replay-summary', records: inputs.length,
+          outputs: inputs.length, incomplete_sessions: []}));
+        return route.fulfill({body: Buffer.concat(outputs.map(item => Buffer.from(item))),
+          contentType: 'application/octet-stream', headers: {'Access-Control-Allow-Origin': '*'}});
+      }
+      if (request.url().includes('/api/inspection/collections?')) {
+        const matches = new URL(request.url()).searchParams.get('q') !== 'absent';
+        body = {items: matches ? [{id: 'endpoint-test/123.json', endpoint: 'test',
+          title: 'GET /needle', authority: 'www.example.test', side: 'L', bytes: 3,
+          captured_at_ms: 123, protocols: ['HTTP/2'], content_types: ['application/json'],
+          encodings: ['gzip'], operations: ['hpack.decode']}] : [], total: matches ? 1 : 0, all: 1, next: null};
+      }
       if (request.url().includes('/api/inspection/sample?')) body = {
         format: 'spider-sample-v1', captured_at_ms: 123, collection: {endpoint: 'test'},
         event: {id: 'saved-sample', details: {info: {content: 'YWJj', side: 'L'}}},
@@ -59,6 +85,15 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     });
     page.on('dialog', dialog => dialog.accept());
     await page.goto('http://127.0.0.1:18763/');
+    assert.equal(await page.locator('[data-activity-filter="sift"]').getAttribute('aria-pressed'), 'false');
+    assert.equal(await page.evaluate(() => {
+      activityRecords = []; activityUnread = 0;
+      addActivity('system', 'TEST', 'visible');
+      const unread = activityUnread;
+      addActivity('sift', 'SIFT', 'hidden');
+      return activityUnread === unread && byId('activity-summary').textContent === 'TEST: visible' &&
+        !byId('activity-list').textContent.includes('hidden');
+    }), true, 'Disabled SIFT must not affect the activity summary or unread count');
     const palette = await page.evaluate(() => {
       const fixture = document.createElement('div');
       fixture.hidden = true;
@@ -384,13 +419,65 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     assert(state.traffic_rules.rules.some(r => r.kind === 'session' && r.value === 'large-inflate' && r.mode === 'collect'));
     await large.locator('[data-flow-collect]').click();
     assert(!state.traffic_rules.rules.some(r => r.value === 'large-inflate'));
+    await page.waitForFunction(() => !followedFlows.get('connection:large-inflate').replayPending);
+    replayTest = true;
+    await large.locator('[data-flow-replay]').click();
+    await page.waitForFunction(() => !followedFlows.get('connection:large-inflate').replayPending);
+    await large.locator('[data-flow-replay]').click();
+    await page.waitForFunction(() => !followedFlows.get('connection:large-inflate').replayPending);
+    assert.equal(await page.evaluate(() => payloadRecords.find(r => r.event.id === 'large-inflate')
+      .enrichments.filter(e => e.metadata.operation === 'test.replay').length), 1, 'Replay merges without duplicate enrichments');
     await page.evaluate(() => showTab('inspection-tab'));
     await page.locator('#inspection-select-input').click();
+    assert((await page.locator('.sample-picker [data-list]').textContent()).includes('GET /needle'));
+    assert((await page.locator('.sample-picker [data-list]').textContent()).includes('application/json'));
+    await page.screenshot({path: '/tmp/spider-sample-catalog.png'});
+    await page.locator('.sample-picker [data-search]').fill('absent');
+    await page.locator('.sample-picker [data-find]').click();
+    await page.waitForFunction(() => document.querySelector('.sample-picker [data-status]').textContent.startsWith('0 / 1'));
+    assert.equal(await page.locator('.sample-picker [data-list] button').count(), 0);
+    await page.locator('.sample-picker [data-search]').fill('needle');
+    await page.locator('.sample-picker [data-search]').press('Enter');
     await page.locator('.sample-picker [data-list] button').click();
+    assert(!(await page.locator('.sample-picker [data-preview]').textContent()).includes('YWJj'));
     await page.locator('.sample-picker [data-use]').click();
     assert.equal(await page.evaluate(() => selectedPayload.event.id), 'saved-sample');
     assert.equal(await page.evaluate(() => new TextDecoder().decode(selectedPayload.enrichments[0].payload)), 'xyz');
     assert.equal(await page.locator('#accept-payload').isDisabled(), true);
+    await page.locator('#inspection-select-input').click();
+    await page.locator('.sample-picker [data-list] button').click();
+    await page.locator('.sample-picker [data-follow]').click();
+    await page.waitForFunction(() => followedFlows.get('saved:sample:endpoint-test/123.json')?.savedRecords?.length === 1);
+    assert.deepEqual(await page.evaluate(() => {
+      const flow = followedFlows.get('saved:sample:endpoint-test/123.json');
+      const record = flow.savedRecords[0];
+      return [new TextDecoder().decode(recordPayloadBytes(record)),
+        new TextDecoder().decode(record.enrichments[0].payload), record.replayContextComplete,
+        byId(flow.id).querySelector('[data-flow-collect]').hidden];
+    }), ['abc', 'xyz', false, true]);
+    page.on('dialog', dialog => dialog.type() === 'prompt' ? dialog.accept('Saved investigation') : dialog.accept());
+    await page.evaluate(() => showTab(followedFlows.get('connection:large-inflate').id));
+    await large.locator('[data-save-flow]').click();
+    await page.waitForFunction(() => followedFlows.get('saved:saved-test')?.savedRecords?.length > 0);
+    await page.waitForFunction(() => followedFlows.get('saved:sample:endpoint-test/123.json')?.savedRecords?.length === 1);
+    assert.equal(savedFlow.name, 'Saved investigation');
+    assert(savedFlow.records[0].enrichments.length > 0);
+    const savedBytes = await page.evaluate(() => recordPayloadBytes(followedFlows.get('saved:saved-test').savedRecords[0]).length);
+    await page.reload();
+    await page.waitForFunction(() => followedFlows.get('saved:saved-test')?.savedRecords?.length > 0);
+    await page.waitForFunction(() => followedFlows.get('saved:sample:endpoint-test/123.json')?.savedRecords?.length === 1);
+    assert.equal(await page.evaluate(() => followedFlows.get('saved:saved-test').title), 'Saved investigation');
+    assert.equal(await page.evaluate(() => recordPayloadBytes(followedFlows.get('saved:saved-test').savedRecords[0]).length), savedBytes);
+    assert.equal(await page.evaluate(() => payloadRecords.length), 0, 'Saved snapshot must not enter live cache');
+    assert.equal(await page.evaluate(() => byId(followedFlows.get('saved:saved-test').id)
+      .querySelector('.flow-follow-head h2').textContent), 'Saved investigation');
+    await page.evaluate(() => {
+      closeFlowTab('saved:saved-test');
+      showTab('workbench-tab');
+    });
+    await page.locator('#open-saved-sessions').click();
+    await page.locator('.sample-picker [data-list] button').click();
+    await page.waitForFunction(() => followedFlows.get('saved:saved-test')?.savedRecords?.length > 0);
     assert.deepEqual(errors, []);
     console.log('Inspection GUI smoke test passed: library/save/deploy/enable/draft separation.');
   } finally { await browser.close(); }

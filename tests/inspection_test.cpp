@@ -106,6 +106,9 @@ int main() {
     assert(collection.status()["saved"] == 1);
     const auto samples = collection.list();
     assert(samples["total"] == 1 && samples["items"].size() == 1);
+    assert(samples["items"][0]["bytes"] == 3);
+    assert(samples["items"][0]["side"] == "L");
+    assert(samples["items"][0]["endpoint"] == "../../*.example.test");
     const auto saved = collection.read(samples["items"][0]["id"]);
     assert(saved["event"] == collected && saved["enrichments"] == enrichments);
     assert(saved["session_context"]["context"] == "preserved");
@@ -161,6 +164,46 @@ int main() {
         assert(sample["enrichments"][0]["metadata"]["operation"] == "http1.parse-head");
         assert(sample["event"]["details"]["info"]["content"] == spider::base64_encode(http));
     }
+    spider::Collection catalog(std::filesystem::path(directory) / "catalog");
+    auto catalog_event = event;
+    catalog_event["collections"] = json::array({{{"endpoint", "www.example.test"}}});
+    auto catalog_metadata = json::array({{
+        {"metadata", {{"operation", "hpack.decode"}, {"headers", json::array({
+            {{"name", ":method"}, {"value", "GET"}}, {{"name", ":path"}, {"value", "/needle"}},
+            {{"name", ":authority"}, {"value", "www.example.test"}},
+            {{"name", "content-type"}, {"value", "application/json"}},
+            {{"name", "cookie"}, {"value", "secret-cookie"}}})}}},
+        {"content", ""}}});
+    catalog.capture(catalog_event, catalog_metadata, json::object());
+    const auto found = catalog.list(0, "GET needle JSON");
+    assert(found["total"] == 1 && found["items"][0]["title"] == "GET /needle");
+    assert(found["items"][0]["authority"] == "www.example.test");
+    assert(found["items"][0]["protocols"][0] == "HTTP/2");
+    assert(found.dump().find("secret-cookie") == std::string::npos);
+    assert(catalog.list(0, "secret-cookie")["total"] == 0);
+    assert(catalog.list(0, "absent")["items"].empty());
+    spider::Collection catalog_restart(std::filesystem::path(directory) / "catalog");
+    assert(catalog_restart.list(0, "needle")["total"] == 1);
+    const json snapshot{{"name", "Moje session / test"}, {"scope", {{"type", "connection"}, {"sessionId", "headless"}}},
+        {"records", json::array({{{"revision", 1}, {"event", event}, {"enrichments", enrichments}}})}};
+    const auto saved_flow = collection.save_flow(snapshot);
+    assert(saved_flow["bytes"] == 3 && saved_flow["connections"] == 1);
+    const auto saved_flow_again = collection.save_flow(snapshot);
+    assert(saved_flow["id"] != saved_flow_again["id"]);
+    assert(collection.list_flows()["total"] == 2);
+    assert(collection.list_flows(100)["items"].empty());
+    spider::Collection restarted(directory);
+    const auto restored_flow = restarted.read_flow(saved_flow["id"]);
+    assert(restored_flow["name"] == snapshot["name"]);
+    assert(restored_flow["records"] == snapshot["records"]);
+    assert(restored_flow["format"] == "spider-flow-v1");
+    assert(restarted.list_flows()["items"][0]["name"] == snapshot["name"]);
+    bool bad_flow_id = false;
+    try { (void)restarted.read_flow("../outside"); } catch (...) { bad_flow_id = true; }
+    assert(bad_flow_id);
+    bool full_flow_budget = false;
+    try { (void)full.save_flow(snapshot); } catch (...) { full_flow_budget = true; }
+    assert(full_flow_budget && collection.list_flows()["total"] == 2);
     std::filesystem::remove_all(directory); // only this test's freshly allocated mkdtemp directory
     std::cout << "Backend inspection and headless webhook checks passed\n";
 }

@@ -6,8 +6,51 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <chrono>
+#include <set>
+#include <stdexcept>
 
 namespace spider {
+std::string EnrichmentEngine::replay(const std::vector<SxbnEnvelope>& records) {
+    if (records.size() > 10000) throw std::runtime_error("Replay is limited to 10000 retained payloads");
+    EnrichmentEngine engine;
+    std::set<std::string> incomplete;
+    for (const auto& record : records) {
+        const auto& event = record.metadata.at("event");
+        if (event.value("action", "") != "connection-content" || event.value("id", "").empty())
+            throw std::runtime_error("Replay requires connection-content events with session IDs");
+        if (!record.metadata.value("context_complete", false)) incomplete.insert(event.at("id").get<std::string>());
+    }
+    std::string output;
+    std::size_t count = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    for (std::size_t index = 0; index < records.size(); ++index) {
+        if (std::chrono::steady_clock::now() > deadline) throw std::runtime_error("Replay exceeded its 5 second budget");
+        auto event = records[index].metadata.at("event");
+        const auto id = event.at("id").get<std::string>();
+        const auto info = event.value("details", nlohmann::json::object()).value("info", nlohmann::json::object());
+        bool h2 = false;
+        for (const auto& annotation : info.value("content_annotations", nlohmann::json::array()))
+            if (annotation.is_array() && annotation.size() >= 3 && annotation[2].is_string() &&
+                annotation[2].get<std::string>().starts_with("h2.")) h2 = true;
+        if (h2 && incomplete.contains(id)) {
+            (void)engine.http2_.process(event, records[index].payload, false);
+        }
+        event["traffic_rule"] = {{"mode", "focus"}};
+        for (auto item : engine.process(event, records[index].payload)) {
+            item.metadata["replay_index"] = index;
+            item.metadata["replayed"] = true;
+            const auto envelope = encode_sxbn(item.metadata, item.payload);
+            if (output.size() + envelope.size() > 32U * 1024U * 1024U)
+                throw std::runtime_error("Replay output exceeds 32 MiB");
+            output += envelope;
+            ++count;
+        }
+    }
+    output += encode_sxbn({{"type", "replay-summary"}, {"records", records.size()},
+        {"outputs", count}, {"incomplete_sessions", incomplete}, {"diagnostics", engine.diagnostics()}});
+    return output;
+}
 namespace {
 
 struct Annotation {
