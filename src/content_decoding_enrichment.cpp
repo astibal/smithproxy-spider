@@ -240,6 +240,7 @@ struct PendingOutput {
     std::vector<std::array<std::size_t, 2>> ranges;
     std::vector<std::size_t> annotations;
     bool finished{};
+    std::vector<std::array<std::size_t, 2>> decoded_ranges;
 };
 
 } // namespace
@@ -344,12 +345,13 @@ public:
             });
             if (output == pending.end()) {
                 pending.push_back({key, http1_generation, encoding,
-                                   std::move(encoding_source), {}, {}, {}, false});
+                                   std::move(encoding_source), {}, {}, {}, false, {}});
                 output = std::prev(pending.end());
             }
             output->ranges.push_back({range.start, range.end});
             output->annotations.push_back(annotation);
             bool finished{};
+            const auto decoded_start = output->payload.size();
             input_bytes_.fetch_add(range.end - range.start, std::memory_order_relaxed);
             if (!context.decoder.feed(payload.substr(range.start, range.end - range.start),
                                       output->payload, finished)) {
@@ -359,6 +361,7 @@ public:
                 continue;
             }
             output->finished = finished;
+            output->decoded_ranges.push_back({decoded_start, output->payload.size()});
         }
         while (next_http1_start < http1_starts.size()) {
             reset_http1_context(session, side);
@@ -375,6 +378,7 @@ public:
             auto source = nlohmann::json{
                 {"kind", output.key.layer + ".content"},
                 {"ranges", output.ranges},
+                {"decoded_ranges", output.decoded_ranges},
                 {"annotations", output.annotations},
                 {"side", output.key.side},
             };

@@ -193,7 +193,7 @@ std::vector<SxbnEnvelope> EnrichmentEngine::process(const nlohmann::json& event,
                                                     const std::string_view payload) {
     content_seen_.fetch_add(1, std::memory_order_relaxed);
     const auto mode = event.value("traffic_rule", nlohmann::json::object()).value("mode", "");
-    const bool selected = mode == "focus" || mode == "inspect";
+    const bool selected = mode == "focus" || mode == "inspect" || event.contains("collections");
     auto result = http2_.process(event, payload, selected);
     content_decoding_.observe_http2_headers(event, result);
     auto decoded_content = content_decoding_.process(event, payload, selected);

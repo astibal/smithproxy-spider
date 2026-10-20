@@ -6,6 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/smithproxy-spider.env
+StateDirectory=smithproxy-spider
+Environment=SPIDER_COLLECTION_DIR=/var/lib/smithproxy-spider/collections
 ExecStart=/usr/local/bin/smithproxy-spider --bind 0.0.0.0 --port 8080 --smithproxy-url https://127.0.0.1:55555 --callback-url http://127.0.0.1:8080/webhook --smithproxy-insecure
 Restart=on-failure
 RestartSec=2

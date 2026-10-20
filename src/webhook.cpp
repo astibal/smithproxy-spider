@@ -10,10 +10,37 @@
 #include <string_view>
 
 namespace spider {
+namespace {
+std::optional<std::string> decode_content(const std::string& content) {
+    constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    if (content.size() % 4) return std::nullopt;
+    std::string decoded;
+    for (std::size_t i = 0; i < content.size(); i += 4) {
+        unsigned int value = 0;
+        int padding = 0;
+        for (std::size_t j = 0; j < 4; ++j) {
+            const char ch = content[i + j];
+            value <<= 6;
+            if (ch == '=') {
+                if (j < 2 || i + 4 != content.size()) return std::nullopt;
+                ++padding;
+            } else {
+                const auto digit = alphabet.find(ch);
+                if (padding || digit == std::string_view::npos) return std::nullopt;
+                value |= static_cast<unsigned int>(digit);
+            }
+        }
+        decoded += static_cast<char>((value >> 16) & 255);
+        if (padding < 2) decoded += static_cast<char>((value >> 8) & 255);
+        if (padding < 1) decoded += static_cast<char>(value & 255);
+    }
+    return decoded;
+}
+}
 
 WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
                              const nlohmann::json& original_event,
-                             const std::optional<std::string_view> raw_payload,
+                             std::optional<std::string_view> raw_payload,
                              EnrichmentEngine* enrichment, Inspection* inspection) {
     auto event = original_event;
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
@@ -33,6 +60,14 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     }
     const auto ticket = decisions.prepare(event);
     decisions.observe(event);
+    std::optional<std::string> decoded_content;
+    if (!raw_payload && action == "connection-content") {
+        const auto info = event.value("details", nlohmann::json::object()).value("info", nlohmann::json::object());
+        if (info.contains("content") && info["content"].is_string()) {
+            decoded_content = decode_content(info["content"].get<std::string>());
+            if (decoded_content) raw_payload = *decoded_content;
+        }
+    }
     if (enrichment) enrichment->observe(event);
     const auto enrichments = enrichment && raw_payload
         ? enrichment->process(event, *raw_payload) : std::vector<SxbnEnvelope>{};
@@ -40,6 +75,20 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (inspection) {
         auto inputs = nlohmann::json::array();
         for (const auto& item : enrichments) inputs.push_back({{"metadata", item.metadata}, {"content", base64_encode(item.payload)}});
+        if (event.contains("collections")) {
+            auto snapshot = event;
+            if (raw_payload) snapshot["details"]["info"]["content"] = base64_encode(*raw_payload);
+            auto context = store.session_detail(event.value("id", "")).value_or(nlohmann::json::object());
+            context["hostname_context"] = nlohmann::json::object();
+            const auto reverse = store.reverse_hostnames();
+            const auto mappings = reverse.value("mappings", nlohmann::json::object());
+            for (const auto& [address, mapping] : mappings.items()) {
+                std::string error;
+                const auto filter = SessionFilter::compile("host " + address, error);
+                if (filter && filter->matches(event)) context["hostname_context"][address] = mapping;
+            }
+            inspection->collection.capture(snapshot, inputs, context);
+        }
         script_result = inspection->automatic(event, inputs);
         if (!script_result.is_null()) {
             if (ticket) {

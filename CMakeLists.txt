@@ -36,6 +36,7 @@ target_compile_options(spider_protocol PRIVATE -Wall -Wextra -Wpedantic -Wconver
 
 add_library(spider_core
     src/inspection.cpp
+    src/collection.cpp
     src/decision_broker.cpp
     src/content_decoding_enrichment.cpp
     src/enrichment.cpp
