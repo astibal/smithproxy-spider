@@ -35,6 +35,14 @@ int main() {
             {"source", {{"stream_id", 3}, {"kind", "h2.headers"}}},
             {"headers", json::array({{{"name", ":method"}, {"value", "GET"}}})}}}}})}});
     assert(result["ok"] == true && result["replacement"].is_null());
+    const auto runs_before_analysis = runtime.status()["runs"];
+    const auto language = runtime.language({{"script", "h2 = api.http2\nh2."},
+        {"language_action", "complete"}, {"line", 2}, {"column", 3}});
+    if (language.value("ok", false)) {
+        assert(std::any_of(language["items"].begin(), language["items"].end(),
+            [](const auto& item) { return item["label"] == "header_blocks"; }));
+    } else assert(language.value("error", "").find("requires Jedi") != std::string::npos);
+    assert(runtime.status()["runs"] == runs_before_analysis);
     assert(run("api.message.size = 99")["ok"] == false);
     assert(run("raise ValueError('bad')")["ok"] == false);
     assert(run("return 123")["ok"] == false);

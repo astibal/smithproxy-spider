@@ -4231,6 +4231,15 @@ function loadScriptSlot(number) {
   }
 }
 
+window.spiderLanguageRequest = async (request, signal) => {
+  const response = await fetch(`${baseUrl()}/api/inspection/language`, {
+    method: 'POST', headers: {...headers(), 'Content-Type': 'application/json'},
+    body: JSON.stringify(request), signal,
+  });
+  if (!response.ok) throw new Error(`Language service HTTP ${response.status}`);
+  return response.json();
+};
+
 async function inspectionRequest(path = '', body = undefined) {
   const response = await fetch(baseUrl() + '/api/inspection' + path, {
     method: body === undefined ? 'GET' : 'POST',

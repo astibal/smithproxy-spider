@@ -11,6 +11,7 @@ public:
     nlohmann::json configure(const nlohmann::json& request);
     nlohmann::json status() const;
     nlohmann::json run(nlohmann::json request);
+    nlohmann::json language(nlohmann::json request);
     nlohmann::json automatic(const nlohmann::json& event, const nlohmann::json& enrichments);
     Collection collection;
 private:
@@ -24,5 +25,6 @@ private:
     nlohmann::json chain_ = nlohmann::json::array();
     std::uint64_t next_script_id_{};
     std::atomic_uint running_{};
+    std::atomic_uint analyzing_{};
 };
 }
