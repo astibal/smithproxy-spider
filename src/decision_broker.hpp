@@ -2,6 +2,7 @@
 
 #include "session_filter.hpp"
 #include "webhook.hpp"
+#include "heavy_traffic.hpp"
 
 #include <chrono>
 #include <condition_variable>
@@ -20,6 +21,7 @@ namespace spider {
 
 class DecisionBroker {
 public:
+    HeavyTraffic heavy_traffic;
     struct Ticket;
 
     explicit DecisionBroker(std::chrono::milliseconds timeout = std::chrono::seconds(10));

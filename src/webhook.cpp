@@ -60,6 +60,36 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     }
     const auto ticket = decisions.prepare(event);
     decisions.observe(event);
+    if (action == "connection-stop" || action == "connection-start") decisions.heavy_traffic.stop(event.value("id", ""));
+    if (action == "connection-content") {
+        const auto& info = event["details"]["info"];
+        std::size_t size = raw_payload ? raw_payload->size() : 0;
+        if (!raw_payload && info.contains("content") && info["content"].is_string()) {
+            const auto& encoded = info["content"].get_ref<const std::string&>();
+            size = encoded.size() / 4 * 3;
+            if (size && encoded.ends_with("=")) --size;
+            if (size && encoded.ends_with("==")) --size;
+        }
+        const bool managed = event.contains("collections") ||
+            event.value("traffic_rule", nlohmann::json::object()).value("mode", "") == "inspect" ||
+            (inspection && inspection->has_enabled_scripts());
+        const auto cutoff = decisions.heavy_traffic.observe(event.value("id", ""), size, managed);
+        if (!cutoff.is_null()) {
+            if (ticket) {
+                decisions.handle_message({{"type", "decision"}, {"decision_id", ticket->id}, {"action", "accept"}});
+                (void)decisions.wait(ticket, event);
+            }
+            if (cutoff["first"].get<bool>()) {
+                event["action"] = "connection-info";
+                event["details"]["info"].erase("content");
+                event["heavy_traffic"] = cutoff["notice"];
+                event["decision"] = {{"state", "forgotten"}, {"reason", "heavy-traffic"}};
+                store.apply(event);
+            }
+            return {200, {{"action", "not-interested"}}};
+        }
+    }
+    if (raw_payload && action == "connection-content") event["details"]["info"]["content"] = base64_encode(*raw_payload);
     std::optional<std::string> decoded_content;
     if (!raw_payload && action == "connection-content") {
         const auto info = event.value("details", nlohmann::json::object()).value("info", nlohmann::json::object());
