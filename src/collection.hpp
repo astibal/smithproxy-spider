@@ -17,7 +17,14 @@ public:
     nlohmann::json save_flow(nlohmann::json snapshot);
     nlohmann::json list_flows(std::size_t offset = 0) const;
     nlohmann::json read_flow(const std::string& id) const;
+    nlohmann::json library(std::size_t offset = 0, const std::string& query = "", const std::string& folder = "*") const;
+    nlohmann::json edit_library(const nlohmann::json& request);
 private:
+    void load_library() const;
+    nlohmann::json library_metadata(const std::string& id) const;
+    mutable std::recursive_mutex library_mutex_;
+    mutable bool library_loaded_{};
+    mutable nlohmann::json library_data_, library_index_;
     std::filesystem::path root_;
     std::uint64_t limit_, bytes_{}, saved_{}, errors_{};
     std::string last_error_;

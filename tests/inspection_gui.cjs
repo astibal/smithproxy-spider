@@ -16,10 +16,12 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     await page.addInitScript(() => localStorage.setItem('spider-backend', 'http://127.0.0.1:18765'));
     let state = {revision: 1, script: '', scope: 'chain', enabled: false, running: 0, runs: 0, errors: 0,
       recent: [], chain: [], traffic_rules: {rules: [], bypass_all: false},
+      heavy_traffic: {enabled: false, grace_seconds: 5, messages_per_second: 200, bytes_per_second: 1048576, sustain_seconds: 3, include_managed: false},
       collection: {saved: 0, bytes: 0, limit_bytes: 1000000, directory: '/tmp/samples', errors: 0, last_error: ''}};
     const writes = [];
     let replayTest = false;
     let savedFlow = null;
+    let catalogRevision = 0, catalogFolders = [], catalogEdits = {};
     let frontendVersion = 'aaaaaaaaaaaa';
     await page.route('http://127.0.0.1:18763/', async route => {
       const response = await route.fetch();
@@ -34,6 +36,26 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
       if (request.method() === 'OPTIONS') return route.fulfill({status: 204, headers: {
         'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*'}});
       let body = {};
+      if (new URL(request.url()).pathname === '/api/inspection/library') {
+        if (request.method() === 'POST') {
+          const edit = request.postDataJSON(); assert.equal(edit.revision, catalogRevision);
+          if (edit.operation === 'folder') {
+            if (edit.id) catalogFolders.find(folder => folder.id === edit.id).name = edit.name;
+            else catalogFolders.push({id: 'folder-1', name: edit.name});
+          }
+          else catalogEdits[edit.key] = {name: edit.name, notes: edit.notes, folder: edit.folder};
+          ++catalogRevision;
+          body = {revision: catalogRevision, folders: catalogFolders};
+        } else {
+          let items = [{key: 'sample:endpoint-test/123.json', id: 'endpoint-test/123.json', kind: 'sample', name: 'GET /needle',
+            endpoint: 'www.example.test', content_types: ['application/json'], records: 1, bytes: 3, time_ms: 123, folder: '', notes: ''}];
+          if (savedFlow) items.push({key: 'flow:saved-test', id: 'saved-test', kind: 'flow', name: savedFlow.name, records: savedFlow.records.length, folder: '', notes: '', time_ms: 124, bytes: 100});
+          items = items.map(item => ({...item, ...catalogEdits[item.key]}));
+          const params = new URL(request.url()).searchParams, q = params.get('q') || '', folder = params.get('folder') ?? '*';
+          items = items.filter(item => (!q || JSON.stringify(item).includes(q)) && (folder === '*' || item.folder === folder));
+          body = {items, total: items.length, all: savedFlow ? 2 : 1, next: null, folders: catalogFolders, revision: catalogRevision};
+        }
+      }
       if (request.url().endsWith('/api/inspection/language')) {
         const output = require('node:child_process').execFileSync('python3', ['-c',
           'import sys,json; sys.path.insert(0,"src"); import inspection_language as l; from inspection_api import api_schema; l.api_schema=api_schema; print(json.dumps(l.language_query(json.load(sys.stdin))))'],
@@ -71,6 +93,9 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
         enrichments: [{metadata: {operation: 'test'}, content: 'eHl6'}],
         session_context: {test: true}};
       if (request.url().endsWith('/api/inspection/schema')) body = apiSchema;
+      if (request.url().endsWith('/api/inspection/heavy-traffic')) {
+        Object.assign(state.heavy_traffic, request.postDataJSON()); body = state.heavy_traffic;
+      }
       if (request.url().endsWith('/api/inspection/rules') && request.method() === 'POST') {
         state.traffic_rules = {...request.postDataJSON(), errors: []};
         body = state.traffic_rules;
@@ -81,8 +106,13 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
           assert.equal(data.revision, state.revision);
           if (data.operation === 'deploy') {
             state.chain.push({id: 'script-1', name: data.name, script: data.script, enabled: false,
-              version: 1, runs: 0, errors: 0, last_run_ms: null, scope: data.scope, filter: data.filter});
-          } else if (data.operation === 'enable') state.chain[0].enabled = data.enabled;
+              version: 1, runs: 0, errors: 0, last_run_ms: null, scope: data.scope, filter: data.filter,
+              instancing: data.instancing, endpoint: data.endpoint, timeout_ms: data.timeout_ms,
+              error_limit: data.error_limit, max_instances: data.max_instances, idle_seconds: data.idle_seconds});
+          } else if (data.operation === 'enable') {
+            state.chain[0].enabled = data.enabled;
+            state.chain[0].suspended = false;
+          }
           state.revision++;
         }
         body = state;
@@ -164,6 +194,17 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     });
     await page.getByRole('button', {name: 'Inspection', exact: true}).click();
     await page.locator('#chain-connection').filter({hasText: 'enabled'}).waitFor();
+    await page.locator('#heavy-enabled').check();
+    await page.waitForFunction(() => document.querySelector('#heavy-status').textContent.includes('confirmed'));
+    assert.equal(state.heavy_traffic.enabled, true);
+    await page.locator('#heavy-enabled').uncheck();
+    await page.waitForFunction(() => !document.querySelector('#heavy-enabled').disabled);
+    assert.equal(state.heavy_traffic.enabled, false);
+    assert.equal(await page.evaluate(() => {
+      const badge = heavyTrafficBadge({messages_per_second: 300, bytes_per_second: 2000000,
+        limits: {messages_per_second: 200, bytes_per_second: 1048576}, stopped_at_ms: Date.now()});
+      return !!badge.querySelector('svg') && badge.title.includes('capture incomplete');
+    }), true);
     assert.equal(await page.locator('#workbench-tab .workbench-script').count(), 0);
     await page.locator('#library-new').click();
     await page.locator('#library-name').fill('GUI test');
@@ -207,11 +248,30 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     assert.equal(await page.locator('#library-deploy').isDisabled(), true);
     await page.locator('#library-save').click();
     assert.equal(writes.length, 0); // Save is never Deploy.
+    await page.locator('#chain-instancing').selectOption('endpoint');
+    assert.equal(await page.locator('#chain-endpoint').isDisabled(), false);
+    await page.locator('#chain-endpoint').selectOption('source');
+    await page.locator('#chain-runtime-settings summary').click();
+    await page.locator('#chain-timeout').fill('750');
+    await page.locator('#chain-error-limit').fill('2');
+    await page.locator('#chain-runtime-settings summary').click();
     await page.locator('#library-deploy').click();
     await page.locator('#chain-list').filter({hasText: 'GUI test'}).waitFor();
     assert.equal(writes[0].operation, 'deploy');
     assert.equal(state.chain[0].enabled, false);
+    assert.equal(writes[0].instancing, 'endpoint');
+    assert.equal(writes[0].endpoint, 'source');
+    assert.equal(writes[0].timeout_ms, 750);
+    assert.equal(writes[0].error_limit, 2);
     await page.getByRole('button', {name: 'Enable', exact: true}).click();
+    await page.getByRole('button', {name: 'Disable', exact: true}).waitFor();
+    state.chain[0].enabled = false; state.chain[0].suspended = true;
+    state.chain[0].suspension_reason = 'Test repeated errors';
+    state.notifications = [{id: 1, name: 'GUI test', reason: 'Test repeated errors'}];
+    await page.locator('#inspection-tab h2').click(); // release chain button focus
+    await page.getByRole('button', {name: 'Resume (fresh state)', exact: true}).waitFor();
+    assert.match(await page.locator('#activity-summary').innerText(), /SCRIPT SUSPENDED/);
+    await page.getByRole('button', {name: 'Resume (fresh state)', exact: true}).click();
     await page.getByRole('button', {name: 'Disable', exact: true}).waitFor();
     await editor.fill('return None');
     assert.equal(state.chain[0].script, 'return api.bytes.upper()');
@@ -452,24 +512,38 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
       .enrichments.filter(e => e.metadata.operation === 'test.replay').length), 1, 'Replay merges without duplicate enrichments');
     await page.evaluate(() => showTab('inspection-tab'));
     await page.locator('#inspection-select-input').click();
-    assert((await page.locator('.sample-picker [data-list]').textContent()).includes('GET /needle'));
-    assert((await page.locator('.sample-picker [data-list]').textContent()).includes('application/json'));
+    assert((await page.locator('.capture-library [data-list]').textContent()).includes('GET /needle'));
     await page.screenshot({path: '/tmp/spider-sample-catalog.png'});
-    await page.locator('.sample-picker [data-search]').fill('absent');
-    await page.locator('.sample-picker [data-find]').click();
-    await page.waitForFunction(() => document.querySelector('.sample-picker [data-status]').textContent.startsWith('0 / 1'));
-    assert.equal(await page.locator('.sample-picker [data-list] button').count(), 0);
-    await page.locator('.sample-picker [data-search]').fill('needle');
-    await page.locator('.sample-picker [data-search]').press('Enter');
-    await page.locator('.sample-picker [data-list] button').click();
-    assert(!(await page.locator('.sample-picker [data-preview]').textContent()).includes('YWJj'));
-    await page.locator('.sample-picker [data-use]').click();
+    await page.locator('.capture-library [data-search]').fill('absent');
+    await page.locator('.capture-library [data-search]').press('Enter');
+    await page.waitForFunction(() => document.querySelector('.capture-library [data-count]').textContent === '0 capture(s)');
+    assert.equal(await page.locator('.capture-library [data-list] button').count(), 0);
+    await page.locator('.capture-library [data-search]').fill('needle');
+    await page.locator('.capture-library [data-search]').press('Enter');
+    await page.locator('.capture-library [data-list] button').click();
+    assert((await page.locator('.capture-library [data-preview]').textContent()).includes('application/json'));
+    assert(!(await page.locator('.capture-library [data-preview]').textContent()).includes('YWJj'));
+    await page.locator('.capture-library [data-new-folder]').click();
+    await page.locator('.capture-library [data-folder-name]').fill('HTTP tests');
+    await page.locator('.capture-library [data-folder-name]').press('Enter');
+    await page.locator('.capture-library [data-folder]').selectOption('folder-1');
+    await page.locator('.capture-library [data-notes]').fill('Useful regression');
+    await page.locator('.capture-library [data-save]').click();
+    await page.waitForFunction(() => document.querySelector('.capture-library [data-save]').disabled);
+    assert.equal(catalogEdits['sample:endpoint-test/123.json'].notes, 'Useful regression');
+    assert.equal(catalogEdits['sample:endpoint-test/123.json'].folder, 'folder-1');
+    await page.locator('.capture-library [data-folders]').getByRole('button', {name: 'HTTP tests', exact: true}).click();
+    await page.locator('.capture-library [data-list] button').click();
+    await page.screenshot({path: '/tmp/spider-capture-library-detail.png'});
+    await page.locator('.capture-library [data-use]').click();
+    await page.waitForFunction(() => !document.querySelector('.capture-library'));
     assert.equal(await page.evaluate(() => selectedPayload.event.id), 'saved-sample');
     assert.equal(await page.evaluate(() => new TextDecoder().decode(selectedPayload.enrichments[0].payload)), 'xyz');
     assert.equal(await page.locator('#accept-payload').isDisabled(), true);
     await page.locator('#inspection-select-input').click();
-    await page.locator('.sample-picker [data-list] button').click();
-    await page.locator('.sample-picker [data-follow]').click();
+    assert.equal(await page.locator('.capture-library [data-folders]').getByRole('button', {name: 'HTTP tests', exact: true}).getAttribute('aria-pressed'), 'true');
+    await page.locator('.capture-library [data-list] button').click();
+    await page.locator('.capture-library [data-open]').click();
     await page.waitForFunction(() => followedFlows.get('saved:sample:endpoint-test/123.json')?.savedRecords?.length === 1);
     assert.deepEqual(await page.evaluate(() => {
       const flow = followedFlows.get('saved:sample:endpoint-test/123.json');
@@ -480,11 +554,25 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     }), ['abc', 'xyz', false, true]);
     page.on('dialog', dialog => dialog.type() === 'prompt' ? dialog.accept('Saved investigation') : dialog.accept());
     await page.evaluate(() => showTab(followedFlows.get('connection:large-inflate').id));
+    await page.evaluate(() => {
+      const flow = followedFlows.get('connection:large-inflate');
+      const record = followedRecords(flow).at(-1);
+      updateFlowRecord(record);
+      ingestEvent({revision: revision + 1, event: {action: 'connection-info', id: record.event.id,
+        heavy_traffic: {messages_per_second: 300, bytes_per_second: 2000000,
+          limits: {messages_per_second: 200, bytes_per_second: 1048576}, stopped_at_ms: Date.now()}}});
+      renderFlowTab(flow.key);
+    });
+    assert.equal(await large.locator('.flow-follow-head .heavy-traffic-badge').count(), 1);
     await large.locator('[data-save-flow]').click();
+    await page.locator('.capture-save [name=name]').fill('Saved investigation');
+    await page.locator('.capture-save [name=notes]').fill('Saved with metadata');
+    await page.locator('.capture-save [type=submit]').click();
     await page.waitForFunction(() => followedFlows.get('saved:saved-test')?.savedRecords?.length > 0);
     await page.waitForFunction(() => followedFlows.get('saved:sample:endpoint-test/123.json')?.savedRecords?.length === 1);
     assert.equal(savedFlow.name, 'Saved investigation');
     assert(savedFlow.records[0].enrichments.length > 0);
+    assert(savedFlow.records.some(record => record.event.heavy_traffic));
     const savedBytes = await page.evaluate(() => recordPayloadBytes(followedFlows.get('saved:saved-test').savedRecords[0]).length);
     await page.reload();
     await page.waitForFunction(() => followedFlows.get('saved:saved-test')?.savedRecords?.length > 0);
@@ -493,13 +581,24 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     assert.equal(await page.evaluate(() => recordPayloadBytes(followedFlows.get('saved:saved-test').savedRecords[0]).length), savedBytes);
     assert.equal(await page.evaluate(() => payloadRecords.length), 0, 'Saved snapshot must not enter live cache');
     assert.equal(await page.evaluate(() => byId(followedFlows.get('saved:saved-test').id)
+      .querySelectorAll('.flow-follow-head .heavy-traffic-badge').length), 1);
+    assert.equal(await page.evaluate(() => byId(followedFlows.get('saved:saved-test').id)
       .querySelector('.flow-follow-head h2').textContent), 'Saved investigation');
     await page.evaluate(() => {
       closeFlowTab('saved:saved-test');
       showTab('workbench-tab');
     });
     await page.locator('#open-saved-sessions').click();
-    await page.locator('.sample-picker [data-list] button').click();
+    await page.locator('.capture-library [data-folders]').getByRole('button', {name: 'All captures', exact: true}).click();
+    await page.locator('.capture-library [data-search]').fill('Saved investigation');
+    await page.locator('.capture-library [data-search]').press('Enter');
+    await page.locator('.capture-library [data-list] button').click();
+    await page.locator('.capture-library [data-use]').click();
+    await page.locator('.capture-library [data-message-label]').waitFor();
+    assert.equal(await page.locator('.capture-library [data-use]').isDisabled(), true);
+    await page.locator('.capture-library [data-message]').selectOption('0');
+    assert.equal(await page.locator('.capture-library [data-use]').isDisabled(), false);
+    await page.locator('.capture-library [data-open]').click();
     await page.waitForFunction(() => followedFlows.get('saved:saved-test')?.savedRecords?.length > 0);
     const idleRendering = await page.evaluate(async () => {
       const original = renderFlowTab;

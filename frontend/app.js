@@ -2520,6 +2520,7 @@ function renderPayloadList() {
       const peerKey = connection && `${connection.sourceHost}|${connection.destinationHost}|${connection.destinationPort}`;
       label.textContent = flowListLabel(flow.label || flow.id, (flowPeers.get(peerKey) || 0) > 1);
       const markers = [];
+      if (flow.heavyTraffic) markers.push(heavyTrafficBadge(flow.heavyTraffic));
       if (!flow.complete) {
         const incomplete = document.createElement('b');
         incomplete.className = 'flow-incomplete-marker';
@@ -2840,8 +2841,9 @@ function followedRecords(followed) {
 }
 
 async function saveFollowedFlow(followed) {
-  const name = prompt('Save session as:', followed.title)?.trim();
-  if (!name) return;
+  const destination = await captureLibrarySaveDialog(followed.title);
+  if (!destination) return;
+  const name = destination.name;
   const records = followedRecords(followed);
   if (!records.length) { alert('No retained payloads to save.'); return; }
   followed.savePending = true;
@@ -2850,7 +2852,7 @@ async function saveFollowedFlow(followed) {
   try {
     const scope = Object.fromEntries(['type', 'sessionId', 'label', 'sourceHost', 'destinationHost', 'destinationPort']
       .map(key => [key, followed[key]]));
-    const snapshot = {name, scope,
+    const snapshot = {name, scope, library: {folder: destination.folder, notes: destination.notes},
       preferences: Object.fromEntries(followPreferenceKeys.map(key => [key, followed[key]])),
       visibleLanes: [...followed.visibleLanes], laneWidths: [...followed.laneWidths],
       messages: followed.savedMessages || eventRecords.filter(record => scopeMatchesEvent(followed, record)),
@@ -2887,7 +2889,7 @@ async function openSavedFlow(id, savedPreferences = null) {
       throw new Error('Unsupported collection sample');
     snapshot = {
       format: 'spider-flow-v1',
-      name: `Sample · ${sample.collection?.endpoint || sample.event.id} · ${new Date(sample.captured_at_ms).toLocaleString()}`,
+      name: sample.library?.name || `Sample · ${sample.collection?.endpoint || sample.event.id} · ${new Date(sample.captured_at_ms).toLocaleString()}`,
       scope: {type: 'connection', sessionId: sample.event.id,
         label: sample.event.details?.info?.session || sample.event.id},
       records: [{event: sample.event, revision: sample.event.revision || sample.captured_at_ms,
@@ -2928,51 +2930,7 @@ async function openSavedFlow(id, savedPreferences = null) {
   }
 }
 
-async function openSavedFlows() {
-  const dialog = document.createElement('dialog');
-  dialog.className = 'sample-picker';
-  dialog.innerHTML = '<div class="section-head"><h2>Saved sessions · backend</h2><button data-close>Close</button></div>' +
-    '<div class="sample-picker-tools"><button data-prev>Previous</button><button data-next>Next</button><span data-status role="status"></span></div><div data-list></div>';
-  document.body.append(dialog);
-  let offset = 0, next = null;
-  const close = () => { dialog.close(); dialog.remove(); };
-  dialog.querySelector('[data-close]').onclick = close;
-  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
-  const load = async () => {
-    const status = dialog.querySelector('[data-status]');
-    status.textContent = 'Loading…';
-    try {
-      const result = await inspectionRequest(`/saved-flows?offset=${offset}`);
-      if (!Array.isArray(result.items)) throw new Error('Saved sessions require the updated backend.');
-      next = result.next;
-      status.textContent = `${result.total} saved sessions`;
-      dialog.querySelector('[data-prev]').disabled = offset === 0;
-      dialog.querySelector('[data-next]').disabled = next === null;
-      const list = dialog.querySelector('[data-list]'); list.replaceChildren();
-      for (const item of result.items) {
-        const button = document.createElement('button');
-        button.style.display = 'block';
-        button.className = 'sample-row';
-        const title = document.createElement('strong'); title.textContent = item.name;
-        const detail = document.createElement('small');
-        detail.textContent = [item.description, `${item.records} payloads`,
-          item.connections ? `${item.connections} connections` : '',
-          Number.isFinite(item.bytes) ? formatBytes(item.bytes) : '',
-          new Date(item.saved_at_ms).toLocaleString()].filter(Boolean).join(' · ');
-        button.append(title, detail);
-        button.onclick = async () => {
-          button.disabled = true;
-          try { await openSavedFlow(item.id); close(); }
-          catch (error) { status.textContent = error.message; button.disabled = false; }
-        };
-        list.append(button);
-      }
-    } catch (error) { status.textContent = error.message; }
-  };
-  dialog.querySelector('[data-prev]').onclick = () => { offset = Math.max(0, offset - 100); load(); };
-  dialog.querySelector('[data-next]').onclick = () => { if (next !== null) { offset = next; load(); } };
-  dialog.showModal(); await load();
-}
+function openSavedFlows() { return openCaptureLibrary(); }
 
 function replayFollowedFlow(followed) {
   if (!followed || followed.replayPending) return;
@@ -3267,7 +3225,7 @@ function renderFlowTab(scopeKey) {
   if (!panel.querySelector('.flow-stream')) {
     panel.innerHTML = '<div class="flow-follow-toolbar"><div class="flow-follow-head"><h2>Follow flow</h2><span class="flow-completeness" hidden></span><small></small>' +
       '<span class="flow-follow-classifications"></span><div class="flow-follow-controls">' +
-      '<button type="button" data-save-flow>Save as…</button><button type="button" data-saved-flows>Saved sessions</button>' +
+      '<button type="button" data-save-flow>Save to library…</button>' +
       '<button type="button" data-flow-view="chunks" aria-pressed="true">Chunks</button>' +
       '<button type="button" data-flow-view="stream" aria-pressed="false">Stream</button>' +
       '<button type="button" data-flow-view="lanes" aria-pressed="false">Lanes</button>' +
@@ -3299,7 +3257,6 @@ function renderFlowTab(scopeKey) {
       '<div class="flow-gap flow-window" hidden></div><div class="flow-stream"></div>';
     const toolbar = panel.querySelector('.flow-follow-toolbar');
     panel.querySelector('[data-save-flow]').onclick = () => saveFollowedFlow(followed);
-    panel.querySelector('[data-saved-flows]').onclick = openSavedFlows;
     panel.querySelector('[data-flow-replay]').onclick = () => replayFollowedFlow(followed);
     panel.querySelector('[data-flow-collect]').onclick = async () => {
       const button = panel.querySelector('[data-flow-collect]');
@@ -3486,11 +3443,19 @@ function renderFlowTab(scopeKey) {
   const incompleteConnections = [...visibleConnections]
     .filter(id => followed.savedId ? records.some(record => record.event.id === id && !record.replayContextComplete) : !startedConnections.has(id));
   const completeness = panel.querySelector('.flow-completeness');
+  panel.querySelector('.flow-follow-head .heavy-traffic-badge')?.remove();
+  const heavyRecords = retained.filter(record => record.event.heavy_traffic && visibleConnections.has(record.event.id));
+  const heavyNotice = heavyRecords[0]?.event.heavy_traffic;
+  if (heavyNotice) {
+    panel.querySelector('.flow-follow-head').append(heavyTrafficBadge(heavyNotice));
+    for (const id of new Set(heavyRecords.map(record => record.event.id)))
+      if (!incompleteConnections.includes(id)) incompleteConnections.push(id);
+  }
   completeness.hidden = incompleteConnections.length === 0;
   completeness.textContent = incompleteConnections.length > 1
     ? `INCOMPLETE ${incompleteConnections.length}/${visibleConnections.size}` : 'INCOMPLETE';
   completeness.title = incompleteConnections.length
-    ? `${followed.savedId ? 'Saved context is incomplete' : 'connection-start was not observed'} for: ${incompleteConnections.join(', ')}` : '';
+    ? `${heavyNotice ? 'Capture stopped by heavy traffic guard; context may also be incomplete' : followed.savedId ? 'Saved context is incomplete' : 'connection-start was not observed'} for: ${incompleteConnections.join(', ')}` : '';
   panel.querySelector('.flow-follow-head h2').textContent = followed.savedId ? followed.title : followed.type === 'client'
     ? 'Client activity' : followed.type === 'service' ? 'Follow service' : 'Follow connection';
   const classification = workbenchSiftClassifications(records.at(-1));
@@ -4049,6 +4014,14 @@ function appendMixedAscii(target, bytes) {
   flushBinary();
 }
 
+function heavyTrafficBadge(notice) {
+  const badge = document.createElement('span');
+  badge.className = 'heavy-traffic-badge';
+  badge.innerHTML = '<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="4" r="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 7h10l3 10H2z" fill="currentColor"/></svg>';
+  badge.setAttribute('aria-label', 'Heavy traffic · capture stopped');
+  badge.title = `Heavy traffic · capture incomplete\n${notice.messages_per_second} messages/s (limit ${notice.limits?.messages_per_second})\n${(notice.bytes_per_second / 1048576).toFixed(2)} MiB/s (limit ${(notice.limits?.bytes_per_second / 1048576).toFixed(2)})\nStopped: ${new Date(notice.stopped_at_ms).toLocaleString()}\nNetwork transfer continues.`;
+  return badge;
+}
 function updateFlowRecord(record) {
   const event = record.event;
   const info = event.details?.info || {};
@@ -4076,6 +4049,7 @@ function updateFlowRecord(record) {
   flow.lastRevision = record.revision;
   flow.latest = record;
   flow.active = true;
+  if (event.heavy_traffic) { flow.heavyTraffic = event.heavy_traffic; flow.complete = false; }
   if (flowRecords.size > 2000) {
     const oldest = [...flowRecords.values()].sort((a, b) => a.lastRevision - b.lastRevision)[0];
     if (oldest) flowRecords.delete(oldest.id);
@@ -4171,6 +4145,16 @@ function ingestEvent(record) {
   if (!record || !record.event || record.revision <= revision) return;
   revision = record.revision;
   eventRecords.push(summarizeEvent(record));
+  if (record.event.heavy_traffic) {
+    const flow = flowRecords.get(record.event.id);
+    if (flow) {
+      flow.heavyTraffic = record.event.heavy_traffic; flow.complete = false; flow.lastRevision = record.revision;
+      if (flow.latest) flow.latest.event.heavy_traffic = record.event.heavy_traffic;
+    }
+    incompleteReplaySessions.add(record.event.id);
+    addActivity('system', 'HEAVY TRAFFIC', record.event.id, 'Capture stopped; network transfer continues.');
+    scheduleRender(true, true);
+  }
   if (record.event.action === 'connection-start' && record.event.id) {
     startedConnections.add(record.event.id);
     const flow = flowRecords.get(record.event.id);
@@ -5175,127 +5159,7 @@ byId('load-backend-script').onclick = async () => {
   } catch (error) { byId('backend-inspection-status').textContent = error.message; }
 };
 byId('open-inspection').onclick = () => showTab('inspection-tab');
-async function openSamplePicker() {
-  const dialog = document.createElement('dialog');
-  dialog.className = 'sample-picker';
-  dialog.innerHTML = '<div class="section-head"><h2>Collected samples · backend</h2><button data-close>Close</button></div>' +
-    '<div class="sample-picker-tools"><button data-live>Live payloads</button><button data-refresh>Refresh</button>' +
-    '<button data-prev>Previous</button><button data-next>Next</button><span data-status role="status"></span></div>' +
-    '<div class="sample-picker-tools"><input data-search aria-label="Search all collected samples" placeholder="Host, HTTP path/status, MIME, encoding…" maxlength="200"><button data-find>Search all samples</button></div>' +
-    '<div class="sample-picker-layout"><div data-list></div><section><p data-summary>Select a sample.</p>' +
-    '<button data-follow disabled>Open in Follow</button> <button data-use disabled>Use in Inspection</button><pre data-preview></pre></section></div>';
-  document.body.append(dialog);
-  let offset = 0, next = null, sample = null, generation = 0, query = '';
-  const status = dialog.querySelector('[data-status]');
-  const use = dialog.querySelector('[data-use]');
-  const follow = dialog.querySelector('[data-follow]');
-  let selectedSampleId = null;
-  const close = () => { ++generation; dialog.close(); dialog.remove(); };
-  dialog.querySelector('[data-close]').onclick = close;
-  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
-  dialog.querySelector('[data-live]').onclick = () => { close(); showTab('workbench-tab'); };
-  async function load() {
-    const request = ++generation;
-    sample = null; selectedSampleId = null; use.disabled = follow.disabled = true;
-    dialog.querySelector('[data-preview]').textContent = '';
-    dialog.querySelector('[data-summary]').textContent = 'Select a sample.';
-    dialog.querySelector('[data-list]').replaceChildren();
-    status.textContent = 'Loading…';
-    try {
-      const result = await inspectionRequest(`/collections?offset=${offset}&q=${encodeURIComponent(query)}`);
-      if (request !== generation) return;
-      if (!Array.isArray(result.items)) throw new Error('Collection browser requires the updated backend.');
-      next = result.next;
-      dialog.querySelector('[data-prev]').disabled = offset === 0;
-      dialog.querySelector('[data-next]').disabled = next === null;
-      status.textContent = `${result.total}${query ? ` / ${result.all ?? result.total}` : ''} samples · ${offset + (result.items.length ? 1 : 0)}–${offset + result.items.length} · newest first`;
-      const list = dialog.querySelector('[data-list]');
-      list.replaceChildren();
-      for (const item of result.items) {
-        const button = document.createElement('button');
-        button.className = 'sample-row';
-        button.title = item.error || item.id;
-        const line = (tag, text) => {
-          if (!text) return;
-          const element = document.createElement(tag);
-          element.textContent = text; button.append(element);
-        };
-        line('strong', `${item.side === 'L' ? '→ L' : item.side === 'R' ? '← R' : '?'} · ${item.title || 'Payload'}`);
-        line('span', [item.authority, item.endpoint].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' · '));
-        line('small', [item.captured_at_ms ? new Date(item.captured_at_ms).toLocaleString() : '',
-          ...(item.protocols || []), Number.isFinite(item.bytes) ? formatBytes(item.bytes) : '',
-          item.decoded_bytes ? `decoded ${formatBytes(item.decoded_bytes)}` : ''].filter(Boolean).join(' · '));
-        line('small', item.session || item.session_id);
-        line('small', item.stream_ids?.length ? `H2 stream ${item.stream_ids.join(', ')}` : '');
-        line('small', [...(item.content_types || []), ...(item.encodings || []), ...(item.operations || [])].join(' · '));
-        if (item.error) line('small', item.error);
-        button.disabled = !!item.error;
-        button.onclick = async () => {
-          const selection = ++generation;
-          sample = null; selectedSampleId = null; use.disabled = follow.disabled = true;
-          dialog.querySelector('[data-summary]').textContent = 'Loading sample…';
-          try {
-            const data = await inspectionRequest(`/sample?id=${encodeURIComponent(item.id)}`);
-            if (selection !== generation) return;
-            if (data.format !== 'spider-sample-v1') throw new Error('Unsupported sample format');
-            sample = data; selectedSampleId = item.id; use.disabled = follow.disabled = false;
-            for (const row of list.querySelectorAll('button')) row.setAttribute('aria-pressed', String(row === button));
-            dialog.querySelector('[data-summary]').textContent =
-              `${item.title || 'Payload'} · ${data.collection.endpoint} · ${new Date(data.captured_at_ms).toLocaleString()} · ${data.event.details?.info?.session || data.event.id}`;
-            // Bounded, inert text preview: never interpret captured content as HTML.
-            const preview = {...data, event: {...data.event, details: {...data.event.details,
-              info: {...data.event.details?.info, content: `[${decodedPayloadSize(data.event.details?.info?.content)} bytes; preserved for Inspection]`}}},
-              enrichments: (data.enrichments || []).map(enrichment => ({
-                ...enrichment, content: `[${decodedPayloadSize(enrichment.content)} decoded bytes]`,
-              }))};
-            dialog.querySelector('[data-preview]').textContent = JSON.stringify(preview, null, 2).slice(0, 30000);
-          } catch (error) {
-            if (selection === generation) dialog.querySelector('[data-summary]').textContent = error.message;
-          }
-        };
-        list.append(button);
-      }
-    } catch (error) { if (request === generation) status.textContent = error.message; }
-  }
-  use.onclick = () => {
-    if (!sample) return;
-    const record = {event: sample.event, revision: `sample:${sample.captured_at_ms}`, decided: true,
-      collectedSample: true,
-      sessionContext: sample.session_context,
-      enrichments: (sample.enrichments || []).map(item => ({
-        metadata: item.metadata, payload: decodeBase64(item.content || ''),
-      }))};
-    selectPayload(record, false);
-    close(); showTab('inspection-tab');
-  };
-  follow.onclick = async () => {
-    if (!selectedSampleId) return;
-    const request = ++generation;
-    follow.disabled = use.disabled = true;
-    try {
-      await openSavedFlow(`sample:${selectedSampleId}`);
-      if (request === generation) close();
-    } catch (error) {
-      if (request === generation) {
-        status.textContent = `Cannot open sample: ${error.message}`;
-        follow.disabled = use.disabled = false;
-      }
-    }
-  };
-  dialog.querySelector('[data-refresh]').onclick = load;
-  const search = () => {
-    query = dialog.querySelector('[data-search]').value.trim();
-    offset = 0; load();
-  };
-  dialog.querySelector('[data-find]').onclick = search;
-  dialog.querySelector('[data-search]').onkeydown = event => {
-    if (event.key === 'Enter') { event.preventDefault(); search(); }
-  };
-  dialog.querySelector('[data-prev]').onclick = () => { offset = Math.max(0, offset - 100); load(); };
-  dialog.querySelector('[data-next]').onclick = () => { if (next !== null) { offset = next; load(); } };
-  dialog.showModal();
-  await load();
-}
+function openSamplePicker() { return openCaptureLibrary(); }
 byId('inspection-select-input').textContent = 'Choose sample';
 byId('inspection-select-input').onclick = openSamplePicker;
 const savedSessionsButton = document.createElement('button');
@@ -5313,6 +5177,7 @@ setPayloadMode(localStorage.getItem('spider-payload-mode') === 'hex' ? 'hex' : '
 showTab('workbench-tab');
 restoreFollowTabs();
 setInterval(() => {
-  if (activeTab === 'workbench-tab' || activeTab === 'inspection-tab') refreshBackendInspection();
+  // Suspension notifications must arrive even when viewing saved traffic, without repainting it.
+  if (!document.hidden) refreshBackendInspection();
 }, 1000);
 bootstrapAndConnect();

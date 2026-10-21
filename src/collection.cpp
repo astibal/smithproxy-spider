@@ -61,6 +61,45 @@ std::string lowercase(std::string text) {
     for (auto& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return text;
 }
+nlohmann::json read_catalog(const std::filesystem::path& path, std::size_t limit, nlohmann::json fallback) {
+    const int fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) { if (errno == ENOENT) return fallback; throw std::runtime_error("Cannot open capture catalog"); }
+    struct stat st{};
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 || static_cast<std::uint64_t>(st.st_size) > limit) {
+        close(fd); throw std::runtime_error("Invalid capture catalog");
+    }
+    std::string data(static_cast<std::size_t>(st.st_size), '\0');
+    std::size_t offset = 0;
+    while (offset < data.size()) {
+        const auto n = ::read(fd, data.data() + offset, data.size() - offset);
+        if (n <= 0) { close(fd); throw std::runtime_error("Cannot read capture catalog"); }
+        offset += static_cast<std::size_t>(n);
+    }
+    close(fd);
+    return nlohmann::json::parse(data);
+}
+void write_catalog(const std::filesystem::path& root, const char* filename, const nlohmann::json& value, std::size_t limit) {
+    const auto data = value.dump();
+    if (data.size() > limit) throw std::runtime_error("Capture catalog size limit reached");
+    if (std::filesystem::is_symlink(root)) throw std::runtime_error("Collection root must not be a symlink");
+    if (std::filesystem::create_directories(root)) std::filesystem::permissions(root, std::filesystem::perms::owner_all);
+    auto temporary = (root / ".library-XXXXXX").string();
+    int fd = mkstemp(temporary.data());
+    if (fd < 0) throw std::runtime_error("Cannot create capture catalog");
+    try {
+        std::size_t offset = 0;
+        while (offset < data.size()) {
+            const auto n = ::write(fd, data.data() + offset, data.size() - offset);
+            if (n <= 0) throw std::runtime_error("Cannot write capture catalog");
+            offset += static_cast<std::size_t>(n);
+        }
+        if (fsync(fd)) throw std::runtime_error("Cannot flush capture catalog");
+        close(fd); fd = -1;
+        std::filesystem::rename(temporary, root / filename);
+        const int dir = open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        if (dir >= 0) { fsync(dir); close(dir); }
+    } catch (...) { if (fd >= 0) close(fd); unlink(temporary.c_str()); throw; }
+}
 std::size_t content_size(const nlohmann::json& content) {
     if (!content.is_string()) return 0;
     const auto& text = content.get_ref<const std::string&>();
@@ -89,7 +128,8 @@ nlohmann::json flow_summary(const nlohmann::json& snapshot) {
     description.resize(end);
     return {{"id", snapshot.at("id")}, {"name", snapshot.at("name")}, {"saved_at_ms", snapshot.at("saved_at_ms")},
         {"records", snapshot.at("records").size()}, {"bytes", bytes}, {"connections", connections.size()},
-        {"description", description}};
+        {"description", description}, {"folder", snapshot.value("library", nlohmann::json::object()).value("folder", "")},
+        {"notes", snapshot.value("library", nlohmann::json::object()).value("notes", "")}};
 }
 }
 Collection::Collection(std::filesystem::path root, std::uint64_t limit) : root_(std::move(root)), limit_(limit) {
@@ -306,9 +346,18 @@ nlohmann::json Collection::read(const std::string& id) const {
     close(fd);
     auto sample = nlohmann::json::parse(data);
     if (sample.value("format", "") != "spider-sample-v1") throw std::runtime_error("Unsupported sample format");
+    sample["library"] = library_metadata("sample:" + id);
     return sample;
 }
 nlohmann::json Collection::save_flow(nlohmann::json snapshot) {
+    if (snapshot.contains("library")) {
+        std::scoped_lock lock(library_mutex_); load_library();
+        const auto folder = snapshot["library"].value("folder", ""), notes = snapshot["library"].value("notes", "");
+        if (notes.size() > 8000 || notes.find('\0') != std::string::npos ||
+            (!folder.empty() && std::none_of(library_data_["folders"].begin(), library_data_["folders"].end(), [&](const auto& f) { return f["id"] == folder; })))
+            throw std::runtime_error("Invalid folder or notes");
+        snapshot["library"] = {{"folder", folder}, {"notes", notes}};
+    }
     const auto name = snapshot.value("name", "");
     if (name.empty() || name.size() > 800 || name.find('\0') != std::string::npos)
         throw std::runtime_error("Session name required (maximum 800 UTF-8 bytes)");
@@ -371,6 +420,7 @@ nlohmann::json Collection::list_flows(std::size_t offset) const {
     for (auto i = offset; i < end; ++i) {
         auto summary = flow_file(root_, ids[i], true);
         if (!summary.contains("bytes")) summary = flow_summary(read_flow(ids[i]));
+        summary.update(library_metadata("flow:" + ids[i]));
         items.push_back(std::move(summary));
     }
     return {{"items", items}, {"total", ids.size()}, {"next", end < ids.size() ? nlohmann::json(end) : nlohmann::json(nullptr)}};
@@ -378,6 +428,122 @@ nlohmann::json Collection::list_flows(std::size_t offset) const {
 nlohmann::json Collection::read_flow(const std::string& id) const {
     auto result = flow_file(root_, id, false);
     if (result.value("format", "") != "spider-flow-v1") throw std::runtime_error("Unsupported saved session format");
+    auto metadata = result.value("library", nlohmann::json::object());
+    metadata.update(library_metadata("flow:" + id));
+    result["library"] = metadata;
+    if (result["library"].contains("name")) result["name"] = result["library"]["name"];
     return result;
+}
+void Collection::load_library() const {
+    if (library_loaded_) return;
+    auto data = read_catalog(root_ / ".capture-library", 4 * 1024 * 1024,
+        {{"revision", 0}, {"next_folder", 0}, {"folders", nlohmann::json::array()}, {"items", nlohmann::json::object()}});
+    if (!data.is_object() || (!data.at("revision").is_number_unsigned() && !data.at("revision").is_number_integer()) ||
+        !data.at("folders").is_array() || !data.at("items").is_object()) throw std::runtime_error("Invalid library metadata; file preserved");
+    library_data_ = std::move(data);
+    try { library_index_ = read_catalog(root_ / ".capture-index", 32 * 1024 * 1024, nlohmann::json::object()); }
+    catch (...) { library_index_ = nlohmann::json::object(); } // derived index is rebuildable
+    if (!library_index_.is_object()) library_index_ = nlohmann::json::object();
+    library_loaded_ = true;
+}
+nlohmann::json Collection::library_metadata(const std::string& id) const {
+    std::scoped_lock lock(library_mutex_); load_library();
+    return library_data_["items"].value(id, nlohmann::json::object());
+}
+nlohmann::json Collection::library(std::size_t offset, const std::string& query, const std::string& folder) const {
+    if (query.size() > 800 || folder.size() > 100) throw std::runtime_error("Invalid library query");
+    std::scoped_lock lock(library_mutex_); load_library();
+    std::set<std::string> found;
+    auto rows = std::vector<nlohmann::json>{};
+    std::istringstream words(lowercase(query));
+    std::vector<std::string> terms;
+    for (std::string term; words >> term;) terms.push_back(term);
+    bool changed = false;
+    if (std::filesystem::exists(root_)) for (const auto& directory : std::filesystem::directory_iterator(root_)) {
+        if (directory.is_symlink() || !directory.is_directory()) continue;
+        const auto name = directory.path().filename().string();
+        const bool flow = name == "saved-sessions";
+        if (!flow && !name.starts_with("endpoint-")) continue;
+        for (const auto& file : std::filesystem::directory_iterator(directory)) {
+            if (file.is_symlink() || !file.is_regular_file() || file.path().extension() != (flow ? ".flow" : ".json")) continue;
+            const auto id = flow ? file.path().stem().string() : name + "/" + file.path().filename().string();
+            const auto key = (flow ? "flow:" : "sample:") + id;
+            if (found.size() >= 50000) throw std::runtime_error("Library index limit: 50000 captures");
+            found.insert(key);
+            const auto stamp = file.last_write_time().time_since_epoch().count();
+            const auto size = file.file_size();
+            auto& cached = library_index_[key];
+            if (!cached.is_object() || cached.value("stamp", 0LL) != stamp || cached.value("size", 0ULL) != size || !cached.contains("summary")) {
+                nlohmann::json summary;
+                try { summary = flow ? flow_file(root_, id, true) : describe(id); }
+                catch (const std::exception& e) { summary = {{"name", "Unreadable capture"}, {"error", e.what()}}; }
+                cached = {{"stamp", stamp}, {"size", size}, {"summary", summary}}; changed = true;
+            }
+            auto row = cached["summary"];
+            row["key"] = key; row["id"] = id; row["kind"] = flow ? "flow" : "sample";
+            row["name"] = row.value("name", row.value("title", "Payload"));
+            row["records"] = row.value("records", 1U);
+            row["time_ms"] = row.value(flow ? "saved_at_ms" : "captured_at_ms", 0LL);
+            row["folder"] = row.value("folder", ""); row["notes"] = row.value("notes", "");
+            row.update(library_data_["items"].value(key, nlohmann::json::object()));
+            if (folder != "*" && row["folder"] != folder) continue;
+            const auto searchable = lowercase(row.dump());
+            if (std::any_of(terms.begin(), terms.end(), [&](const auto& term) { return searchable.find(term) == std::string::npos; })) continue;
+            rows.push_back(std::move(row));
+        }
+    }
+    for (auto it = library_index_.begin(); it != library_index_.end();) {
+        if (!found.contains(it.key())) { it = library_index_.erase(it); changed = true; } else ++it;
+    }
+    std::string warning;
+    if (changed) try { write_catalog(root_, ".capture-index", library_index_, 32 * 1024 * 1024); }
+    catch (const std::exception& e) { warning = e.what(); }
+    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+        return a["time_ms"] == b["time_ms"] ? a["key"] < b["key"] : a["time_ms"] > b["time_ms"];
+    });
+    auto items = nlohmann::json::array();
+    const auto end = offset >= rows.size() ? rows.size() : offset + std::min<std::size_t>(100, rows.size() - offset);
+    for (auto i = offset; i < end; ++i) items.push_back(std::move(rows[i]));
+    return {{"items", items}, {"total", rows.size()}, {"all", found.size()},
+        {"next", end < rows.size() ? nlohmann::json(end) : nlohmann::json(nullptr)},
+        {"folders", library_data_["folders"]}, {"revision", library_data_["revision"]}, {"warning", warning}};
+}
+nlohmann::json Collection::edit_library(const nlohmann::json& request) {
+    std::scoped_lock lock(library_mutex_); load_library();
+    if (request.at("revision") != library_data_["revision"]) throw std::runtime_error("Library changed; refresh before saving");
+    auto next = library_data_;
+    const auto operation = request.at("operation").get<std::string>();
+    const auto valid = [](const std::string& value, std::size_t max, bool empty = false) {
+        return (empty || value.find_first_not_of(" \r\n\t") != std::string::npos) && value.size() <= max && value.find('\0') == std::string::npos;
+    };
+    if (operation == "folder") {
+        const auto name = request.at("name").get<std::string>();
+        const auto id = request.value("id", "");
+        if (!valid(name, 200)) throw std::runtime_error("Folder name required, maximum 200 UTF-8 bytes");
+        auto existing = next["folders"].end();
+        for (auto it = next["folders"].begin(); it != next["folders"].end(); ++it) {
+            if ((*it)["id"] == id) existing = it;
+            else if (lowercase((*it)["name"].get<std::string>()) == lowercase(name)) throw std::runtime_error("Folder name already exists");
+        }
+        if (!id.empty() && existing == next["folders"].end()) throw std::runtime_error("Unknown folder");
+        if (existing != next["folders"].end()) (*existing)["name"] = name;
+        else {
+            if (next["folders"].size() >= 256) throw std::runtime_error("Maximum 256 folders");
+            next["next_folder"] = next.value("next_folder", 0ULL) + 1;
+            next["folders"].push_back({{"id", "folder-" + std::to_string(next["next_folder"].get<std::uint64_t>())}, {"name", name}});
+        }
+    } else if (operation == "item") {
+        const auto key = request.at("key").get<std::string>();
+        if (!library_index_.contains(key)) throw std::runtime_error("Capture not indexed; refresh the library");
+        const auto name = request.at("name").get<std::string>(), notes = request.value("notes", ""), folder = request.value("folder", "");
+        if (!valid(name, 800) || !valid(notes, 8000, true)) throw std::runtime_error("Name/notes too long or invalid");
+        if (!folder.empty() && std::none_of(next["folders"].begin(), next["folders"].end(), [&](const auto& f) { return f["id"] == folder; }))
+            throw std::runtime_error("Unknown folder");
+        next["items"][key] = {{"name", name}, {"notes", notes}, {"folder", folder}};
+    } else throw std::runtime_error("Unknown library operation");
+    next["revision"] = next["revision"].get<std::uint64_t>() + 1;
+    write_catalog(root_, ".capture-library", next, 4 * 1024 * 1024);
+    library_data_ = std::move(next);
+    return {{"revision", library_data_["revision"]}, {"folders", library_data_["folders"]}};
 }
 }

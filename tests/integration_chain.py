@@ -384,10 +384,19 @@ def main():
                     finally:
                         websocket.close()
                     inspection_url = f"http://127.0.0.1:{spider_port}/api/inspection"
+                    assert not get_json(inspection_url, 'frontend-key')['heavy_traffic']['enabled']
+                    _, heavy = post_json(inspection_url + '/heavy-traffic', {'enabled': True, 'grace_seconds': 10}, 'frontend-key')
+                    assert heavy['enabled'] and heavy['grace_seconds'] == 10
+                    try:
+                        post_json(inspection_url + '/heavy-traffic', {'grace_seconds': 4}, 'frontend-key')
+                        raise AssertionError('unsafe grace accepted')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 400
+                    post_json(inspection_url + '/heavy-traffic', {'enabled': False}, 'frontend-key')
                     schema = get_json(inspection_url + '/schema', 'frontend-key')
-                    assert schema['version'] == '0.2'
+                    assert schema['version'] == '0.3'
                     assert 'Http2' in schema['types']
-                    assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == ['message', 'metadata', 'http1', 'http2']
+                    assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == ['message', 'metadata', 'http1', 'http2', 'state', 'storage', 'instance']
                     assert schema['types']['Message']['fields'][0]['type'] == 'bytes'
                     language_request = {'script': 'h2 = api.http2\nh2.',
                                         'language_action': 'complete', 'line': 2, 'column': 3}
@@ -460,6 +469,21 @@ def main():
                     loaded = get_json(f"http://127.0.0.1:{spider_port}/api/inspection/saved-flow?id={saved['id']}", "frontend-key")
                     assert loaded["records"] == snapshot["records"]
                     assert loaded["name"] == snapshot["name"]
+                    catalog_url = inspection_url + '/library'
+                    catalog = get_json(catalog_url, 'frontend-key')
+                    key = 'flow:' + saved['id']
+                    assert any(item['key'] == key for item in catalog['items'])
+                    _, folder = post_json(catalog_url, {'revision': catalog['revision'], 'operation': 'folder', 'name': 'Integration'}, 'frontend-key')
+                    _, edited = post_json(catalog_url, {'revision': folder['revision'], 'operation': 'item', 'key': key,
+                        'name': 'Renamed capture', 'notes': 'catalog needle', 'folder': folder['folders'][0]['id']}, 'frontend-key')
+                    found = get_json(catalog_url + '?q=needle', 'frontend-key')
+                    assert found['total'] == 1 and found['items'][0]['name'] == 'Renamed capture'
+                    assert get_json(inspection_url + '/saved-flow?id=' + saved['id'], 'frontend-key')['name'] == 'Renamed capture'
+                    try:
+                        post_json(catalog_url, {'revision': catalog['revision'], 'operation': 'folder', 'name': 'Stale'}, 'frontend-key')
+                        raise AssertionError('stale catalog edit accepted')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 400
                     return 0
             except OSError:
                 pass
