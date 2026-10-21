@@ -48,17 +48,17 @@ return None
 
 ### Saved Follow sessions
 
-**Save as…** stores a named snapshot of all currently retained payloads in the Follow
+**Save to library…** stores a named snapshot of all currently retained payloads in the Follow
 scope, their enrichments, retained event messages, context-completeness flags and view
 preferences. It opens a separate saved tab; the live Follow remains separate.
-**Saved sessions** in Payloads or Follow opens the backend catalog, including sessions
+**Capture Library** in the Payloads heading opens the backend catalog, including sessions
 whose tabs were closed. Open saved tabs reload their actual data from the backend on UI
 restart, not from the volatile payload cache.
 
 The collection picker also offers **Open in Follow** for a selected sample. This opens
 an offline tab with its original bytes, annotations, enrichments and stored session
 context, without copying the sample or appending live traffic. Reload restores it from
-the collection. A single sample is explicitly incomplete connection context; **Save as…**
+the collection. A single sample is explicitly incomplete connection context; **Save to library…**
 can create a named snapshot of it.
 
 Snapshots are private files under `$SPIDER_COLLECTION_DIR/saved-sessions`, written via
@@ -91,19 +91,41 @@ envelopes with `replay_index` and a final `replay-summary`. Limits: one replay a
 10,000 records, 64 MiB input, 32 MiB output and a five-second budget checked between
 records. The backend update is required.
 
-### Collection sample picker
+### Capture Library
 
-Inspection → **Choose sample** opens a read-only browser of backend collection files,
-100 entries per page, newest first. Rows summarize capture time, endpoint/connection,
-direction, wire/decoded sizes, available HTTP method/path/status, authority, MIME type,
-encoding and enrichment operations. Search matches these summaries across the whole
-collection (`q` on the collections endpoint), not just the visible page. Existing
-samples are summarized lazily; summaries are cached in memory with file-change checks.
-Cookie/authorization headers and body contents are not included in the searchable summary.
-Select a file to preview its saved metadata and use its original
-payload/enrichments as offline script input. The preview is capped at 30,000 characters;
-loading a sample is limited to 64 MiB. Saved samples cannot submit live traffic decisions.
-The picker also links back to live Payloads.
+**Capture Library** in Payloads and **Choose input…** in Inspection open the same
+library of collected samples and saved flows. Click a row to select it and edit
+its name, notes or virtual folder; opening is a separate **Open in Follow** action.
+**Use in Inspection** loads a sample as offline input. For a flow, explicitly select
+a message first: the first message is never silently chosen. No script is executed
+by choosing an input. The library also links back to live traffic.
+
+Folders are a flat, virtual organizational layer: **All captures**, **Unfiled**,
+and up to 256 user-created folders. Create/rename them in the left pane, and move
+captures with the Folder field. Names and notes are searchable together with endpoint,
+HTTP method/path/status, MIME and enrichment summaries. Cookie/authorization values
+and payload bodies are not indexed. Renaming, moving and notes do not rewrite captured
+data. Save to library offers name, folder and notes when creating a flow snapshot.
+Folder, query, page, selected row and list scroll are remembered per backend in the
+browser. Unsaved detail edits require confirmation before leaving.
+
+Backend metadata is stored atomically in private `.capture-library` (maximum 4 MiB)
+inside the collection root and survives backend/browser restarts. `.capture-index`
+is a rebuildable lightweight summary cache (maximum 32 MiB). The first listing of old
+samples may be slower: each missing summary is derived once from the sample; subsequent
+queries and restarts use the index, checking file size/mtime instead of rereading
+payloads. Existing flow summaries are read without their payloads. The browser only
+loads payload data on Open or Use; listings contain 100 summaries per page. Indexing
+is capped at 50,000 captures. Catalog limits are bounded overhead separate from the
+capture payload quota; no automatic deletion of user data is performed.
+
+Authenticated API: `GET /api/inspection/library?offset=0&q=...&folder=*` returns
+items, folders and `revision`; `folder=` means Unfiled. `POST /api/inspection/library`
+uses the current revision and either `operation: folder` (name, optional existing id)
+or `operation: item` (key, name, notes, folder). Keys distinguish `sample:<id>` from
+`flow:<id>`. Stale edits are rejected instead of overwriting another editor's work.
+The legacy collections and saved-flow read endpoints remain supported. One Spider
+process should own a collection directory; concurrent processes editing it are not supported.
 
 Follow views have **Collect** above Keep all. Collection is backend state, independent
 of the browser cache, and captures future callbacks (not already retained payloads).
@@ -207,7 +229,76 @@ sanitized environment, 256 MiB address-space limit, 2 CPU seconds, 3 wall second
 50,000 captured output characters and a 1 MiB replacement limit. At most four
 workers execute concurrently; overload and execution errors leave live content
 unchanged. The server retains counters and the latest 20 outputs. This first
-runtime version does not retain Python globals between invocations.
+runtime does not retain Python globals between invocations; use the explicit
+state/storage APIs below instead.
+
+### Script instances, storage and runtime protection
+
+Deployment settings select a **logical instance**, not a persistent Python process:
+
+| `instancing` | State shared by |
+| --- | --- |
+| `message` (default) | Nothing; each content callback starts with `{}` |
+| `flow` | One connection ID, both directions; not an HTTP/2 stream |
+| `endpoint`, `endpoint: destination` | Destination protocol + IP + port across connections |
+| `endpoint`, `endpoint: source` | Source IP across ports and destinations |
+
+Endpoint keys use the observed connection endpoints, not hostname groups. Session
+filters and scope still determine which callbacks reach a deployment. A callback
+can contain a fragment, several frames, or less than one application message.
+
+```python
+# Deploy per flow to count both directions of this connection.
+api.state['callbacks'] = api.state.get('callbacks', 0) + 1
+api.print(api.instance.key, api.state['callbacks'])
+
+# Explicitly shared across deployments and backend restarts.
+stats = api.storage.namespace('inspection-stats')
+api.print('Total callbacks:', stats.increment('callbacks'))
+return None
+```
+
+`api.state` must remain a JSON object (64 KiB per instance, 4 MiB per deployment).
+It commits only after that invocation succeeds; exceptions, invalid values and
+timeouts leave the previous state unchanged. This is **not** a transaction across
+the whole chain. Disable, resume, redeploy, removal and backend restart discard
+instance state. Flow stop removes its state; idle instances also expire. Defaults:
+`max_instances: 128` (1–1024), `idle_seconds: 1800` (1–86400).
+
+`api.storage.namespace(name)` provides `get`, `set`, `delete`, and atomic
+`increment`. Values must be JSON; use `increment` rather than `get` + `set` for
+concurrent counters. Each operation commits separately: storage writes survive
+a later script/chain failure. **Run on selected uses the same persistent storage**,
+but starts with fresh `api.state` and never changes live traffic. Use a separate
+namespace for test data. Standalone `make_views` documentation examples use memory.
+
+Storage is a private SQLite database in `SPIDER_STORAGE_DIR`, or by default a
+sibling of the collection directory named `<collection-directory>-inspection-storage`.
+Limits: 64 KiB/value, 4096 keys and 16 MiB logical data across all namespaces;
+database pages are additionally capped. Namespaces are names, not paths. Storage
+is for small shared data, not payload archives. Scripts remain trusted code:
+namespaces and process resource limits are not security isolation. Ordinary files
+are still accessible with the service user's permissions, without these API guarantees.
+
+Each deployment serializes invocations, including different endpoint/flow instances,
+to avoid lost state updates. Separate deployments can run concurrently. At most
+8 calls wait per deployment, for at most 250 ms; excess work fails open with the
+original payload. The global four-worker cap still applies. Queue rejection and
+storage contention do not count as script faults. Ordering is worker lock acquisition
+order, not a promise of network arrival order under concurrent webhook delivery.
+
+`timeout_ms` defaults to 1000 (50–3000); the complete chain retains its 3-second
+budget. `error_limit` defaults to 3 consecutive errors/timeouts (1–100). A deployment
+also suspends after 5 consecutive runs consume at least 80% of its full configured
+wall-clock budget. This measures latency, not CPU utilization. A budget shortened by
+earlier chain steps does not count as that script's slowness. A suspended deployment
+stays disabled until explicitly resumed; resume starts with fresh state.
+
+Inspection shows retained instances, state bytes, waiting/executing calls, rejected
+work, duration and the suspension reason. The backend retains the last 20 suspension
+notifications, surfaced in Activity while the GUI is open; no email delivery.
+The historical single-script API keeps its legacy behavior until converted to a
+chain deployment. Use chain deployments for instancing and automatic suspension.
 
 Headless clients use authenticated JSON endpoints (`X-Spider-Token`):
 
@@ -222,7 +313,9 @@ and an `operation`. Stale revisions are rejected, rather than overwriting anothe
 editor's changes. Operations:
 
 - `deploy`: `name`, `script`, `scope` (`rules` or `all`), optional `filter`
-  (SessionFilter expression, e.g. `dst port 443`), optional existing deployment `id`.
+  (SessionFilter expression, e.g. `dst port 443`), optional existing deployment `id`;
+  `instancing`, `endpoint`, `timeout_ms`, `error_limit`, `max_instances`, `idle_seconds`
+  as described above. Omitted runtime settings use defaults, including on redeploy.
 - `enable`: `id`, boolean `enabled`. Enabling validates syntax again without
   executing user code. New deployments are always disabled.
 - `reorder`: `ids`, every deployment ID exactly once in the desired order.
@@ -244,7 +337,38 @@ PASS, FORGET, bypassed and auto-accepted callbacks. Deployment and rules current
 live in server memory: after a backend restart, redeploy through these endpoints.
 They survive browser disconnects. Test runs never apply replacements to traffic.
 
-### Collection
+### Heavy traffic guard
+
+The visible **Ignore heavy traffic** switch in the left sidebar is opt-in and
+runs on the backend, independently of the browser. Defaults: five seconds from
+the first content callback are always admitted; afterwards more than **200
+callbacks/s OR 1 MiB/s**, sustained for three seconds, stops capture for that
+connection (both directions combined). Grace cannot be configured below five
+seconds. Counters use ten 100 ms buckets (approximately a one-second window),
+and are evaluated on arrival, not by CPU polling. Brief bursts do not suffice.
+
+The cutoff sends Smithproxy `action: not-interested` before payload decoding,
+enrichment, script execution or collection. It does **not** drop network data.
+It still costs HTTP reception and envelope parsing to receive the triggering
+callback; this is not a global CPU limit. Smithproxy must support not-interested.
+An ordinary weight icon marks the incomplete flow and its saved snapshot, with
+observed rates, configured limits and cutoff time in the tooltip. Existing data
+is retained. Disabling protection does not resume an already declined capture.
+
+Collection/INSPECT traffic is exempt by default. Conservatively, any enabled
+backend script exempts all connections; **Also cut Collection / script traffic**
+explicitly opts into interrupting these workflows. Limits are configurable in
+the switch's expandable panel. Authenticated headless clients can POST partial
+settings to `/api/inspection/heavy-traffic`; GET `/api/inspection` includes
+`heavy_traffic`. Fields: `enabled`, `grace_seconds` (5–300),
+`messages_per_second`, `bytes_per_second` (1–1073741824), `sustain_seconds`
+(1–60), `include_managed`. Settings are in memory until backend restart.
+Changing settings restarts observation for sessions not yet cut off. Tracking
+is bounded to 65536 connections, with ten-minute idle expiry and stop cleanup;
+at capacity new connections are not tracked. This is per-session protection,
+not an aggregate limit on many small concurrent connections.
+
+### Collection capture
 
 Right-click an endpoint and use **Toggle Collection**. The neutral `▣` badge is
 independent of the endpoint's Focus/Inspect color. Collection is a backend rule

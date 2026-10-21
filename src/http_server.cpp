@@ -55,14 +55,14 @@ public:
                                p == "/api/status" || p == "/api/sessions" ||
                                p == "/api/diagnostics" || p == "/api/inspection" || p == "/api/inspection/schema" ||
                                p == "/api/hostnames" || p == "/api/inspection/collections" || p == "/api/inspection/sample" ||
-                               p == "/api/inspection/saved-flows" || p == "/api/inspection/saved-flow" ||
+                               p == "/api/inspection/saved-flows" || p == "/api/inspection/saved-flow" || p == "/api/inspection/library" ||
                                p == "/api/session-history" || p == "/api/session" ||
                                p == "/api/events" || p == "/api/events/ws")) ||
                (m == "OPTIONS" && p.starts_with("/api/")) ||
                (m == "DELETE" && p == "/api/session-history") ||
                (m == "POST" && (p == "/api/config/smithproxy" || p == "/api/enrichment/replay")) ||
                (m == "POST" && (p == "/api/inspection" || p == "/api/inspection/run" || p == "/api/inspection/rules" ||
-                               p == "/api/inspection/saved-flows" || p == "/api/inspection/language")) ||
+                               p == "/api/inspection/saved-flows" || p == "/api/inspection/language" || p == "/api/inspection/heavy-traffic" || p == "/api/inspection/library")) ||
                (m == "POST" && p == callback_path());
     }
 
@@ -152,7 +152,6 @@ private:
                     if (!decode_sxbn(body, event, raw_payload, error)) {
                         return json_response(400, {{"error", error}});
                     }
-                    event["details"]["info"]["content"] = base64_encode(raw_payload);
                     payload_view = raw_payload;
                 } else {
                     event = nlohmann::json::parse(body);
@@ -183,6 +182,12 @@ private:
             if (config_.token.empty()) return json_response(403, {{"error", "SPIDER_TOKEN is required for backend scripting"}});
             try {
                 if (method == "GET") {
+                    if (url == "/api/inspection/library") {
+                        const char* offset = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "offset");
+                        const char* query = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "q");
+                        const char* folder = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "folder");
+                        return json_response(200, inspection_.collection.library(offset ? std::stoull(offset) : 0, query ? query : "", folder ? folder : "*"));
+                    }
                     if (url == "/api/inspection/saved-flows") {
                         const char* offset = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "offset");
                         return json_response(200, inspection_.collection.list_flows(offset ? std::stoull(offset) : 0));
@@ -202,14 +207,17 @@ private:
                     }
                     auto state = inspection_.status();
                     state["traffic_rules"] = decisions_.traffic_rule_status();
+                    state["heavy_traffic"] = decisions_.heavy_traffic.status();
                     return json_response(200, state);
                 }
                 const auto request = nlohmann::json::parse(body);
                 if (!request.is_object()) return json_response(400, {{"error", "JSON object required"}});
                 if (url == "/api/inspection/saved-flows") return json_response(200, inspection_.collection.save_flow(request));
+                if (url == "/api/inspection/library") return json_response(200, inspection_.collection.edit_library(request));
                 if (url == "/api/inspection/run") return json_response(200, inspection_.run(request));
                 if (url == "/api/inspection/language") return json_response(200, inspection_.language(request));
                 if (url == "/api/inspection/rules") return json_response(200, decisions_.set_traffic_rules(request));
+                if (url == "/api/inspection/heavy-traffic") return json_response(200, decisions_.heavy_traffic.configure(request));
                 return json_response(200, inspection_.configure(request));
             } catch (const std::exception& e) { return json_response(400, {{"error", e.what()}}); }
         }
