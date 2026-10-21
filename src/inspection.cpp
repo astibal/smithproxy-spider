@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
+#include <cstdlib>
 #include <unistd.h>
 
 namespace spider {
@@ -21,14 +22,17 @@ struct File {
 nlohmann::json failure(const std::string& error) {
     return {{"ok", false}, {"error", error}, {"logs", nlohmann::json::array()}, {"replacement", nullptr}};
 }
+nlohmann::json capacity_failure(const std::string& error) {
+    auto result = failure(error); result["error_kind"] = "capacity"; return result;
+}
 nlohmann::json execute(const nlohmann::json& request) {
     File input, output;
-    if (input.fd < 0 || output.fd < 0) return failure("cannot create worker files");
+    if (input.fd < 0 || output.fd < 0) return capacity_failure("cannot create worker files");
     const auto body = request.dump();
     std::size_t offset = 0;
     while (offset < body.size()) {
         const auto n = write(input.fd, body.data() + offset, body.size() - offset);
-        if (n <= 0) return failure("cannot write worker input");
+        if (n <= 0) return capacity_failure("cannot write worker input");
         offset += static_cast<std::size_t>(n);
     }
     lseek(input.fd, 0, SEEK_SET);
@@ -50,7 +54,7 @@ nlohmann::json execute(const nlohmann::json& request) {
     const int spawned = posix_spawn(&pid, SPIDER_PYTHON, &actions, &attributes, argv, env);
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attributes);
-    if (spawned != 0) return failure("cannot start backend Python");
+    if (spawned != 0) return capacity_failure("cannot start backend Python");
     const auto deadline = std::chrono::steady_clock::now() +
         std::chrono::milliseconds(std::clamp(request.value("timeout_ms", 3000), 1, 3000));
     int status = 0;
@@ -58,7 +62,7 @@ nlohmann::json execute(const nlohmann::json& request) {
     for (;;) {
         const auto waited = waitpid(pid, &status, WNOHANG);
         if (waited == pid) break;
-        if (waited < 0 && errno != EINTR) { kill(-pid, SIGKILL); return failure("cannot wait for Python worker"); }
+        if (waited < 0 && errno != EINTR) { kill(-pid, SIGKILL); return capacity_failure("cannot wait for Python worker"); }
         if (std::chrono::steady_clock::now() >= deadline) { timeout = true; kill(-pid, SIGKILL); waitpid(pid, &status, 0); break; }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -75,6 +79,15 @@ nlohmann::json execute(const nlohmann::json& request) {
     if (!parsed.is_object() || !parsed.contains("ok") || !parsed["ok"].is_boolean()) return failure("invalid worker response");
     return parsed;
 }
+}
+Inspection::Inspection(std::filesystem::path collection_root) : collection(std::move(collection_root)) {
+    next_notification_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count() * 1000ULL;
+    const auto root = std::filesystem::path(collection.status().at("directory").get<std::string>());
+    const char* configured = std::getenv("SPIDER_STORAGE_DIR");
+    storage_root_ = configured ? std::filesystem::path(configured) :
+        root.parent_path() / (root.filename().string() + "-inspection-storage");
+    storage_root_ = std::filesystem::absolute(storage_root_);
 }
 nlohmann::json Inspection::configure(const nlohmann::json& request) {
     if (request.contains("operation")) {
@@ -96,6 +109,22 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             const auto name = request.at("name").get<std::string>();
             const auto scope = request.value("scope", "rules");
             const auto filter = request.value("filter", "");
+            const auto instancing = request.value("instancing", "message");
+            const auto endpoint = request.value("endpoint", "destination");
+            for (const auto* field : {"timeout_ms", "error_limit", "max_instances", "idle_seconds"}) {
+                if (request.contains(field) && (!request[field].is_number_integer() ||
+                    request[field] < 0 || request[field] > 86400))
+                    throw std::invalid_argument("Runtime limits must be bounded integers");
+            }
+            const auto timeout = request.value("timeout_ms", 1000);
+            const auto error_limit = request.value("error_limit", 3);
+            const auto max_instances = request.value("max_instances", 128);
+            const auto idle_seconds = request.value("idle_seconds", 1800);
+            if ((instancing != "message" && instancing != "flow" && instancing != "endpoint") ||
+                (endpoint != "source" && endpoint != "destination") || timeout < 50 || timeout > 3000 ||
+                error_limit < 1 || error_limit > 100 || max_instances < 1 || max_instances > 1024 ||
+                idle_seconds < 1 || idle_seconds > 86400)
+                throw std::invalid_argument("Invalid instance mode or runtime limits");
             if (source.size() > 65536 || name.empty() || name.size() > 200 ||
                 (scope != "all" && scope != "rules")) throw std::invalid_argument("Invalid source, name or scope");
             std::string error;
@@ -108,11 +137,17 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
                 next.push_back({{"id", "script-" + std::to_string(++next_script_id_)},
                     {"name", name}, {"script", source}, {"scope", scope}, {"filter", filter},
                     {"enabled", false}, {"version", 1}, {"runs", 0}, {"errors", 0}, {"last_run_ms", nullptr}});
+                item = std::prev(next.end());
             } else {
                 (*item)["name"] = name; (*item)["script"] = source;
                 (*item)["scope"] = scope; (*item)["filter"] = filter;
                 (*item)["version"] = item->value("version", 0) + 1;
             }
+            (*item)["instancing"] = instancing; (*item)["endpoint"] = endpoint;
+            (*item)["timeout_ms"] = timeout; (*item)["error_limit"] = error_limit;
+            (*item)["max_instances"] = max_instances; (*item)["idle_seconds"] = idle_seconds;
+            (*item)["suspended"] = false; (*item)["suspension_reason"] = "";
+            (*item)["consecutive_errors"] = 0; (*item)["consecutive_slow"] = 0;
         } else if (operation == "reorder") {
             const auto ids = request.at("ids").get<std::vector<std::string>>();
             if (ids.size() != next.size()) throw std::invalid_argument("Incomplete order");
@@ -133,7 +168,19 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
                     if (!validation.value("ok", false)) throw std::invalid_argument(validation.value("error", "Validation failed"));
                 }
                 (*item)["enabled"] = enabled;
+                (*item)["suspended"] = false; (*item)["suspension_reason"] = "";
+                (*item)["consecutive_errors"] = 0; (*item)["consecutive_slow"] = 0;
             } else throw std::invalid_argument("Unknown operation");
+        }
+        // Retire old runtime generations. In-flight work cannot publish state into a new version.
+        for (const auto& old : chain_) {
+            const auto key = old["id"].get<std::string>();
+            const auto live = std::find_if(next.begin(), next.end(), [&](const auto& entry) { return entry["id"] == key; });
+            if (live == next.end() || (*live)["version"] != old["version"] ||
+                (operation == "enable" && key == id)) {
+                if (runtimes_.contains(key)) runtimes_[key]->retired = true;
+                runtimes_.erase(key);
+            }
         }
         chain_ = std::move(next); chain_mode_ = true; ++revision_;
         lock.unlock();
@@ -154,11 +201,26 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
 }
 nlohmann::json Inspection::status() const {
     std::scoped_lock lock(mutex_);
+    auto chain = chain_;
+    for (auto& item : chain) {
+        const auto it = runtimes_.find(item["id"].get<std::string>());
+        if (it != runtimes_.end()) {
+            std::unique_lock serial(it->second->serial, std::try_to_lock);
+            if (serial) expire_instances(*it->second, item.value("idle_seconds", 1800));
+        }
+        item["instances"] = it == runtimes_.end() ? 0U : it->second->instances.load();
+        item["state_bytes"] = it == runtimes_.end() ? 0ULL : it->second->state_bytes.load();
+        item["waiting"] = it == runtimes_.end() ? 0U : it->second->waiting.load();
+        item["executing"] = it == runtimes_.end() ? 0U : it->second->active.load();
+        item["rejected"] = it == runtimes_.end() ? 0ULL : it->second->rejected.load();
+    }
     return {{"script", chain_mode_ ? "" : source_}, {"scope", chain_mode_ ? "chain" : scope_},
             {"enabled", chain_mode_ ? std::any_of(chain_.begin(), chain_.end(),
                 [](const auto& item) { return item.value("enabled", false); }) : enabled_}, {"revision", revision_},
             {"runs", runs_}, {"errors", errors_}, {"running", running_.load()}, {"recent", recent_},
-            {"chain", chain_}, {"collection", collection.status()}};
+            {"chain", chain}, {"notifications", notifications_},
+            {"storage", {{"directory", storage_root_.string()}, {"quota_bytes", 16 * 1024 * 1024}}},
+            {"collection", collection.status()}};
 }
 nlohmann::json Inspection::language(nlohmann::json request) {
     if (!request.contains("script") || !request["script"].is_string() ||
@@ -178,7 +240,8 @@ nlohmann::json Inspection::language(nlohmann::json request) {
 nlohmann::json Inspection::run(nlohmann::json request) {
     if (!request.contains("script") || !request["script"].is_string() || request["script"].get_ref<const std::string&>().size() > 65536)
         return failure("script must be a string up to 64 KiB");
-    if (running_.fetch_add(1) >= 4) { --running_; return failure("backend inspection busy (4 workers)"); }
+    if (running_.fetch_add(1) >= 4) { --running_; return capacity_failure("backend inspection busy (4 workers)"); }
+    request["storage_directory"] = storage_root_.string();
     nlohmann::json result;
     try { result = execute(request); } catch (const std::exception& e) { result = failure(e.what()); }
     --running_;
@@ -189,11 +252,140 @@ nlohmann::json Inspection::run(nlohmann::json request) {
     if (!result.value("ok", false)) ++errors_;
     auto summary = result;
     summary.erase("replacement");
+    summary.erase("instance_state");
     recent_.push_back(std::move(summary));
     if (recent_.size() > 20) recent_.erase(recent_.begin());
     return result;
 }
+void Inspection::expire_instances(Runtime& runtime, int idle_seconds) const {
+    const auto cutoff = std::chrono::steady_clock::now() - std::chrono::seconds(idle_seconds);
+    for (auto it = runtime.states.begin(); it != runtime.states.end();) {
+        if (it->second.used < cutoff) it = runtime.states.erase(it); else ++it;
+    }
+    std::uint64_t bytes = 0;
+    for (const auto& [key, instance] : runtime.states) bytes += instance.bytes;
+    runtime.instances = static_cast<unsigned>(runtime.states.size()); runtime.state_bytes = bytes;
+}
+
+void Inspection::clear_flow(const std::string& id) {
+    if (id.empty()) return;
+    std::scoped_lock lock(mutex_);
+    closed_flows_.insert(id);
+    if (closed_flows_.size() > 10000) closed_flows_.erase(closed_flows_.begin());
+    for (auto& [key, runtime] : runtimes_) {
+        std::unique_lock serial(runtime->serial, std::try_to_lock);
+        if (!serial) continue; // In-flight runs check closed_flows_ before committing.
+        runtime->states.erase("flow:" + id);
+        expire_instances(*runtime, 86400);
+    }
+}
+
+nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohmann::json& event,
+                                       const nlohmann::json& enrichments, int remaining) {
+    const auto id = item.at("id").get<std::string>();
+    const auto mode = item.value("instancing", "message");
+    std::string key;
+    if (mode == "flow") {
+        const auto session = event.value("id", "");
+        if (session.empty()) return capacity_failure("Flow instance requires a session id");
+        key = "flow:" + session;
+    } else if (mode == "endpoint") {
+        const auto endpoint = SessionFilter::endpoint_key(event, item.value("endpoint", "destination") == "source");
+        if (!endpoint) return capacity_failure("Endpoint instance requires a parseable session endpoint");
+        key = "endpoint:" + *endpoint;
+    }
+    std::shared_ptr<Runtime> runtime;
+    {
+        std::scoped_lock lock(mutex_);
+        const auto live = std::find_if(chain_.begin(), chain_.end(), [&](const auto& entry) { return entry["id"] == id; });
+        if (live == chain_.end() || !live->value("enabled", false) || (*live)["version"] != item["version"])
+            return {{"ok", true}, {"replacement", nullptr}, {"logs", nlohmann::json::array()}, {"skipped", true}};
+        if (!runtimes_.contains(id)) runtimes_[id] = std::make_shared<Runtime>();
+        runtime = runtimes_[id];
+    }
+    if (runtime->waiting.fetch_add(1) >= 8) {
+        --runtime->waiting; ++runtime->rejected;
+        return capacity_failure("Deployment queue full (8 waiters); original payload retained");
+    }
+    const auto started_wait = std::chrono::steady_clock::now();
+    std::unique_lock serial(runtime->serial, std::defer_lock);
+    const bool acquired = serial.try_lock_for(std::chrono::milliseconds(std::min(remaining, 250)));
+    --runtime->waiting;
+    if (!acquired) { ++runtime->rejected; return capacity_failure("Deployment queue wait exceeded 250 ms"); }
+    if (runtime->retired) return capacity_failure("Deployment generation retired");
+    remaining -= static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started_wait).count());
+    if (remaining <= 0) return capacity_failure("Inspection chain budget exhausted while waiting");
+    expire_instances(*runtime, item.value("idle_seconds", 1800));
+    if (!key.empty() && !runtime->states.contains(key) && runtime->states.size() >= item.value("max_instances", 128U)) {
+        ++runtime->rejected; return capacity_failure("Deployment instance limit reached");
+    }
+    const auto previous = key.empty() || !runtime->states.contains(key) ? nlohmann::json::object() : runtime->states.at(key).state;
+    const auto budget = std::min(remaining, item.value("timeout_ms", 1000));
+    const auto started = std::chrono::steady_clock::now();
+    runtime->active = 1;
+    auto result = run({{"script", item["script"]}, {"event", event}, {"enrichments", enrichments},
+        {"script_id", id}, {"timeout_ms", budget}, {"instance_state", previous},
+        {"instance", {{"mode", mode}, {"key", key}, {"deployment_id", id}, {"version", item["version"]}}}});
+    runtime->active = 0;
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    result["duration_ms"] = elapsed;
+    if (result.value("ok", false)) {
+        const auto next = result.value("instance_state", nlohmann::json::object());
+        const auto bytes = next.dump().size();
+        if (!next.is_object() || bytes > 65536 ||
+            (!key.empty() && runtime->state_bytes.load() - (runtime->states.contains(key) ? runtime->states.at(key).bytes : 0) + bytes > 4 * 1024 * 1024))
+            result = failure("Instance state exceeds JSON object / 64 KiB / 4 MiB deployment quota");
+        else if (!key.empty() && !runtime->retired) {
+            std::scoped_lock lock(mutex_);
+            if (mode != "flow" || !closed_flows_.contains(event.value("id", "")))
+                runtime->states[key] = Instance{next, std::chrono::steady_clock::now(), bytes};
+        }
+    }
+    result.erase("instance_state");
+    // Also discard a previous state if a stop arrived while the worker was executing.
+    {
+        std::scoped_lock lock(mutex_);
+        if (mode == "flow" && closed_flows_.contains(event.value("id", ""))) runtime->states.erase(key);
+    }
+    expire_instances(*runtime, item.value("idle_seconds", 1800));
+    if (!result.value("ok", false) && budget < item.value("timeout_ms", 1000) && elapsed >= budget)
+        result["error_kind"] = "capacity";
+    const auto kind = result.value("error_kind", "");
+    const bool infrastructure = kind == "capacity" || kind == "storage_busy";
+    if (infrastructure) ++runtime->rejected;
+    if (!infrastructure) {
+        runtime->consecutive_errors = result.value("ok", false) ? 0 : runtime->consecutive_errors + 1;
+        // Do not blame this deployment for a budget shortened by earlier scripts in the chain.
+        runtime->consecutive_slow = budget == item.value("timeout_ms", 1000) && elapsed >= budget * 8 / 10
+            ? runtime->consecutive_slow + 1 : 0;
+    }
+    {
+        std::scoped_lock lock(mutex_);
+        for (auto& live : chain_) if (live["id"] == id && live["version"] == item["version"] && !runtime->retired) {
+            live["last_duration_ms"] = elapsed;
+            live["consecutive_errors"] = runtime->consecutive_errors;
+            live["consecutive_slow"] = runtime->consecutive_slow;
+            if (runtime->consecutive_errors >= item.value("error_limit", 3U) || runtime->consecutive_slow >= 5) {
+                const auto reason = runtime->consecutive_errors >= item.value("error_limit", 3U)
+                    ? "Repeated errors/timeouts; inspect output before resuming" : "Five consecutive runs used at least 80% of the wall-clock budget";
+                live["enabled"] = false; live["suspended"] = true; live["suspension_reason"] = reason;
+                runtime->retired = true;
+                notifications_.push_back({{"id", ++next_notification_}, {"script_id", id},
+                    {"name", live["name"]}, {"version", item["version"]}, {"reason", reason}});
+                if (notifications_.size() > 20) notifications_.erase(notifications_.begin());
+                ++revision_;
+            }
+        }
+    }
+    return result;
+}
+
 nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann::json& enrichments) {
+    if (event.value("action", "") == "connection-stop") { clear_flow(event.value("id", "")); return nullptr; }
+    if (event.value("action", "") == "connection-start") {
+        std::scoped_lock lock(mutex_); closed_flows_.erase(event.value("id", "")); return nullptr;
+    }
     std::string script;
     nlohmann::json chain;
     { std::scoped_lock lock(mutex_);
@@ -225,14 +417,16 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             }
             const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                 deadline - std::chrono::steady_clock::now()).count();
-            result = remaining <= 0 ? failure("Inspection chain exceeded its 3 s budget") :
-                run({{"script", item["script"]}, {"event", current}, {"enrichments", annotations},
-                     {"script_id", item["id"]}, {"timeout_ms", remaining}});
+            result = remaining <= 0 ? capacity_failure("Inspection chain exceeded its 3 s budget") :
+                run_instance(item, current, annotations, static_cast<int>(remaining));
+            if (result.value("skipped", false)) continue;
             {
                 std::scoped_lock lock(mutex_);
                 for (auto& live : chain_) if (live["id"] == item["id"] && live["version"] == item["version"]) {
                     live["runs"] = live.value("runs", 0ULL) + 1;
-                    live["errors"] = live.value("errors", 0ULL) + (result.value("ok", false) ? 0 : 1);
+                    const auto kind = result.value("error_kind", "");
+                    live["errors"] = live.value("errors", 0ULL) +
+                        (!result.value("ok", false) && kind != "capacity" && kind != "storage_busy" ? 1 : 0);
                     live["last_run_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
                     live["last_result"] = result;
@@ -259,6 +453,8 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         if (!result.is_null()) { result["replacement"] = replacement; result["steps"] = steps; }
         return result;
     }
-    return run({{"script", script}, {"event", event}, {"enrichments", enrichments}});
+    auto result = run({{"script", script}, {"event", event}, {"enrichments", enrichments}});
+    result.erase("instance_state");
+    return result;
 }
 }

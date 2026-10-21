@@ -204,6 +204,14 @@ bool protocol_matches(const std::string& filter, const Connection& connection) {
 
 } // namespace
 
+std::optional<std::string> SessionFilter::endpoint_key(const nlohmann::json& event, bool source) {
+    const auto connection = connection_from(event);
+    if (!connection) return std::nullopt;
+    const auto& endpoint = source ? connection->source : connection->destination;
+    if (endpoint.host.empty()) return std::nullopt;
+    return source ? endpoint.host : endpoint.protocol + "://[" + endpoint.host + "]:" + std::to_string(endpoint.port);
+}
+
 std::optional<SessionFilter> SessionFilter::compile(const std::string& expression,
                                                     std::string& error) {
     error.clear();

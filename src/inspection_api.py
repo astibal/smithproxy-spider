@@ -1,11 +1,143 @@
 """Typed inspection views. Field metadata generates the browser reference and completion."""
 from __future__ import annotations
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, is_dataclass
+from typing import Any
 
 
-def documented(description, example, availability='Always available for a content callback.'):
+def documented(description, example, availability='Always available for a content callback.', *, access='read-only snapshot'):
     return field(metadata={'description': description, 'example': example,
-                           'availability': availability, 'access': 'read-only snapshot'})
+                           'availability': availability, 'access': access})
+
+
+def api_method(parameters, returns, description, example):
+    def decorate(method):
+        method.__api_doc__ = {'name': method.__name__, 'type': returns, 'parameters': parameters,
+            'description': description, 'example': example, 'availability': 'Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.',
+            'access': 'shared storage operation'}
+        return method
+    return decorate
+
+
+class StorageBusy(RuntimeError):
+    """Storage contention/infrastructure failure, not evidence of a faulty script."""
+
+
+class StorageNamespace:
+    """Explicit shared namespace. Each operation is atomic; a sequence of operations is not a transaction."""
+    def __init__(self, storage, name):
+        if not isinstance(name, str) or not 1 <= len(name.encode()) <= 128 or '\x00' in name:
+            raise ValueError('namespace must be 1–128 UTF-8 bytes without NUL')
+        self._storage, self._name = storage, name
+
+    def _operation(self, operation, key, value=None):
+        import json
+        import math
+        import sqlite3
+        from contextlib import closing
+        if not isinstance(key, str) or not 1 <= len(key.encode()) <= 256 or '\x00' in key:
+            raise ValueError('key must be 1–256 UTF-8 bytes without NUL')
+        def encode(item):
+            encoded = json.dumps(item, allow_nan=False, ensure_ascii=False, separators=(',', ':'))
+            if len(encoded.encode()) > 65536:
+                raise ValueError('storage value exceeds 64 KiB')
+            return encoded
+        def increment(previous):
+            if type(previous) not in (int, float) or type(value) not in (int, float):
+                raise TypeError('increment requires numeric values, not bool')
+            result = previous + value
+            if isinstance(result, float) and not math.isfinite(result):
+                raise ValueError('increment requires finite numbers')
+            return result
+        if self._storage._directory is None:
+            values = self._storage._memory.setdefault(self._name, {})
+            if operation == 'get': return json.loads(values[key]) if key in values else value
+            if operation == 'delete': return values.pop(key, None) is not None
+            result = increment(json.loads(values.get(key, '0'))) if operation == 'increment' else value
+            values[key] = encode(result)
+            return result if operation == 'increment' else None
+        try:
+            with closing(self._storage._connect()) as connection:
+                connection.execute('BEGIN IMMEDIATE' if operation != 'get' else 'BEGIN')
+                row = connection.execute('SELECT value FROM kv WHERE namespace=? AND key=?', (self._name, key)).fetchone()
+                if operation == 'get':
+                    return json.loads(row[0]) if row else value
+                if operation == 'delete':
+                    connection.execute('DELETE FROM kv WHERE namespace=? AND key=?', (self._name, key))
+                    connection.commit()
+                    return row is not None
+                result = increment(json.loads(row[0]) if row else 0) if operation == 'increment' else value
+                encoded = encode(result)
+                connection.execute('INSERT INTO kv(namespace,key,value) VALUES(?,?,?) ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value',
+                                   (self._name, key, encoded))
+                count, size = connection.execute('SELECT COUNT(*), COALESCE(SUM(length(CAST(value AS BLOB))+length(CAST(key AS BLOB))+length(CAST(namespace AS BLOB))),0) FROM kv').fetchone()
+                if count > 4096 or size > 16 * 1024 * 1024:
+                    raise ValueError('shared storage quota exceeded (4096 keys / 16 MiB)')
+                connection.commit()
+                return result if operation == 'increment' else None
+        except (sqlite3.OperationalError, OSError) as error:
+            raise StorageBusy(str(error)) from error
+
+    @api_method('key: str, default: Any = None', 'Any', 'Read a JSON value; absent keys return default.',
+        'shared = api.storage.namespace("stats")\napi.print(shared.get("responses", 0))')
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._operation('get', key, default)
+
+    @api_method('key: str, value: Any', 'None', 'Atomically replace one JSON value. Independent of script success.',
+        'shared = api.storage.namespace("example")\nshared.set("last_status", {"code": 200})')
+    def set(self, key: str, value: Any) -> None:
+        self._operation('set', key, value)
+
+    @api_method('key: str', 'bool', 'Atomically remove a key. Returns whether it existed.',
+        'shared = api.storage.namespace("example")\napi.print(shared.delete("last_status"))')
+    def delete(self, key: str) -> bool:
+        return self._operation('delete', key)
+
+    @api_method('key: str, amount: int | float = 1', 'int | float', 'Atomic read-modify-write counter; missing key starts at zero. Use instead of get()+set() when concurrent scripts update counters.',
+        'shared = api.storage.namespace("stats")\napi.print(shared.increment("responses", 1))')
+    def increment(self, key: str, amount: int | float = 1) -> int | float:
+        return self._operation('increment', key, amount)
+
+
+class SharedStorage:
+    """Backend-wide persistent JSON storage shared across scripts. Not a security boundary between trusted scripts."""
+    def __init__(self, directory=None):
+        self._directory, self._memory = directory, {}
+
+    def _connect(self):
+        import os
+        import sqlite3
+        import stat
+        os.makedirs(self._directory, mode=0o700, exist_ok=True)
+        if os.path.islink(self._directory):
+            raise ValueError('storage directory must not be a symlink')
+        filename = os.path.join(self._directory, 'shared.sqlite3')
+        fd = os.open(filename, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode): raise ValueError('storage must be a regular file')
+        finally:
+            os.close(fd)
+        connection = sqlite3.connect(filename, timeout=0.1)
+        try:
+            connection.execute('PRAGMA max_page_count=8192')
+            connection.execute('CREATE TABLE IF NOT EXISTS kv(namespace TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(namespace,key))')
+            return connection
+        except BaseException:
+            connection.close()
+            raise
+
+    @api_method('name: str', 'StorageNamespace', 'Select an explicitly named shared namespace. Names are database keys, never file paths.',
+        'shared = api.storage.namespace("inspection-stats")\napi.print(shared.increment("callbacks"))')
+    def namespace(self, name: str) -> StorageNamespace:
+        return StorageNamespace(self, name)
+
+
+@dataclass(frozen=True)
+class InstanceContext:
+    """Identity of the current logical instance, not a persistent Python process."""
+    mode: str = documented('message, flow or endpoint; ad-hoc preview uses message.', 'api.print(api.instance.mode)')
+    key: str = documented('Selected flow/endpoint key; empty for message mode.', 'api.print(api.instance.key)')
+    deployment_id: str = documented('Backend deployment id; empty for ad-hoc runs.', 'api.print(api.instance.deployment_id)')
+    version: int = documented('Deployed version; zero for ad-hoc runs. New versions have new state.', 'api.print(api.instance.version)')
 
 
 @dataclass(frozen=True)
@@ -114,11 +246,16 @@ def make_http2(info, payload, enrichments):
 
 @dataclass(frozen=True)
 class InspectionViews:
-    """Typed API preview v0.2. Views do not mutate outgoing traffic; legacy api.bytes/print/hexdump remain supported."""
+    """Typed API v0.3. Protocol views are read-only; state and shared storage are explicitly writable."""
     message: Message = documented('Current content fragment.', 'api.print(api.message.size)')
     metadata: ContentMetadata = documented('Metadata of the current content callback.', 'api.print(api.metadata.side)')
     http1: Http1 = documented('HTTP/1 head supplied by backend enrichment.', 'if api.http1.available:\n    api.print(api.http1.target)')
     http2: Http2 = documented('Read-only HTTP/2 frame slices and decoded HPACK blocks.', 'for block in api.http2.header_blocks:\n    for header in block.headers:\n        api.print(block.stream_id, header.name, header.value)')
+    state: dict[str, Any] = documented('JSON object local to this logical instance. Committed after success, discarded on error; 64 KiB maximum. No persistent Python globals.',
+        'api.state["seen"] = api.state.get("seen", 0) + 1\napi.print(api.state["seen"])', access='mutable instance state')
+    storage: SharedStorage = documented('Persistent shared JSON namespaces across scripts and versions. Writes commit per operation, even if the script later fails.',
+        'shared = api.storage.namespace("stats")\napi.print(shared.increment("callbacks"))', access='shared persistent storage')
+    instance: InstanceContext = documented('Identity and lifecycle mode of this invocation.', 'api.print(api.instance.mode, api.instance.key, api.instance.version)')
 
 
 def make_views(event, payload, enrichments):
@@ -132,13 +269,16 @@ def make_views(event, payload, enrichments):
         ContentMetadata(event.get('id', ''), info.get('side', ''), info.get('payload_layer')),
         Http1(bool(head), head.get('method'), head.get('target'), head.get('status'),
               tuple(Header(h['name'], h['value']) for h in head.get('headers', []))),
-        make_http2(info, payload, enrichments))
+        make_http2(info, payload, enrichments), {}, SharedStorage(), InstanceContext('message', '', '', 0))
 
 
 def api_schema():
     """Generate reference directly from runtime dataclasses, types and field comments."""
-    types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock]
-    return {'version': '0.2', 'root': 'InspectionViews', 'types': {
+    types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock,
+             InstanceContext, SharedStorage, StorageNamespace]
+    return {'version': '0.3', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),
-             **dict(f.metadata)} for f in fields(cls)]} for cls in types}}
+             **dict(f.metadata)} for f in (fields(cls) if is_dataclass(cls) else ())],
+             'methods': [method.__api_doc__ for method in vars(cls).values() if hasattr(method, '__api_doc__')]}
+             for cls in types}}

@@ -9,7 +9,7 @@ import traceback
 # Trusted administrator scripts, isolated for failures, not a security sandbox.
 resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
-resource.setrlimit(resource.RLIMIT_FSIZE, (2 * 1024 * 1024,) * 2)
+resource.setrlimit(resource.RLIMIT_FSIZE, (32 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 request = json.load(sys.stdin)
 if 'language_action' in request:
@@ -48,6 +48,11 @@ class Api:
         self.metadata = views.metadata
         self.http1 = views.http1
         self.http2 = views.http2
+        self.state = request.get('instance_state', {})
+        self.storage = SharedStorage(request.get('storage_directory'))
+        identity = request.get('instance', {})
+        self.instance = InstanceContext(identity.get('mode', 'message'), identity.get('key', ''),
+                                        identity.get('deployment_id', ''), identity.get('version', 0))
         starts, ends = info.get('L7_payload_start', []), info.get('L7_payload_end', [])
         self.l7_state = 'unavailable'
         self.l7_ranges = []
@@ -86,15 +91,22 @@ try:
         source = 'def __spider_script(api):\n' + textwrap.indent(request['script'] or 'pass', '    ')
         namespace = {}
         exec(compile(source, '<inspection>', 'exec'), namespace)
-        result = None if request.get('validate_only') else namespace['__spider_script'](Api(request))
+        api = None if request.get('validate_only') else Api(request)
+        result = None if api is None else namespace['__spider_script'](api)
         if isinstance(result, str):
             result = result.encode()
         if result is not None and not isinstance(result, (bytes, bytearray, memoryview)):
             raise TypeError('script must return None, str, bytes, bytearray, or memoryview')
         if result is not None and len(result) > 1024 * 1024:
             raise ValueError('replacement exceeds 1 MiB')
+        if api is not None:
+            if not isinstance(api.state, dict): raise TypeError('api.state must remain a JSON object')
+            encoded_state = json.dumps(api.state, allow_nan=False, ensure_ascii=False)
+            if len(encoded_state.encode()) > 65536: raise ValueError('api.state exceeds 64 KiB')
+            response['instance_state'] = json.loads(encoded_state)
         response.update(ok=True, replacement=None if result is None else base64.b64encode(result).decode())
 except BaseException:
+    if isinstance(sys.exc_info()[1], StorageBusy): response['error_kind'] = 'storage_busy'
     response['error'] = traceback.format_exc(limit=8)[-12000:]
 response['logs'] = output.text.splitlines()
 json.dump(response, sys.stdout)

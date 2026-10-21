@@ -7,7 +7,7 @@ import sys
 module = runpy.run_path(sys.argv[1])
 schema = module['api_schema']()
 for entry in schema['types'].values():
-    for field in entry['fields']:
+    for field in entry['fields'] + entry.get('methods', []):
         assert field['description'] and field['example'] and field['availability']
 pathlib.Path(sys.argv[2]).write_text(
     '#pragma once\ninline constexpr const char* inspection_schema_json = R"SCHEMA('

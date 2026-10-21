@@ -19,7 +19,7 @@
     if (!schema) return;
     const query = document.getElementById('api-search').value.toLowerCase();
     for (const [type, definition] of Object.entries(schema.types)) {
-      const matching = definition.fields.filter(f =>
+      const matching = [...definition.fields, ...(definition.methods || [])].filter(f =>
         (type + ' ' + f.name + ' ' + f.description).toLowerCase().includes(query));
       if (!matching.length) continue;
       const section = document.createElement('section');
@@ -29,7 +29,7 @@
       for (const field of matching) {
         const row = document.createElement('details');
         const summary = document.createElement('summary');
-        summary.textContent = field.name + ': ' + field.type;
+        summary.textContent = field.name + (field.parameters !== undefined ? '(' + field.parameters + ')' : '') + ': ' + field.type;
         const desc = document.createElement('p');
         desc.textContent = field.description + ' ' + field.availability + ' Access: ' + field.access + '.';
         const example = document.createElement('pre'); example.textContent = field.example;

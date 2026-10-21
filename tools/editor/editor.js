@@ -91,17 +91,20 @@ function completeApi(context) {
   const prefix = parts.pop();
   let type = schema.root;
   for (const part of parts.slice(1)) {
-    const field = schema.types[type]?.fields.find(field => field.name === part.replace(/\[\d+\]$/, ''));
+    const definition = schema.types[type];
+    const field = [...(definition?.fields || []), ...(definition?.methods || [])].find(field => field.name === part.replace(/\[\d+\]$/, ''));
     if (!field) return null;
     type = field.type;
     if (/\[\d+\]$/.test(part)) type = /^(?:tuple|list)\[([^,\]]+)/.exec(type)?.[1];
   }
-  const fields = schema.types[type]?.fields;
-  if (!fields) return null;
+  const definition = schema.types[type];
+  if (!definition) return null;
+  const fields = [...definition.fields, ...(definition.methods || [])];
   return {
     from: context.pos - prefix.length,
     options: fields.map(field => ({
-      label: field.name, type: 'property', detail: field.type,
+      label: field.name, type: field.parameters === undefined ? 'property' : 'method',
+      detail: field.parameters === undefined ? field.type : `(${field.parameters}) → ${field.type}`,
       info: [field.description, field.availability, field.access,
         field.example ? `Example:\n${field.example}` : ''].filter(Boolean).join('\n\n'),
     })),

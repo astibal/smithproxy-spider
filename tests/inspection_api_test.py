@@ -75,7 +75,7 @@ class Http2Tests(unittest.TestCase):
             views = make_views(event, data, enrichments)
             api = SimpleNamespace(**vars(views), print=lambda *args: None)
             for name, definition in api_schema()['types'].items():
-                for field in definition['fields']:
+                for field in definition['fields'] + definition.get('methods', []):
                     with self.subTest(type=name, field=field['name'], size=len(data)):
                         exec(compile(field['example'], '<api-example>', 'exec'), {'api': api})
 

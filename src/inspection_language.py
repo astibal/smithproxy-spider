@@ -10,6 +10,9 @@ def language_prelude():
             lines += ['    @property', f'    def {field["name"]}(self) -> {field["type"]}:',
                 '        ' + json.dumps(field['description'] + '\n\n' + field['availability'] +
                     '\n\nExample:\n' + field['example']), '        ...']
+        for method in definition.get('methods', []):
+            lines += [f'    def {method["name"]}(self, {method["parameters"]}) -> {method["type"]}:',
+                      '        ' + json.dumps(method['description'] + '\n\nExample:\n' + method['example']), '        ...']
     lines += ['class SpiderApi(InspectionViews):',
         '    bytes: bytes', '    text: str', '    side: str', '    session_id: str',
         '    session_label: str', '    event: dict[str, Any]', '    info: dict[str, Any]',
