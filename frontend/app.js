@@ -1615,8 +1615,27 @@ function appendAnnotatedPayload(target, bytes, annotations, mode, segments = nul
     }
   };
   if (mode !== 'hex') {
-    appendRange(0, bytes.length, (start, end) =>
-      new TextDecoder().decode(bytes.subarray(start, end)));
+    let run = [];
+    let runAnnotation = null;
+    let runBinary = false;
+    const flush = () => {
+      if (!run.length) return;
+      const text = runBinary
+        ? `[${run.map(value => value.toString(16).padStart(2, '0')).join(' ')}]`
+        : new TextDecoder().decode(Uint8Array.from(run));
+      appendRun(text, runAnnotation);
+      run = [];
+    };
+    for (let offset = 0; offset < bytes.length; offset += 1) {
+      const value = bytes[offset];
+      const annotation = annotationAt(offset);
+      const binary = !((value >= 32 && value < 127) || value === 9 || value === 10 || value === 13);
+      if (run.length && (annotation !== runAnnotation || binary !== runBinary)) flush();
+      runAnnotation = annotation;
+      runBinary = binary;
+      run.push(value);
+    }
+    flush();
     return true;
   }
   for (let offset = 0; offset < bytes.length; offset += 16) {
@@ -3587,8 +3606,8 @@ function renderFlowTab(scopeKey) {
           const annotations = followed.annotations && payloadScope === 'wire'
             ? contentAnnotations(record, shown.length) : [];
           if (!appendAnnotatedPayload(content, shown, annotations, payloadMode)) {
-            content.textContent = payloadMode === 'hex'
-              ? encodeHex(shown) : new TextDecoder().decode(shown);
+            if (payloadMode === 'hex') content.textContent = encodeHex(shown);
+            else appendMixedAscii(content, shown);
           }
         }
         more.hidden = shown.length >= bytes.length;

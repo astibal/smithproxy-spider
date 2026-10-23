@@ -146,6 +146,29 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     });
     assert.deepEqual(palette.flow, palette.lane);
     assert.deepEqual(palette.rail, palette.bytes);
+    const annotatedBinary = await page.evaluate(() => {
+      const fixture = document.createElement('pre');
+      appendAnnotatedPayload(fixture, Uint8Array.from([0, 1, 65, 10, 255]),
+        [{start: 0, end: 5, kind: 'h2.frame'}], 'ascii');
+      const result = {text: fixture.textContent, replacements: fixture.textContent.includes('\ufffd'),
+        spans: fixture.querySelectorAll('.annotation-bytes').length};
+      fixture.remove();
+      return result;
+    });
+    assert.deepEqual(annotatedBinary, {text: '[00 01]A\n[ff]', replacements: false, spans: 3});
+    const chunkControl = await page.evaluate(() => {
+      const fixture = document.createElement('details');
+      fixture.className = 'flow-chunk';
+      fixture.innerHTML = '<summary><button class="payload-fold">▾</button><b>L</b><small>r1 <span class="flow-payload-badges">NO BODY</span></small><button class="flow-chunk-expand">⤢</button></summary>';
+      document.body.append(fixture);
+      const button = fixture.querySelector('.flow-chunk-expand').getBoundingClientRect();
+      const summary = fixture.querySelector('summary').getBoundingClientRect();
+      fixture.remove();
+      return {buttonWidth: button.width, buttonHeight: button.height, summaryHeight: summary.height};
+    });
+    assert.equal(chunkControl.buttonWidth, 26);
+    assert.equal(chunkControl.buttonHeight, 26);
+    assert(chunkControl.summaryHeight >= 38);
     const sidebarWidth = await page.locator('#sidebar').evaluate(element => element.getBoundingClientRect().width);
     const workspaceWidth = await page.locator('.workspace').evaluate(element => element.getBoundingClientRect().width);
     await page.locator('#sidebar-toggle').click();
