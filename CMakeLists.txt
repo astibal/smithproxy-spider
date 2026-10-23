@@ -77,6 +77,8 @@ if(BUILD_TESTING)
     add_test(NAME inspection_tests COMMAND inspection_tests)
     add_test(NAME inspection_api_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_api_test.py)
+    add_test(NAME inspection_parts_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_parts_test.py)
     add_test(NAME inspection_language_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_language_test.py)
     add_test(NAME inspection_storage_tests
