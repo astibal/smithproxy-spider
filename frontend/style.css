@@ -101,9 +101,9 @@ main{display:grid;flex:1;min-height:0;grid-template-columns:auto 7px minmax(0,1f
 }
 .flow-chunk > summary { padding-top: 8px; padding-bottom: 8px; }
 .flow-chunk > summary, .inline-enrichment-card > summary { cursor: default; }
-.flow-chunk > summary { grid-template-columns: 22px 28px 1fr auto; }
+.flow-chunk > summary { grid-template-columns: 22px 28px minmax(0,1fr) 28px; min-height: 38px; align-items: center; }
 .flow-chunk > summary::after, .inline-enrichment-card > summary::before { display: none; }
-.flow-chunk > summary > .flow-chunk-expand { grid-column: 4; }
+.flow-chunk > summary > .flow-chunk-expand { grid-column: 4; box-sizing: border-box; width: 26px; height: 26px; padding: 0; place-self: center end; }
 .payload-fold { flex: none; padding: 1px 4px; color: var(--muted); background: transparent; border: 0; cursor: pointer; }
 .payload-fold:focus-visible { outline: 1px solid var(--green); }
 .lane-card-head, .flow-stream-chunk > small { padding: 5px 6px; }
@@ -120,7 +120,7 @@ main{display:grid;flex:1;min-height:0;grid-template-columns:auto 7px minmax(0,1f
 .flow-stream-chunk > small .flow-payload-badges { display: flex; flex-wrap: wrap; max-width: 100%; }
 .flow-stream-chunk > small .enrichment-marker { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .flow-chunk > summary > small {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 5px 12px;
+  display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 5px 12px;
   color: var(--payload-head-text); font-size: 12px; font-weight: 600;
 }
 .flow-chunk > summary > small > br { display: none; }
