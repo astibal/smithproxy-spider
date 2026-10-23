@@ -5,7 +5,119 @@ import unittest
 from types import SimpleNamespace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
-from inspection_api import make_views, api_schema
+from inspection_api import make_views, api_schema, Message, Header, CommitException
+
+
+class WriteTests(unittest.TestCase):
+    request = b'POST /old HTTP/1.1\r\nHost: example.test\r\nContent-Length: 3\r\nX-A: one\r\nX-A: two\r\n\r\nabc'
+
+    def draft(self, data=None):
+        data = self.request if data is None else data
+        return Message(data, len(data)).snapshot()
+
+    def test_noop_and_independent_snapshots(self):
+        one, two = self.draft(), self.draft()
+        self.assertEqual(one.commit(), self.request)
+        one.http1.body = 'longer ž'.encode()
+        one.http1.target = '/new/path'
+        one.http1.set_header('X-A', 'replaced')
+        result = one.commit()
+        self.assertIn(b'Content-Length: 9\r\n', result)
+        self.assertIn(b'POST /new/path HTTP/1.1', result)
+        self.assertEqual(result.count(b'X-A:'), 1)
+        self.assertTrue(result.endswith('longer ž'.encode()))
+        self.assertEqual(two.commit(), self.request)
+        self.assertEqual(one.commit(), result)
+        self.assertIn(Header('Content-Length', '3'), one.http1.headers)  # commit does not mutate draft
+
+    def test_failure_retry_and_injection(self):
+        draft = self.draft()
+        draft.http1.set_header('X-Test', 'bad\r\nInjected: yes')
+        with self.assertRaises(CommitException): draft.commit()
+        self.assertEqual(self.draft().commit(), self.request)
+        draft.http1.set_header('X-Test', 'ok')
+        self.assertIn(b'X-Test: ok', draft.commit())
+        for target in ('/x\r\nBad: yes', '/white space', '', None, 42):
+            draft.http1.target = target
+            with self.subTest(target=target), self.assertRaises(CommitException): draft.commit()
+
+    def test_unsupported_edits_noop_preserved(self):
+        for raw in (b'', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n', self.request[:-1],
+                    self.request + self.request, b'HTTP/1.1 200 OK\r\n\r\nclose delimited',
+                    b'POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n',
+                    b'GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n',
+                    b'CONNECT x:443 HTTP/1.1\r\nHost: x\r\n\r\n',
+                    b'GET / HTTP/1.1\r\nConnection: keep-alive, upgrade\r\n\r\n'):
+            with self.subTest(raw=raw):
+                draft = self.draft(raw)
+                self.assertFalse(draft.http1.available)
+                self.assertEqual(draft.commit(), raw)
+                draft.http1.set_header('X-Test', 'edit')
+                with self.assertRaises(CommitException): draft.commit()
+
+    def test_length_management_and_duplicate_headers(self):
+        draft = self.draft()
+        draft.http1.remove_header('Content-Length')
+        draft.http1.body = b''
+        self.assertIn(b'Content-Length: 0', draft.commit())
+        draft.http1.headers += [Header('Set-Cookie', 'a=1'), Header('Set-Cookie', 'b=2')]
+        draft.http1.set_header('Content-Length', 'incorrect user value')
+        self.assertEqual(draft.commit().count(b'Set-Cookie:'), 2)
+        self.assertIn(b'Content-Length: 0', draft.commit())
+        draft = self.draft(b'GET / HTTP/1.1\r\nHost: x\r\n\r\n')
+        draft.http1.body = b'new'
+        self.assertIn(b'Content-Length: 3', draft.commit())
+
+    def test_response_and_bodyless_semantics(self):
+        draft = self.draft(b'HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc')
+        draft.http1.body = b'longer'
+        self.assertIn(b'Content-Length: 6', draft.commit())
+        for status, length in ((204, b''), (304, b'Content-Length: 999\r\n'), (100, b'')):
+            draft = self.draft(f'HTTP/1.1 {status} Status\r\n'.encode() + length + b'\r\n')
+            self.assertTrue(draft.http1.available)
+            draft.http1.set_header('X-Test', 'ok')
+            self.assertIn(b'X-Test: ok', draft.commit())
+            draft.http1.body = b'x'
+            with self.assertRaises(CommitException): draft.commit()
+
+    def test_reject_encoding_integrity_and_oversize(self):
+        for name in ('Content-Encoding', 'Digest', 'ETag', 'Content-Range'):
+            draft = self.draft(self.request.replace(b'Host:', f'{name}: value\r\nHost:'.encode()))
+            draft.http1.body = b'changed'
+            with self.subTest(name=name), self.assertRaises(CommitException): draft.commit()
+        for name, value in (('Transfer-Encoding', 'chunked'), ('Connection', 'keep-alive, upgrade'),
+                            ('Content-Encoding', 'gzip'), ('X-Bad', 'snowman ☃'), ('Bad Name', 'x')):
+            draft = self.draft()
+            draft.http1.set_header(name, value)
+            with self.subTest(name=name), self.assertRaises(CommitException): draft.commit()
+        draft = self.draft()
+        draft.http1.body = b'x' * (1024 * 1024)
+        with self.assertRaises(CommitException): draft.commit()
+        draft.http1.body = 'not bytes'
+        with self.assertRaises(CommitException): draft.commit()
+
+    def test_worker_publish_discard_and_catch(self):
+        import base64, json, subprocess
+        source_dir = pathlib.Path(__file__).resolve().parents[1] / 'src'
+        worker = '\n'.join((source_dir / name).read_text() for name in ('inspection_api.py', 'inspection_language.py', 'inspection_worker.py'))
+        def run(script):
+            request = {'script': script, 'event': {'details': {'info': {
+                'content': base64.b64encode(self.request).decode()}}}}
+            result = subprocess.run([sys.executable, '-c', worker], input=json.dumps(request),
+                                    text=True, capture_output=True, timeout=5, check=True)
+            return json.loads(result.stdout)
+        prefix = 'draft = api.message.snapshot()\ndraft.http1.body = b"longer"\n'
+        result = run(prefix + 'return draft.commit()')
+        self.assertTrue(result['ok'], result)
+        self.assertIn(b'Content-Length: 6', base64.b64decode(result['replacement']))
+        self.assertIsNone(run(prefix + 'draft.commit()\nreturn None')['replacement'])
+        result = run(prefix + 'draft.http1.target = "bad target"\ntry:\n    return draft.commit()\nexcept CommitException:\n    return None')
+        self.assertTrue(result['ok'], result)
+        self.assertIsNone(result['replacement'])
+        result = run(prefix + 'draft.http1.target = "bad target"\nreturn draft.commit()')
+        self.assertFalse(result['ok'])
+        self.assertIsNone(result['replacement'])
+        self.assertIn('CommitException', result['error'])
 
 
 class Http2Tests(unittest.TestCase):
