@@ -1,5 +1,10 @@
 # Smithproxy Spider
 
+**Binding API design:** [First Class API Design](docs/FIRST_CLASS_API_DESIGN.md)
+defines the required Parts model, lazy representations, transactional commit and
+semantic hold buffers. It distinguishes the target architecture from implemented
+features; API changes must follow this contract.
+
 ### Python editor type inference
 
 The editor uses an authenticated backend language service (`POST /api/inspection/language`)
@@ -45,6 +50,61 @@ for frame in api.http2.frames:
         api.print(frame.stream_id, len(frame.data), "DATA bytes")
 return None
 ```
+
+### Transactional HTTP/1 writes (API v0.4)
+
+Original views remain immutable. `api.message.snapshot()` creates an independent
+draft from the **wire bytes**, not the escaped display enrichment. Edit its
+`http1.headers`, `http1.target` or `http1.body`, then call `commit()` to validate
+and assemble replacement bytes. Header values use Latin-1; encode a text body
+explicitly (for example with UTF-8) and set its Content-Type appropriately.
+
+```python
+draft = api.message.snapshot()
+if not draft.http1.available:
+    return None
+try:
+    draft.http1.set_header("X-Inspected-By", "Spider")
+    if draft.http1.target is not None:
+        draft.http1.target = "/new/path"
+    # draft.http1.body = "New content".encode("utf-8")
+    return draft.commit()
+except CommitException as error:
+    api.print("Cannot commit:", error)
+    return None  # Keep the input of this script unchanged.
+```
+
+`commit()` itself does not publish or change `api.bytes`, `api.message`, protocol
+views or the draft. Only returning its bytes publishes the replacement through
+the existing backend `replace` response. Returning None discards a successful
+commit too. Failed commits leave the draft editable for correction and retry.
+An uncaught CommitException is a normal script error; the existing chain rolls
+back payload changes to the original callback. This is not a transaction for
+`api.storage` operations or already successful instance-state updates.
+
+Supported: one complete HTTP/1.0 or HTTP/1.1 message in one callback, ordered
+headers (including duplicates), request-target edits and unencoded body changes.
+`set_header` replaces all occurrences case-insensitively; `remove_header` removes
+them all. `Header(name, value)` is also available in script scope for explicitly
+appending duplicate fields. Content-Length is managed by commit and counts bytes,
+not characters. A 304 Content-Length retains its representation-length meaning.
+Unchanged drafts preserve exact original bytes. Output is limited to 1 MiB.
+
+Unsupported edits raise CommitException: HTTP/2, chunked/Transfer-Encoding,
+trailers, partial or pipelined messages, close-delimited responses, CONNECT and
+protocol upgrades. No cross-callback buffering is done. `available` describes
+supported input framing, not a guarantee that every subsequent edit can commit.
+Body changes with Content-Encoding, known digest/ETag/range metadata, and changes
+to signed messages are rejected rather than silently leaving stale metadata.
+Compression, HPACK, application-specific checksums/authentication and semantic
+request-response correlation are not recomputed. In particular, a HEAD response
+whose declared length exceeds the supplied bytes is not treated as a complete
+editable body. HTTP methods, response statuses and protocol versions are not
+editable in this first write API.
+
+The schema, API Reference and Jedi alias completion include MessageSnapshot,
+Http1Draft and CommitException. Rebuild the backend to update both worker and
+generated documentation; no browser Python runtime is required.
 
 ### Saved Follow sessions
 
