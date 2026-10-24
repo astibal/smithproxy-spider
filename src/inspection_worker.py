@@ -89,7 +89,7 @@ response = {'ok': False, 'replacement': None}
 try:
     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
         source = 'def __spider_script(api):\n' + textwrap.indent(request['script'] or 'pass', '    ')
-        namespace = {}
+        namespace = {'CommitException': CommitException, 'Header': Header}
         exec(compile(source, '<inspection>', 'exec'), namespace)
         api = None if request.get('validate_only') else Api(request)
         result = None if api is None else namespace['__spider_script'](api)

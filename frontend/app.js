@@ -3598,17 +3598,15 @@ function renderFlowTab(scopeKey) {
         const shown = bytes.subarray(0, previewLimit);
         if (derived) {
           renderProjectedPayload(content, shown, derived, record,
-            followed.human ? 'ascii' : payloadMode, followed.annotations);
+            followed.human ? 'ascii' : 'hex', followed.annotations);
         } else if (followed.human) {
           renderHumanPreview(content, previewRecord, records, shown, previewLimit);
         } else if (!(followed.l7Context && payloadScope === 'l7' &&
-                     appendL7Context(content, record, wireBytes, payloadMode, shown.length))) {
+                     appendL7Context(content, record, wireBytes, 'hex', shown.length))) {
           const annotations = followed.annotations && payloadScope === 'wire'
             ? contentAnnotations(record, shown.length) : [];
-          if (!appendAnnotatedPayload(content, shown, annotations, payloadMode)) {
-            if (payloadMode === 'hex') content.textContent = encodeHex(shown);
-            else appendMixedAscii(content, shown);
-          }
+          if (!appendAnnotatedPayload(content, shown, annotations, 'hex'))
+            content.textContent = encodeHex(shown);
         }
         more.hidden = shown.length >= bytes.length;
         more.textContent = `Showing ${formatBytes(shown.length)} / ${formatBytes(bytes.length)} · Load next 4 KiB`;

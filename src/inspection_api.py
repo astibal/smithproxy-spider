@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
+import re
 
 
 def documented(description, example, availability='Always available for a content callback.', *, access='read-only snapshot'):
@@ -9,11 +10,13 @@ def documented(description, example, availability='Always available for a conten
                            'availability': availability, 'access': access})
 
 
-def api_method(parameters, returns, description, example):
+def api_method(parameters, returns, description, example, *,
+               availability='Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.',
+               access='shared storage operation'):
     def decorate(method):
         method.__api_doc__ = {'name': method.__name__, 'type': returns, 'parameters': parameters,
-            'description': description, 'example': example, 'availability': 'Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.',
-            'access': 'shared storage operation'}
+            'description': description, 'example': example, 'availability': availability,
+            'access': access}
         return method
     return decorate
 
@@ -146,6 +149,12 @@ class Message:
     bytes: bytes = documented('Original callback bytes. No decoding or reassembly.', '# Inspect a bounded prefix without assuming text or a complete message.\napi.print(api.message.bytes[:32].hex())')
     size: int = documented('Length of this fragment in bytes.', 'api.print(api.message.size)')
 
+    @api_method('', 'MessageSnapshot', 'Create an independent editable draft of this callback. No live bytes change until the script returns draft.commit().',
+        'draft = api.message.snapshot()\napi.print(draft.http1.available)',
+        availability='Always available; HTTP/1 editing requires one complete supported message.', access='create private draft')
+    def snapshot(self) -> MessageSnapshot:
+        return MessageSnapshot(self.bytes)
+
 
 @dataclass(frozen=True)
 class ContentMetadata:
@@ -160,6 +169,286 @@ class Header:
     """One decoded HTTP header; order and duplicate names are preserved."""
     name: str = documented('Header name with observed casing.', 'for header in api.http1.headers:\n    if header.name.lower() == "content-type":\n        api.print(header.value)', 'Only on an existing Header; shared by HTTP/1 and HTTP/2.')
     value: str = documented('Decoded display value from Spider; non-printable bytes may appear as \\xNN.', '# Iterate instead of converting to a dict: duplicate fields are preserved.\nfor header in api.http1.headers:\n    api.print(header.name, header.value)', 'Only on an existing Header; shared by HTTP/1 and HTTP/2.')
+
+
+class CommitException(Exception):
+    """Draft cannot be assembled safely. Original bytes are unchanged; fix the draft and retry, or return None. Available directly in script scope."""
+
+
+_DRAFT_EXAMPLE = ('draft = api.message.snapshot()\nif draft.http1.available:\n'
+                  '    draft.http1.set_header("X-Spider", "inspected")\n'
+                  '    try:\n'
+                  '        result = draft.commit()\n'
+                  '        api.print(len(result))  # Use return result to apply the edit.\n'
+                  '    except CommitException as error:\n'
+                  '        api.print("Cannot commit:", error)')
+
+
+@dataclass
+class Http1Draft:
+    """Mutable HTTP/1 wire snapshot, not the escaped display headers in api.http1. Header strings round-trip via Latin-1; body is bytes. No reassembly or automatic decompression."""
+    available: bool = documented('One complete supported HTTP/1 message was found. Informational, not a bypass for commit validation.',
+        'draft = api.message.snapshot()\napi.print(draft.http1.available)')
+    headers: list[Header] = documented('Ordered draft headers. Duplicates are preserved except Content-Length, which commit manages. Use set_header/remove_header for convenient edits.',
+        _DRAFT_EXAMPLE, access='mutable private draft')
+    body: bytes = documented('Complete wire body. Assign bytes; commit recalculates Content-Length. Encoded bodies and bodies with known integrity metadata cannot be changed in this version.',
+        'draft = api.message.snapshot()\nif draft.http1.available:\n    api.print(len(draft.http1.body))', access='mutable private draft')
+    target: str | None = documented('Request target, or None for a response. May change length. Whitespace and control bytes are forbidden.',
+        'draft = api.message.snapshot()\nif draft.http1.available and draft.http1.target is not None:\n    draft.http1.target = "/inspection"', access='mutable private draft')
+
+    @api_method('name: str, value: str', 'None', 'Replace all case-insensitive occurrences at the first occurrence, or append a new header. Validation happens at commit.',
+        _DRAFT_EXAMPLE, availability='On a private HTTP/1 draft.', access='edit private draft')
+    def set_header(self, name: str, value: str) -> None:
+        matches = [i for i, header in enumerate(self.headers) if header.name.lower() == name.lower()]
+        position = matches[0] if matches else len(self.headers)
+        self.headers[:] = [header for i, header in enumerate(self.headers) if i not in matches]
+        self.headers.insert(position, Header(name, value))
+
+    @api_method('name: str', 'None', 'Remove every case-insensitive occurrence. Removing Content-Length does not disable framing: commit recreates it when needed.',
+        'draft = api.message.snapshot()\nif draft.http1.available:\n    draft.http1.remove_header("X-Debug")',
+        availability='On a private HTTP/1 draft.', access='edit private draft')
+    def remove_header(self, name: str) -> None:
+        self.headers[:] = [header for header in self.headers if header.name.lower() != name.lower()]
+
+
+_HTTP_TOKEN = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+_REQUEST_TARGET = re.compile(r'[^\x00-\x20\x7f]+')
+_MAX_HEAD_BYTES = 64 * 1024
+_MAX_REPLACEMENT_BYTES = 1024 * 1024
+_BODY_METADATA = frozenset({
+    'content-encoding', 'content-md5', 'digest', 'content-digest',
+    'repr-digest', 'etag', 'content-range',
+})
+_SIGNATURE_METADATA = frozenset({'signature', 'signature-input'})
+
+
+def _header_values(headers, name):
+    return [header.value for header in headers if header.name.lower() == name]
+
+
+def _has_control_characters(value):
+    return any((ord(char) < 32 and char != '\t') or ord(char) == 127 for char in value)
+
+
+def _bodyless_status(status):
+    return status is not None and (status < 200 or status in (204, 304))
+
+
+def _draft_http1(payload):
+    """Conservative framing gate; never trust display enrichments or guessed body boundaries."""
+    draft = Http1Draft(False, [], b'', None)
+    error, start = '', ''
+    try:
+        head, separator, body = payload.partition(b'\r\n\r\n')
+        if not separator or len(head) > _MAX_HEAD_BYTES:
+            raise CommitException('HTTP/1 head is incomplete or exceeds 64 KiB')
+        lines = head.decode('latin-1').split('\r\n')
+        start = lines[0]
+        request = re.fullmatch(r"([!#$%&'*+.^_`|~0-9A-Za-z-]+) ([^\x00-\x20\x7f]+) (HTTP/1\.[01])", start)
+        response = re.fullmatch(r'HTTP/1\.[01] ([1-5][0-9]{2}) ([^\x00-\x1f\x7f]*)', start)
+        if not request and not response:
+            raise CommitException('Only HTTP/1.0 and HTTP/1.1 messages can be edited; H2 writes are not supported')
+        if request and request[1] == 'CONNECT':
+            raise CommitException('CONNECT tunnel transitions are not supported')
+        for line in lines[1:]:
+            name, colon, value = line.partition(':')
+            if not colon or not _HTTP_TOKEN.fullmatch(name):
+                raise CommitException('Invalid or folded HTTP header')
+            if _has_control_characters(value):
+                raise CommitException('Control byte in HTTP header')
+            draft.headers.append(Header(name, value.strip(' \t')))
+        names = {header.name.lower() for header in draft.headers}
+        if names & {'transfer-encoding', 'trailer'}:
+            raise CommitException('Transfer-Encoding/chunked and trailers are not supported yet')
+        connection_tokens = {
+            token.strip().lower()
+            for value in _header_values(draft.headers, 'connection')
+            for token in value.split(',')
+        }
+        if 'upgrade' in names or 'upgrade' in connection_tokens:
+            raise CommitException('Protocol upgrades are not supported')
+        lengths = _header_values(draft.headers, 'content-length')
+        if len(lengths) > 1 or (lengths and not re.fullmatch(r'[0-9]{1,10}', lengths[0])):
+            raise CommitException('Ambiguous or invalid Content-Length')
+        status = int(response[1]) if response else None
+        no_body = _bodyless_status(status)
+        if status == 101 or (no_body and body):
+            raise CommitException('Unexpected body or protocol switch')
+        if no_body and status != 304 and lengths:
+            raise CommitException('Content-Length is forbidden for this response status')
+        if not no_body:
+            if not lengths and response:
+                raise CommitException('Close-delimited response has no provable end in this callback')
+            expected = int(lengths[0]) if lengths else 0
+            if len(body) != expected:
+                raise CommitException('Incomplete body, trailing bytes, or pipelined messages')
+        draft.body, draft.target = body, request[2] if request else None
+        draft.available = True
+    except CommitException as exc:
+        error = str(exc)
+    return draft, start, error
+
+
+@dataclass(init=False)
+class MessageSnapshot:
+    """Independent draft. commit() assembles and returns bytes, never sends them. Return those bytes from the script to publish; returning None discards changes. A failed commit leaves the original and draft untouched."""
+    http1: Http1Draft = documented('Editable HTTP/1 view. Unsupported or incomplete fragments remain available as unchanged no-op snapshots only.',
+        _DRAFT_EXAMPLE, access='mutable private draft')
+
+    def __init__(self, payload: bytes):
+        self._original = bytes(payload)
+        self.http1, self._start, self._error = _draft_http1(self._original)
+        self._initial = (tuple(self.http1.headers), self.http1.body, self.http1.target)
+
+    @api_method('', 'bytes', 'Validate and rebuild a single HTTP/1 message, recalculating Content-Length. Returns at most 1 MiB. No-op preserves exact original bytes. Raises CommitException for unsupported framing or invalid edits; catch it in the script. No partial publication.',
+        _DRAFT_EXAMPLE, availability='On a message snapshot. H2, chunked, partial and pipelined edits are rejected.', access='assemble private draft')
+    def commit(self) -> bytes:
+        try:
+            self._validate_draft()
+            unchanged = (tuple(self.http1.headers), self.http1.body, self.http1.target) == self._initial
+            result = self._original if unchanged else self._assemble()
+            if len(result) > _MAX_REPLACEMENT_BYTES:
+                raise CommitException('Replacement exceeds 1 MiB')
+            return result
+        except (TypeError, ValueError, AttributeError, OverflowError) as exc:
+            raise CommitException(str(exc)) from exc
+
+    def _validate_draft(self):
+        draft = self.http1
+
+        if (
+            not isinstance(draft, Http1Draft)
+            or not isinstance(draft.headers, list)
+            or not isinstance(draft.body, bytes)
+        ):
+            raise CommitException('Expected Http1Draft, list of Header and bytes body')
+
+        if len(draft.body) > _MAX_REPLACEMENT_BYTES:
+            raise CommitException('Replacement body exceeds 1 MiB')
+
+    def _validate_edits(self):
+        """Reject changes whose dependent metadata we cannot rebuild."""
+        if self._error:
+            raise CommitException(self._error)
+
+        headers = self.http1.headers
+
+        for header in headers:
+            if (
+                not isinstance(header, Header)
+                or not isinstance(header.name, str)
+                or not isinstance(header.value, str)
+            ):
+                raise CommitException('Each header must have string name and value')
+
+            if not _HTTP_TOKEN.fullmatch(header.name):
+                raise CommitException('Invalid HTTP header name')
+
+            if _has_control_characters(header.value):
+                raise CommitException('Control byte in HTTP header value')
+
+        original_headers, original_body, _ = self._initial
+        names = {header.name.lower() for header in headers}
+        all_names = names | {header.name.lower() for header in original_headers}
+
+        if names & {'transfer-encoding', 'trailer', 'upgrade'}:
+            raise CommitException(
+                'Cannot change framing to chunked, trailers or upgrade'
+            )
+
+        encodings = _header_values(headers, 'content-encoding')
+        original_encodings = _header_values(original_headers, 'content-encoding')
+
+        if encodings != original_encodings:
+            raise CommitException('Content-Encoding changes require an encoder')
+
+        if self.http1.body != original_body and all_names & _BODY_METADATA:
+            raise CommitException(
+                'Body has encoding, integrity or range metadata '
+                'that cannot be recalculated yet'
+            )
+
+        if all_names & _SIGNATURE_METADATA:
+            raise CommitException('Signed messages require signature recomputation')
+
+    def _edited_start_line(self):
+        if self._initial[2] is None:
+            if self.http1.target is not None:
+                raise CommitException('A response has no request target')
+
+            return self._start
+
+        target = self.http1.target
+
+        if not isinstance(target, str) or not _REQUEST_TARGET.fullmatch(target):
+            raise CommitException('Invalid request target')
+
+        method, _, version = self._start.split(' ')
+        hosts = _header_values(self.http1.headers, 'host')
+
+        if version == 'HTTP/1.1' and (len(hosts) != 1 or not hosts[0]):
+            raise CommitException('HTTP/1.1 request requires exactly one nonempty Host')
+
+        return f'{method} {target} {version}'
+
+    def _framed_headers(self):
+        """Compute framing on a copy; even successful commits leave the draft alone."""
+        headers = list(self.http1.headers)
+        original_headers, _, original_target = self._initial
+        lengths = _header_values(headers, 'content-length')
+        original_lengths = _header_values(original_headers, 'content-length')
+        status = int(self._start.split(' ')[1]) if original_target is None else None
+
+        if _bodyless_status(status):
+            if self.http1.body:
+                raise CommitException('This status forbids a response body')
+
+            # A 304 length describes the selected representation, not this empty body.
+            if lengths != original_lengths:
+                raise CommitException(
+                    'Cannot infer Content-Length for a bodyless response'
+                )
+
+            return headers
+
+        needs_length = (
+            bool(self.http1.body or lengths or original_lengths)
+            or original_target is None
+        )
+        position = next(
+            (
+                i for i, header in enumerate(headers)
+                if header.name.lower() == 'content-length'
+            ),
+            len(headers),
+        )
+        headers = [
+            header for header in headers
+            if header.name.lower() != 'content-length'
+        ]
+
+        if needs_length:
+            length_header = Header('Content-Length', str(len(self.http1.body)))
+            headers.insert(position, length_header)
+
+        return headers
+
+    def _assemble(self):
+        self._validate_edits()
+        start = self._edited_start_line()
+        headers = self._framed_headers()
+
+        header_lines = ''.join(f'{h.name}: {h.value}\r\n' for h in headers)
+        head = start + '\r\n' + header_lines + '\r\n'
+        result = head.encode('latin-1') + self.http1.body
+
+        # Apply the same framing gate to input and output; no second interpretation.
+        _, _, error = _draft_http1(result)
+
+        if error:
+            raise CommitException(error)
+
+        return result
 
 
 @dataclass(frozen=True)
@@ -246,7 +535,7 @@ def make_http2(info, payload, enrichments):
 
 @dataclass(frozen=True)
 class InspectionViews:
-    """Typed API v0.3. Protocol views are read-only; state and shared storage are explicitly writable."""
+    """Typed API v0.4. Original protocol views are read-only; message.snapshot() creates a writable draft."""
     message: Message = documented('Current content fragment.', 'api.print(api.message.size)')
     metadata: ContentMetadata = documented('Metadata of the current content callback.', 'api.print(api.metadata.side)')
     http1: Http1 = documented('HTTP/1 head supplied by backend enrichment.', 'if api.http1.available:\n    api.print(api.http1.target)')
@@ -275,8 +564,8 @@ def make_views(event, payload, enrichments):
 def api_schema():
     """Generate reference directly from runtime dataclasses, types and field comments."""
     types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock,
-             InstanceContext, SharedStorage, StorageNamespace]
-    return {'version': '0.3', 'root': 'InspectionViews', 'types': {
+             InstanceContext, SharedStorage, StorageNamespace, MessageSnapshot, Http1Draft, CommitException]
+    return {'version': '0.4', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),
              **dict(f.metadata)} for f in (fields(cls) if is_dataclass(cls) else ())],

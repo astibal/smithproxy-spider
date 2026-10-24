@@ -26,6 +26,8 @@ class LanguageTests(unittest.TestCase):
         self.assertIn('upper', self.labels('value = "hello"\nvalue.'))
         self.assertIn('increment', self.labels('shared = api.storage.namespace("stats")\nshared.'))
         self.assertIn('get', self.labels('state = api.state\nstate.'))
+        self.assertIn('commit', self.labels('draft = api.message.snapshot()\ndraft.'))
+        self.assertIn('set_header', self.labels('draft = api.message.snapshot()\ndraft.http1.'))
 
     def test_scope(self):
         self.assertNotIn('stream_id', self.labels('frame = api.http2.frames[0]\ndef f(frame: str):\n    frame.'))
