@@ -3,6 +3,7 @@
 const {chromium} = require('playwright');
 const assert = require('node:assert/strict');
 const sxbn = require('../frontend/sxbn.js');
+const frontendUrl = (process.env.SPIDER_TEST_FRONTEND_URL || 'http://127.0.0.1:18763').replace(/\/$/, '');
 const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3',
   ['-c', 'import sys,json; sys.path.insert(0,"src"); from inspection_api import api_schema; print(json.dumps(api_schema()))'],
   {encoding: 'utf8'}));
@@ -15,6 +16,7 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => localStorage.setItem('spider-backend', 'http://127.0.0.1:18765'));
     let state = {revision: 1, script: '', scope: 'chain', enabled: false, running: 0, runs: 0, errors: 0,
+      sandbox: {required: true, policy: 'landlock-seccomp-v1'},
       recent: [], chain: [], traffic_rules: {rules: [], bypass_all: false},
       heavy_traffic: {enabled: false, grace_seconds: 5, messages_per_second: 200, bytes_per_second: 1048576, sustain_seconds: 3, include_managed: false},
       collection: {saved: 0, bytes: 0, limit_bytes: 1000000, directory: '/tmp/samples', errors: 0, last_error: ''}};
@@ -23,13 +25,13 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     let savedFlow = null;
     let catalogRevision = 0, catalogFolders = [], catalogEdits = {};
     let frontendVersion = 'aaaaaaaaaaaa';
-    await page.route('http://127.0.0.1:18763/', async route => {
+    await page.route(frontendUrl + '/', async route => {
       const response = await route.fetch();
       await route.fulfill({response, body: (await response.text()).replace(
         /name="frontend-version" content="[^"]*"/,
         'name="frontend-version" content="aaaaaaaaaaaa"')});
     });
-    await page.route('http://127.0.0.1:18763/frontend-version.json', route =>
+    await page.route(frontendUrl + '/frontend-version.json', route =>
       route.fulfill({json: {version: frontendVersion}}));
     await page.route('http://127.0.0.1:18765/**', async route => {
       const request = route.request();
@@ -120,7 +122,7 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
       await route.fulfill({json: body, headers: {'Access-Control-Allow-Origin': '*'}});
     });
     page.on('dialog', dialog => dialog.accept());
-    await page.goto('http://127.0.0.1:18763/');
+    await page.goto(frontendUrl + '/');
     assert.equal(await page.locator('[data-activity-filter="sift"]').getAttribute('aria-pressed'), 'false');
     assert.equal(await page.evaluate(() => {
       activityRecords = []; activityUnread = 0;
@@ -216,6 +218,8 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
       renderEndpointBuilder();
     });
     await page.getByRole('button', {name: 'Inspection', exact: true}).click();
+    await page.locator('#chain-sandbox').waitFor({state: 'visible'});
+    assert.match(await page.locator('#chain-sandbox').textContent(), /Kernel sandbox required/);
     await page.locator('#chain-connection').filter({hasText: 'enabled'}).waitFor();
     await page.locator('#heavy-enabled').check();
     await page.waitForFunction(() => document.querySelector('#heavy-status').textContent.includes('confirmed'));
@@ -375,11 +379,23 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     // Chunks stays a hexdump even when the main Payloads view uses ASCII.
     assert.match(await flow.locator('.flow-chunk > pre').innerText(), /44 65 63 6f 64 65 64/);
     assert.match(await flow.locator('.flow-chunk > pre').innerText(), /^00000000  44 65 .*\|Decoded hello wo\|\n00000010  /);
+    // Playwright scrolls offscreen targets into view before clicking. Settle that
+    // action first so this measures the Human toggle, not automation's scrolling.
+    await flow.locator('[data-flow-human]').scrollIntoViewIfNeeded();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const scrollState = () => flow.evaluate(panel => {
+      const result = [];
+      for (let node = panel; node; node = node.parentElement) {
+        result.push({id: node.id, top: node.scrollTop, height: node.scrollHeight});
+      }
+      return result;
+    });
+    const scrollBefore = await scrollState();
     const controlsBefore = await flow.locator('[data-flow-view="chunks"]').boundingBox();
     await flow.locator('[data-flow-human]').click();
     const controlsAfter = await flow.locator('[data-flow-view="chunks"]').boundingBox();
     assert.equal(controlsBefore.x, controlsAfter.x);
-    assert.equal(controlsBefore.y, controlsAfter.y);
+    assert.equal(controlsBefore.y, controlsAfter.y, JSON.stringify({scrollBefore, scrollAfter: await scrollState()}));
     await flow.locator('[data-flow-human]').click();
     assert.equal(await flow.locator('.derived-payload').count(), 1);
     await flow.locator('.enrichment-marker').click();
