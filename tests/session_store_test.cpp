@@ -725,9 +725,14 @@ int main() {
 
     assert(spider::process_webhook(store, decisions,
         {{"action", "connection-info"}, {"id", "42"},
-         {"details", {{"info", {{"classification", {{"sift", {
-             "protocol.http2", "protocol.http2.prior-knowledge"}}}}}}}}}).status == 200);
+         {"details", {{"info", {{"classification", {
+             {"sift", {"protocol.http2", "protocol.http2.prior-knowledge"}},
+             {"lored", {"service.youtube", "infra.google"}},
+             {"lored_status", "matched"}
+         }}}}}}}).status == 200);
     assert(store.snapshot()["sessions"][0]["classification"]["sift"].size() == 2);
+    assert(store.snapshot()["sessions"][0]["classification"]["lored"].size() == 2);
+    assert(store.snapshot()["sessions"][0]["classification"]["lored_status"] == "matched");
     assert(spider::process_webhook(store, decisions, {{"action", "connection-stop"}, {"id", "42"}}).status == 200);
     assert(store.snapshot()["sessions"].empty());
     assert(store.session_history()["sessions"].size() == 1);
@@ -736,6 +741,7 @@ int main() {
     assert(detail.has_value());
     assert((*detail)["events"].size() == 3);
     assert((*detail)["classification"]["sift"][0] == "protocol.http2");
+    assert((*detail)["classification"]["lored"][0] == "infra.google");
     assert((*detail)["ended_at_ms"].get<std::int64_t>() > 0);
     assert(store.events_after(0)["events"].size() == 2);
     assert(store.diagnostics()["event_history"]["evicted"] == 1);
