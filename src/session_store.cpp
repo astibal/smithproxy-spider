@@ -33,15 +33,46 @@ bool preferred_hostname(const std::string& lhs, const std::string& rhs) {
            std::tuple{hostname_levels(rhs), leaf_length(rhs), rhs.size(), rhs};
 }
 
-const nlohmann::json* sift_classification_array(const nlohmann::json& event) {
+const nlohmann::json* classification_array(
+    const nlohmann::json& event, const std::string_view source) {
     const nlohmann::json* current = &event;
-    for (const auto* key : {"details", "info", "classification", "sift"}) {
+    for (const auto* key : {"details", "info", "classification"}) {
         if (!current->is_object()) return nullptr;
         const auto found = current->find(key);
         if (found == current->end()) return nullptr;
         current = &*found;
     }
+    if (!current->is_object()) return nullptr;
+    const auto found = current->find(source);
+    if (found == current->end()) return nullptr;
+    current = &*found;
     return current->is_array() ? current : nullptr;
+}
+
+void retain_classifications(std::unordered_set<std::string>& target,
+                            const nlohmann::json* classifications) {
+    if (classifications == nullptr) return;
+    for (const auto& classification : *classifications) {
+        if (classification.is_string() &&
+            !classification.get_ref<const std::string&>().empty()) {
+            target.insert(classification.get<std::string>());
+        }
+    }
+}
+
+std::string classification_status(
+    const nlohmann::json& event, const std::string_view source) {
+    const nlohmann::json* current = &event;
+    for (const auto* key : {"details", "info", "classification"}) {
+        if (!current->is_object()) return {};
+        const auto found = current->find(key);
+        if (found == current->end()) return {};
+        current = &*found;
+    }
+
+    const auto found = current->find(source);
+    return found != current->end() && found->is_string()
+        ? found->get<std::string>() : std::string{};
 }
 } // namespace
 
@@ -123,13 +154,12 @@ std::uint64_t SessionStore::apply(const nlohmann::json& event,
             session.updated_at_ms = received_at_ms;
             session.last_event = stored_event;
             session.events.push_back(session.last_event);
-            if (const auto* classifications = sift_classification_array(event)) {
-                for (const auto& classification : *classifications) {
-                    if (classification.is_string() && !classification.get_ref<const std::string&>().empty()) {
-                        session.sift_classifications.insert(classification.get<std::string>());
-                    }
-                }
-            }
+            retain_classifications(
+                session.sift_classifications, classification_array(event, "sift"));
+            retain_classifications(
+                session.lored_classifications, classification_array(event, "lored"));
+            if (auto status = classification_status(event, "lored_status");
+                !status.empty()) session.lored_status = std::move(status);
             while (session.events.size() > session_event_limit_) {
                 session.events.pop_front();
                 ++session_events_evicted_;
@@ -191,6 +221,9 @@ nlohmann::json SessionStore::session_json(const Session& session, const bool inc
     auto sift_classifications = std::vector<std::string>(
         session.sift_classifications.begin(), session.sift_classifications.end());
     std::ranges::sort(sift_classifications);
+    auto lored_classifications = std::vector<std::string>(
+        session.lored_classifications.begin(), session.lored_classifications.end());
+    std::ranges::sort(lored_classifications);
     auto result = nlohmann::json{
         {"id", session.id},
         {"label", session.label},
@@ -201,7 +234,11 @@ nlohmann::json SessionStore::session_json(const Session& session, const bool inc
         {"ended_at_ms", session.ended_at_ms},
         {"event_count", session.events.size()},
         {"last_event", session.last_event},
-        {"classification", {{"sift", std::move(sift_classifications)}}},
+        {"classification", {
+            {"sift", std::move(sift_classifications)},
+            {"lored", std::move(lored_classifications)},
+            {"lored_status", session.lored_status},
+        }},
     };
     if (include_events) result["events"] = session.events;
     return result;

@@ -13,6 +13,8 @@ let inspectionPollInFlight = false;
 const flowRecords = new Map();
 const startedConnections = new Set();
 const liveSiftClassifications = new Map();
+const liveLoredClassifications = new Map();
+const liveLoredStatus = new Map();
 const followedFlows = new Map();
 let flowMenuSession = null;
 let payloadListView = localStorage.getItem('spider-payload-list-view') === 'flows' ? 'flows' : 'payloads';
@@ -490,11 +492,15 @@ function renderSessionBranch(target, items, dimensions, depth = 0, parentPath = 
       key.textContent = item.id;
       row.append(key);
       const classifications = siftClassifications(item);
-      if (classifications.length) {
+      const lored = loredClassifications(item);
+      if (classifications.length || lored.length) {
         const summary = document.createElement('small');
         summary.className = 'session-classification';
-        summary.textContent = classifications.map(classificationLabel).join(' › ');
-        summary.title = classifications.join('\n');
+        summary.textContent = [
+          ...classifications.map(value => `SIFT ${classificationLabel(value)}`),
+          ...lored.map(value => `LORED ${classificationLabel(value)}`),
+        ].join(' › ');
+        summary.title = [...classifications, ...lored].join('\n');
         row.append(summary);
       }
       row.title = resolvedSessionLabel(item.label) || item.id;
@@ -2446,10 +2452,31 @@ function workbenchSiftClassifications(record) {
   return siftClassifications(session);
 }
 
+function workbenchLoredClassifications(record) {
+  const sessionId = record?.event?.id;
+  if (!sessionId) return [];
+  const live = liveLoredClassifications.get(sessionId);
+  if (live?.length) return live;
+  const session = activeSessionRecords.find(item => item.id === sessionId) ||
+    historyRecords.find(item => item.id === sessionId);
+  return loredClassifications(session);
+}
+
+function workbenchLoredStatus(record) {
+  const sessionId = record?.event?.id;
+  if (!sessionId) return '';
+  if (liveLoredStatus.has(sessionId)) return liveLoredStatus.get(sessionId);
+  const session = activeSessionRecords.find(item => item.id === sessionId) ||
+    historyRecords.find(item => item.id === sessionId);
+  return loredStatus(session);
+}
+
 function renderWorkbenchInfo(inspection, record) {
   const target = byId('workbench-info');
   const classifications = workbenchSiftClassifications(record);
-  if (!inspection && !classifications.length) {
+  const lored = workbenchLoredClassifications(record);
+  const loredState = workbenchLoredStatus(record);
+  if (!inspection && !classifications.length && !lored.length && !loredState) {
     target.textContent = 'no inspection metadata';
     target.className = 'empty';
     return;
@@ -2461,6 +2488,14 @@ function renderWorkbenchInfo(inspection, record) {
   if (classifications.length) {
     target.insertAdjacentHTML('beforeend',
       `<b class="sift-label">Sift</b>${classificationChips(classifications)}`);
+  }
+  if (lored.length || loredState) {
+    target.insertAdjacentHTML('beforeend',
+      `<b class="lored-label">LoreD</b>` +
+      (lored.length ? classificationChips(lored, 'lored') : '') +
+      (loredState
+        ? `<span class="lored-status lored-status-${escapeHtml(loredState)}">${escapeHtml(loredState)}</span>`
+        : ''));
   }
 }
 
@@ -4190,6 +4225,16 @@ function ingestEvent(record) {
           'Classification-based rules become effective from this point onward.');
     }
   }
+  const lored = record.event.details?.info?.classification?.lored;
+  if (Array.isArray(lored) && lored.length) {
+    const current = [...new Set(lored.filter(value =>
+      typeof value === 'string' && value.trim()))].sort();
+    liveLoredClassifications.set(record.event.id, current);
+  }
+  const loredState = record.event.details?.info?.classification?.lored_status;
+  if (typeof loredState === 'string' && loredState.trim()) {
+    liveLoredStatus.set(record.event.id, loredState.trim());
+  }
   if (eventRecords.length > eventRecordLimit) eventRecords.splice(0, eventRecords.length - eventRecordLimit);
   const passed = record.event.decision?.state === 'passed';
   if (record.event.action === 'connection-content' && passed) incompleteReplaySessions.add(record.event.id);
@@ -4368,6 +4413,20 @@ function siftClassifications(item) {
   return [...new Set(values.filter(value => typeof value === 'string' && value.trim()))].sort();
 }
 
+function loredClassifications(item) {
+  const direct = item?.classification?.lored;
+  const event = item?.last_event?.details?.info?.classification?.lored;
+  const values = Array.isArray(direct) ? direct : Array.isArray(event) ? event : [];
+  return [...new Set(values.filter(value => typeof value === 'string' && value.trim()))].sort();
+}
+
+function loredStatus(item) {
+  const direct = item?.classification?.lored_status;
+  const event = item?.last_event?.details?.info?.classification?.lored_status;
+  return typeof direct === 'string' && direct ? direct :
+    typeof event === 'string' ? event : '';
+}
+
 function classificationLabel(value) {
   const parts = String(value).split('.');
   const category = parts.shift() || 'sift';
@@ -4379,10 +4438,10 @@ function classificationLabel(value) {
   return `${prefix} ${body}`.trim();
 }
 
-function classificationChips(values) {
+function classificationChips(values, provenance = 'sift') {
   return `<div class="chips classification-chips">${values.map(value => {
     const category = String(value).split('.')[0].replace(/[^a-z0-9_-]/gi, '');
-    return `<span class="classification-${category}" title="${escapeHtml(value)}">${escapeHtml(classificationLabel(value))}</span>`;
+    return `<span class="classification-${category} classification-${provenance}" title="${escapeHtml(provenance.toUpperCase())}: ${escapeHtml(value)}">${escapeHtml(classificationLabel(value))}</span>`;
   }).join('')}</div>`;
 }
 
@@ -4447,6 +4506,7 @@ function renderHistory() {
     row.innerHTML = `<span><b>${escapeHtml(item.id)}</b><i>${escapeHtml(item.state)}</i></span>` +
       `<small>${escapeHtml(sessionSubtitle(item))}</small>` +
       (siftClassifications(item).length ? classificationChips(siftClassifications(item)) : '') +
+      (loredClassifications(item).length ? classificationChips(loredClassifications(item), 'lored') : '') +
       `<time>${escapeHtml(formatTime(item.updated_at_ms))} · ${item.event_count} events</time>`;
     row.onclick = () => selectSession(item.id);
     historyList.append(row);
@@ -4791,6 +4851,8 @@ function connect() {
   startedConnections.clear();
   incompleteReplaySessions.clear();
   liveSiftClassifications.clear();
+  liveLoredClassifications.clear();
+  liveLoredStatus.clear();
   payloadCacheBytes = 0;
   payloadsDropped = 0;
   payloadBytesDropped = 0;
