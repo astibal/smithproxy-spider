@@ -26,7 +26,7 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     await page.route('http://127.0.0.1:18763/', async route => {
       const response = await route.fetch();
       await route.fulfill({response, body: (await response.text()).replace(
-        'name="frontend-version" content="development"',
+        /name="frontend-version" content="[^"]*"/,
         'name="frontend-version" content="aaaaaaaaaaaa"')});
     });
     await page.route('http://127.0.0.1:18763/frontend-version.json', route =>
@@ -372,10 +372,19 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     await flow.locator('.flow-chunk > summary > .payload-fold').press('Enter');
     assert.equal(await flow.locator('.flow-chunk').getAttribute('open'), '');
     assert.equal(await flow.locator('.content-annotation.h2-headers').count(), 1);
-    assert.match(await flow.locator('.flow-chunk > pre').innerText(), /Decoded hello world/);
+    // Chunks stays a hexdump even when the main Payloads view uses ASCII.
+    assert.match(await flow.locator('.flow-chunk > pre').innerText(), /44 65 63 6f 64 65 64/);
+    assert.match(await flow.locator('.flow-chunk > pre').innerText(), /^00000000  44 65 .*\|Decoded hello wo\|\n00000010  /);
+    const controlsBefore = await flow.locator('[data-flow-view="chunks"]').boundingBox();
+    await flow.locator('[data-flow-human]').click();
+    const controlsAfter = await flow.locator('[data-flow-view="chunks"]').boundingBox();
+    assert.equal(controlsBefore.x, controlsAfter.x);
+    assert.equal(controlsBefore.y, controlsAfter.y);
+    await flow.locator('[data-flow-human]').click();
     assert.equal(await flow.locator('.derived-payload').count(), 1);
     await flow.locator('.enrichment-marker').click();
     assert.equal(await flow.locator('.derived-payload').count(), 0);
+    assert.match(await flow.locator('.flow-chunk > pre').innerText(), /1f 8b 08 00/);
     assert.doesNotMatch(await flow.locator('.flow-chunk > pre').innerText(), /Decoded hello world/);
     await flow.locator('.enrichment-marker').click();
     await page.evaluate(() => setPayloadMode('hex'));

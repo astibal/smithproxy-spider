@@ -394,7 +394,7 @@ def main():
                         assert error.code == 400
                     post_json(inspection_url + '/heavy-traffic', {'enabled': False}, 'frontend-key')
                     schema = get_json(inspection_url + '/schema', 'frontend-key')
-                    assert schema['version'] == '0.3'
+                    assert schema['version'] == '0.4'
                     assert 'Http2' in schema['types']
                     assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == ['message', 'metadata', 'http1', 'http2', 'state', 'storage', 'instance']
                     assert schema['types']['Message']['fields'][0]['type'] == 'bytes'
@@ -435,6 +435,15 @@ def main():
                     post_json(inspection_url, {'script': 'return api.bytes.upper()',
                         'enabled': False, 'scope': 'rules'}, 'frontend-key')
                     assert post_json(callback, sample)[1]['action'] == 'unchanged'
+                    write_wire = b'POST /old HTTP/1.1\r\nHost: example.test\r\nContent-Length: 3\r\n\r\nabc'
+                    write_event = {'action': 'connection-content', 'id': 'write-api', 'details': {'info': {
+                        'content': base64.b64encode(write_wire).decode(), 'side': 'L'}}}
+                    write_script = 'draft = api.message.snapshot()\ndraft.http1.body = b"longer"\nreturn draft.commit()'
+                    _, written = post_json(inspection_url + '/run', {'script': write_script, 'event': write_event}, 'frontend-key')
+                    assert written['ok'] and base64.b64decode(written['replacement']) == write_wire.replace(b'Length: 3', b'Length: 6')[:-3] + b'longer'
+                    catch_script = 'draft = api.message.snapshot()\ndraft.http1.target = "bad target"\ntry:\n    return draft.commit()\nexcept CommitException:\n    return None'
+                    _, caught = post_json(inspection_url + '/run', {'script': catch_script, 'event': write_event}, 'frontend-key')
+                    assert caught['ok'] and caught['replacement'] is None
                     replay_url = f"http://127.0.0.1:{spider_port}/api/enrichment/replay"
                     raw_head = b"GET /replay HTTP/1.1\r\nHost: example.test\r\n\r\n"
                     replay_event = {"action": "connection-content", "id": "offline-replay",

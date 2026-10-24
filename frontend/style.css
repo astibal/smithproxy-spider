@@ -231,3 +231,11 @@ main{display:grid;flex:1;min-height:0;grid-template-columns:auto 7px minmax(0,1f
 .chain-runtime-fields{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0}
 .chain-runtime-fields input[type=number]{width:90px;min-width:70px}
 .chain-runtime-fields small,.storage-preview-note{width:100%;color:var(--muted);font-size:11px}
+/* Keep Follow controls independent of changing connection labels and counters. */
+.flow-follow-head > small{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.flow-follow-controls{flex:0 0 100%;width:100%;min-width:0;margin-left:0;overflow-x:auto;align-items:center;flex-wrap:nowrap}
+.flow-follow-controls > *{flex-shrink:0;white-space:nowrap}
+.flow-follow-controls [data-flow-view="messages"]{min-width:118px;font-variant-numeric:tabular-nums}
+.flow-follow-controls [hidden]{display:revert!important;visibility:hidden;pointer-events:none}
+.flow-follow-controls .lane-layout-controls[hidden]{display:none!important}
+.flow-chunk > pre{white-space:pre;overflow:auto}
