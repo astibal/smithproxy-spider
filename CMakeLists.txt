@@ -90,6 +90,9 @@ if(BUILD_TESTING)
     set_tests_properties(inspection_sandbox_tests PROPERTIES TIMEOUT 45)
     add_test(NAME frontend_server_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/frontend_server_test.py)
+    add_test(NAME webhook_benchmark_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/webhook_benchmark_test.py)
+    set_tests_properties(webhook_benchmark_tests PROPERTIES TIMEOUT 15)
     add_executable(inspection_instances_tests tests/inspection_instances_test.cpp)
     target_link_libraries(inspection_instances_tests PRIVATE spider_core)
     target_compile_options(inspection_instances_tests PRIVATE -UNDEBUG)

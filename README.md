@@ -283,14 +283,68 @@ session metadata, L7 ranges/bytes/encodings, annotations and enrichments.
 Returning `None` preserves content; returning text or bytes proposes replacement.
 
 Backend scripting requires `SPIDER_TOKEN` and Python 3 (located at build time).
-Scripts are trusted administrator code with the service user's OS permissions,
-not sandboxed untrusted code. Each invocation runs in a fresh process with a
-sanitized environment, 256 MiB address-space limit, 2 CPU seconds, 3 wall seconds,
+Scripts require Linux x86_64/aarch64, Landlock ABI >= 3 (Linux 6.2+) and
+`libseccomp.so.2`. A mandatory kernel sandbox is installed before validation or
+execution; unavailable protection returns `sandbox_unavailable`, never an
+unsandboxed fallback. Enabled deployments use two prewarmed sandboxed Python
+workers, exclusively owned by that deployment version. Validation, ad-hoc
+"Run on selected" and editor help still use fresh processes. Workers have a
+sanitized environment, 256 MiB address-space limit, 2 lifetime CPU seconds, and per-call
+wall-clock budgets of at most 3 seconds,
 50,000 captured output characters and a 1 MiB replacement limit. At most four
 workers execute concurrently; overload and execution errors leave live content
-unchanged. The server retains counters and the latest 20 outputs. This first
-runtime does not retain Python globals between invocations; use the explicit
-state/storage APIs below instead.
+unchanged. The server retains counters and the latest 20 outputs. Script globals,
+API objects and captured output are fresh per invocation; imported module/native
+caches may survive inside a worker. Never use module mutation as flow state;
+use the explicit state/storage APIs below instead.
+
+Both workers initialize the sandbox and compile the deployment once, before
+enable/redeploy is published. Errors, timeouts, crashes and malformed output
+discard a worker immediately. Healthy workers request retirement after 256 calls,
+0.5 seconds of cumulative CPU or five minutes of age. Maintenance rotates them
+**one at a time**, keeping the other process serving even if it also requested
+retirement. The retired process is reaped before spawning its replacement: this
+does not add a third worker. The grace period is bounded by 4,096 calls (also
+counted by the parent), 1.5 observed CPU seconds or ten minutes of age; the kernel
+2-second CPU and 256 MiB limits remain unchanged. Hard limits and failures can
+still empty the pool, because containment takes precedence over availability.
+A maintenance thread replenishes missing workers;
+requests wait in FIFO order at most 250 ms (and within their execution budget)
+for a ready worker. A timed-out request is removed from the queue, so it cannot
+block successors; newly arriving requests cannot overtake existing waiters.
+Requests are **never automatically replayed**, since storage writes may already
+have committed. Disable, removal, suspension and redeploy retire the old pool;
+in-flight calls finish within their original deadline but cannot restore retired
+instance state. Startup failure leaves the previous deployment unchanged.
+
+The pool is not a security boundary between callbacks in the same deployment.
+Different deployments/versions never share interpreters, but `api.storage` remains
+explicitly shared. Up to 16 deployed scripts means up to 32 resident workers
+(briefly more during a generation handover); the global four-active-call limit
+remains in force. Pool ready/busy/starting/restart counters are exposed in status
+and the Inspection sidebar. Prewarming trades idle memory for lower callback latency.
+Status additionally exposes `cold_waits` (requests finding neither process),
+`queue_wait_us` and `max_queue_wait_us` (cumulative/maximum wait for successful
+worker acquisition, including the pool mutex). These distinguish empty-pool
+startup stalls from ordinary execution latency; maximum wait includes warmup.
+`rotations` counts planned retirement starts, `forced_recycles` counts failures
+or hard limits, and `queued` reports current pool waiters.
+
+The sandbox permits read-only Python standard-library files and read/write access
+only to the dedicated shared storage directory. Network sockets (including Unix
+sockets), subprocesses/threads, exec, signals to other processes, ptrace, mounts,
+device ioctls and unlisted syscalls are denied. Native calls through `ctypes` are
+subject to the same policy. No home/configuration files or `/proc` contents are
+readable; file metadata is not hidden. Imports requiring external shared libraries
+or host configuration may fail. Existing file descriptors are restricted to the
+worker's request/response and stderr by the launcher.
+
+This is defense in depth for authenticated administrator scripts, **not a
+multi-tenant isolation guarantee**. Scripts can still modify shared storage and
+return arbitrary traffic replacements. Use a dedicated unprivileged service user
+and a dedicated storage directory (never home, a repository or system directory).
+The static Jedi language service does not execute submitted scripts; it retains
+its separate bounded process and is not covered by the script syscall policy.
 
 ### Script instances, storage and runtime protection
 
@@ -336,12 +390,15 @@ Storage is a private SQLite database in `SPIDER_STORAGE_DIR`, or by default a
 sibling of the collection directory named `<collection-directory>-inspection-storage`.
 Limits: 64 KiB/value, 4096 keys and 16 MiB logical data across all namespaces;
 database pages are additionally capped. Namespaces are names, not paths. Storage
-is for small shared data, not payload archives. Scripts remain trusted code:
-namespaces and process resource limits are not security isolation. Ordinary files
-are still accessible with the service user's permissions, without these API guarantees.
+is for small shared data, not payload archives. Namespaces are not security
+boundaries between scripts. Raw files inside the shared storage directory remain
+accessible without API quota/transaction guarantees; other files are denied by
+the sandbox. Use filesystem quotas if protection against storage exhaustion by
+hostile administrator scripts is required.
 
-Each deployment serializes invocations, including different endpoint/flow instances,
-to avoid lost state updates. Separate deployments can run concurrently. At most
+Flow/endpoint deployments serialize invocations, including different instances,
+to avoid lost state updates. Message-mode deployments may execute two callbacks
+concurrently; completion order is not guaranteed. Separate deployments can run concurrently. At most
 8 calls wait per deployment, for at most 250 ms; excess work fails open with the
 original payload. The global four-worker cap still applies. Queue rejection and
 storage contention do not count as script faults. Ordering is worker lock acquisition
@@ -678,3 +735,162 @@ An existing `python3 -m http.server` process must be replaced once; copying new
 files alone does not change its cache policy or enable the version endpoint.
 Other static hosts must supply equivalent asset stamping/version metadata and
 cache headers; the UI reports `UI development` when served without stamping.
+
+### Pre-merge verification
+
+The normal CTest suite includes the kernel-sandbox negative tests and frontend
+cache/versioning tests. Sandbox checks deliberately fail (not skip) on a host
+without the required protection. Browser tests use a separate temporary profile,
+an ephemeral local frontend port and mocked backend responses; they never attach
+to your open browser or deploy scripts to a real backend.
+
+```sh
+cmake --build build -j4
+ctest --test-dir build --output-on-failure -j2 --repeat until-fail:3 \
+  --output-junit premerge-results.xml
+
+# Node >= 20 + Playwright; NODE_PATH and CHROMIUM_PATH may select local installs.
+python3 tests/browser_smoke.py --repeat 3
+
+cmake -S . -B cmake-build-ubsan -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_CXX_FLAGS='-fsanitize=undefined -fno-sanitize-recover=all -g1' \
+  -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=undefined
+cmake --build cmake-build-ubsan -j3
+ctest --test-dir cmake-build-ubsan --output-on-failure -j2 \
+  --output-junit premerge-ubsan-results.xml
+```
+
+The sandbox follows the Linux [Landlock ABI](https://docs.kernel.org/userspace-api/landlock.html)
+and libseccomp's default-deny syscall policy. It is not an independent security
+audit or a guarantee against kernel/interpreter vulnerabilities. The current
+local verification platform is Linux x86_64; aarch64 requires separate CI coverage.
+
+Pre-merge verification on 2026-10-24 (`fc-api`, based on `d9b4d02` with sandbox changes):
+
+- normal build: all 14 CTest suites passed three consecutive times (42 executions);
+- UBSan Debug build: 14/14 suites passed, no undefined-behavior diagnostics;
+- isolated Chromium GUI smoke: 3/3 consecutive runs passed, including sandbox
+  indication, library/deployment workflow, payload modes, toolbar stability and
+  idle-render suppression;
+- ten sandbox test methods cover allowed payload/storage operations, denied
+  files/network/processes/signals, native `ctypes` calls, symlink escapes,
+  unsupported protection, limits and recovery. The real HTTP API also rejects
+  attempted sandbox opt-out and successfully executes the next normal request;
+- local JUnit reports: `build/premerge-results.xml` and
+  `cmake-build-ubsan/premerge-ubsan-results.xml` (generated, not committed);
+- indicative worker startup/run measurement, ten warmed trivial invocations:
+  median 94.4 ms before versus 115.9 ms with containment. This is not a throughput
+  benchmark or latency guarantee; invocation deadlines include startup overhead.
+
+The GUI test settles Playwright's automatic scroll before measuring button
+positions; exact x/y equality checks remain enabled. No browser-test assertion
+was relaxed to hide a layout change. Python coverage percentages were not
+remeasured in this run (the optional coverage package was unavailable).
+
+Persistent deployment pool verification (same date, after the sandbox baseline):
+
+- all 15 CTest suites passed three consecutive times (45 executions), and
+  all 15 passed in the UBSan Debug build;
+- Chromium GUI smoke passed three consecutive times;
+- pool tests exercise two simultaneous workers, fresh invocation globals,
+  deployment isolation, queue saturation, timeout/crash/protocol-error recovery,
+  sandbox rejection, bounded worker recycling and no replay after storage writes;
+- a warmed pool processed 100 trivial callbacks in 16.6 ms total (about
+  0.17 ms each). This measures local pool IPC and execution, not end-to-end
+  webhook latency. Startup/containment cost now belongs to deployment warmup;
+- generated reports: `build/pool-results.xml` and
+  `cmake-build-ubsan/pool-ubsan-results.xml`.
+
+### Webhook latency / load harness
+
+Run against a local binary, **not** an existing deployment:
+
+```sh
+python3 tests/webhook_benchmark.py build/smithproxy-spider \
+  --requests 1000 --warmup 40 --sizes 64 4096 65536 \
+  --concurrency 1 2 4 --output build/webhook-benchmark.json
+```
+
+Each matrix entry starts a fresh loopback-only Spider with temporary collection
+and script storage and a fake Smithproxy used only for callback registration.
+The timed path is the actual HTTP webhook handler, including JSON/base64,
+enrichment, inspection, response transport and client response validation.
+The baseline has no script; the script scenario deploys and enables a message-mode
+`return api.bytes.upper()` script with the two-worker pool. Startup, deployment
+and warmup are excluded. Each producer has its own HTTP keep-alive connection
+(the first measured request includes connection establishment).
+
+The table reports p50/p95/p99 milliseconds, requests/s and response errors. JSON
+also includes successful-only percentiles/throughput, backend run/error/rejection
+deltas, worker restarts and suspension state. Every replacement is checked against
+the expected bytes: fail-open/unchanged is **not** counted as script success.
+Errors or backend rejections cause a nonzero exit; overload results are still
+written. The report includes platform, timestamp and binary SHA-256. The output
+path is overwritten as each case finishes, preserving completed cases if a later
+case fails.
+
+For an intentional saturation check (expect nonzero exit):
+
+```sh
+python3 tests/webhook_benchmark.py build/smithproxy-spider \
+  --requests 24 --warmup 8 --sizes 64 --concurrency 8 \
+  --script-delay-ms 300 --output build/webhook-benchmark-overload.json
+```
+
+This is a **closed-loop** harness: each producer waits for its response before
+sending another request. It does not model a fixed arrival rate or account for
+coordinated omission, and Python client CPU can limit measured throughput.
+There is no TLS, real Smithproxy forwarding or browser subscriber in this test.
+Run it alone on an otherwise idle host; the default 200 requests per case are
+a quick comparison, not a statistically stable tail-latency or capacity claim.
+Benchmark-accounting unit tests are registered as `webhook_benchmark_tests`;
+the load benchmark itself is intentionally outside ordinary CTest runs.
+
+Local verification on 2026-10-24: 18 cases × 1,000 measured requests, plus
+40 warmup requests per case, completed without response errors, backend errors
+or capacity rejections. For one producer, median baseline / scripted latencies
+were 0.301 / 0.561 ms (64 B), 0.454 / 0.911 ms (4 KiB) and
+2.180 / 6.037 ms (64 KiB). The scripted cases recorded 3–4 completed worker
+restarts each, and maximum latencies reached 93–128 ms; 64 B with four producers
+had p99 30.612 ms. Recycling is a candidate explanation for the tail spikes,
+not established causal attribution from this aggregate report. Do not interpret
+the sub-millisecond medians as a worst-case latency guarantee.
+
+The intentional overload check returned exit status 1: 12 of 24 scripted requests
+returned unchanged, and backend rejection delta was 12. The accounting unit tests
+also passed through CTest. Full local reports are in
+`build/webhook-benchmark.json` and `build/webhook-benchmark-overload.json`.
+
+#### Tail-latency follow-up: rolling retirement and FIFO
+
+Instrumentation confirmed the original empty-pool stall: with 64 B and four
+producers, a pre-fix run recorded 10 requests entering an empty pool and a maximum
+pool wait of 95.7 ms, matching the 96.9 ms HTTP maximum. Both processes had reached
+their retirement threshold together. Rolling retirement removes that synchronized
+outage without adding workers. A subsequent 64 KiB/four-producer repeat still
+showed an 87 ms queue wait without entering an empty pool; FIFO admission removes
+the opportunity for new callers to repeatedly overtake waiting callers while
+only one worker is available.
+
+The final 18-case × 1,000-request matrix passed with zero response/backend errors,
+capacity rejections, cold waits or forced recycles. Planned worker rotations
+remained active. Selected local results (milliseconds, not latency guarantees):
+
+| Script case | Before p99 / max | Final p99 / max |
+| --- | --- | --- |
+| 64 B, 1 producer | 1.094 / 96.932 | 0.787 / 2.909 |
+| 64 B, 4 producers | 31.910 / 96.886 | 2.025 / 3.404 |
+| 64 KiB, 4 producers, rolling-only vs FIFO | 25.597 / 93.349 | 14.737 / 15.772 |
+
+These are separate local runs, so scheduling and client load still contribute
+to variation. The large-payload row isolates the later FIFO follow-up rather than
+using the original pre-rolling baseline. Reports:
+`build/webhook-before-rotation.json`, `build/webhook-rolling-large-repeat.json`,
+and `build/webhook-final-rotation.json`. Regression tests cover healthy sustained
+4-producer rotation (4,000 callbacks), FIFO entry order, queue timeout removal,
+failure recovery and retirement after sustained rotation.
+
+Final regression verification: all 16 CTest suites passed three consecutive runs
+(48 executions); UBSan passed 16/16. Generated reports:
+`build/rolling-pool-results.xml` and
+`cmake-build-ubsan/rolling-pool-ubsan-results.xml`.
