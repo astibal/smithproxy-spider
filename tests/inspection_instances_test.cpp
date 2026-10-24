@@ -34,6 +34,17 @@ int main() {
     deploy("message", counter);
     assert(run()["logs"][0] == "1" && run()["logs"][0] == "1");
     assert(engine.status()["chain"][0]["instances"] == 0);
+    assert(engine.status()["chain"][0]["workers"]["idle"] == 2);
+    deploy("message", "import os, time\ntime.sleep(.2)\napi.print(os.getpid())");
+    json concurrent_a, concurrent_b;
+    std::thread message_a([&] { concurrent_a = run(); });
+    std::thread message_b([&] { concurrent_b = run(); });
+    for (int i = 0; i < 1000 && engine.status()["chain"][0]["workers"]["busy"] != 2; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    assert(engine.status()["chain"][0]["workers"]["busy"] == 2);
+    message_a.join(); message_b.join();
+    assert(concurrent_a["ok"] == true && concurrent_b["ok"] == true);
+    assert(concurrent_a["logs"] != concurrent_b["logs"]);
     auto id = deploy("flow", counter);
     assert(run()["logs"][0] == "1");
     event["details"]["info"]["side"] = "R";

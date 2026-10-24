@@ -46,6 +46,14 @@ int main() {
     assert(run("api.message.size = 99")["ok"] == false);
     assert(run("raise ValueError('bad')")["ok"] == false);
     assert(run("return 123")["ok"] == false);
+    // Exercise the embedded worker, not just the Python policy in isolation.
+    assert(runtime.status()["sandbox"]["required"] == true);
+    for (const auto* denied : {"open('/etc/passwd').read()", "import socket\nsocket.socket()",
+                              "import os\nos.fork()"}) {
+        const auto blocked = run(denied);
+        assert(blocked["ok"] == false && blocked["replacement"].is_null());
+        assert(blocked["error"].get<std::string>().find("PermissionError") != std::string::npos);
+    }
     assert(run("api.print('x' * 1000000)")["logs"][0].get<std::string>().size() == 50000);
     auto start = std::chrono::steady_clock::now();
     assert(run("import time\ntime.sleep(20)")["ok"] == false);
@@ -63,6 +71,8 @@ int main() {
     assert(spider::process_webhook(store, decisions, event, std::nullopt, nullptr, &runtime).body["action"] == "unchanged");
     (void)decisions.set_traffic_rules({{"bypass_all", false}});
     runtime.configure({{"script", "raise RuntimeError('broken')"}, {"enabled", true}, {"scope", "all"}});
+    assert(spider::process_webhook(store, decisions, event, std::nullopt, nullptr, &runtime).body["action"] == "unchanged");
+    runtime.configure({{"script", "open('/etc/passwd').read()"}, {"enabled", true}, {"scope", "all"}});
     assert(spider::process_webhook(store, decisions, event, std::nullopt, nullptr, &runtime).body["action"] == "unchanged");
     runtime.configure({{"script", "return b'x'"}, {"enabled", false}});
     assert(spider::process_webhook(store, decisions, event, std::nullopt, nullptr, &runtime).body["action"] == "unchanged");

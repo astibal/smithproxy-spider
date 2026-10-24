@@ -65,6 +65,7 @@
   sidebar.innerHTML = '<h3>Script library · this browser</h3><div id="library-list"></div>' +
     '<button id="library-new">+ New script</button><hr>' +
     '<h3>Backend chain ↓</h3><p id="chain-connection">Not connected</p>' +
+    '<small id="chain-sandbox" hidden title="Scripts require Linux Landlock and seccomp. No network or subprocesses; files are limited to read-only Python runtime and shared storage. If isolation cannot be activated, execution is refused.">Kernel sandbox required · no network / subprocesses</small>' +
     '<div id="chain-list"></div><button id="chain-apply-order" hidden>Apply order</button>' +
     '<p id="chain-message" role="status"></p><hr><h3>Collection · backend</h3><p id="collection-status"></p>';
   const layout = byId('inspection-layout');
@@ -191,6 +192,7 @@
     const chain = state.chain || [];
     const active = chain.filter(item => item.enabled).length;
     byId('chain-connection').textContent = `${baseUrl()} · ${active} enabled · ${state.running} executing`;
+    byId('chain-sandbox').hidden = !state.sandbox?.required;
     const target = byId('chain-target'), oldTarget = target.value;
     target.replaceChildren(new Option('New disabled item', ''));
     for (const item of chain) target.add(new Option(`${item.name} · v${item.version}`, item.id));
@@ -211,6 +213,7 @@
       const stats = document.createElement('small');
       stats.textContent = `${item.enabled ? 'Enabled' : 'Disabled'} · ${item.runs} runs · ${item.errors} errors\n` +
         `Traffic: ${item.scope} ${item.filter || ''}\nLast run: ${item.last_run_ms ? new Date(item.last_run_ms).toLocaleString() : 'never'}`;
+      if (item.workers) stats.textContent += `\nWorkers: ${item.workers.idle || 0} ready · ${item.workers.busy || 0} busy · ${item.workers.starting || 0} starting / ${item.workers.capacity} · ${item.workers.restarts || 0} restarts`;
       stats.textContent += `\nInstance: ${item.instancing || 'message'}${item.instancing === 'endpoint' ? ' / ' + item.endpoint : ''} · ${item.instances || 0} retained · ${item.state_bytes || 0} B` +
         `\n${item.executing || 0} executing · ${item.waiting || 0} waiting · ${item.rejected || 0} rejected` +
         `\nLast duration: ${item.last_duration_ms ?? '—'} ms · budget ${item.timeout_ms || 1000} ms` +
@@ -274,6 +277,7 @@
   window.addEventListener('inspection-unavailable', event => {
     state = null;
     byId('chain-connection').textContent = 'Backend unavailable — displayed state is unverified';
+    byId('chain-sandbox').hidden = true;
     byId('chain-message').textContent = event.detail;
     renderVersion();
   });

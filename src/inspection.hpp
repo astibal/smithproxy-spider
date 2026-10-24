@@ -9,6 +9,7 @@
 #include "collection.hpp"
 
 namespace spider {
+class InspectionPool;
 class Inspection {
 public:
     explicit Inspection(std::filesystem::path collection_root = {});
@@ -31,6 +32,7 @@ private:
         std::size_t bytes{2};
     };
     struct Runtime {
+        std::shared_ptr<InspectionPool> pool;
         std::timed_mutex serial;
         std::atomic_uint waiting{}, active{}, instances{};
         std::atomic_bool retired{};
@@ -40,9 +42,11 @@ private:
     };
     nlohmann::json run_instance(const nlohmann::json& item, const nlohmann::json& event,
                                const nlohmann::json& enrichments, int remaining);
+    nlohmann::json run_request(nlohmann::json request, const std::shared_ptr<InspectionPool>& pool);
     void expire_instances(Runtime& runtime, int idle_seconds) const;
     void clear_flow(const std::string& id);
     std::map<std::string, std::shared_ptr<Runtime>> runtimes_;
+    std::shared_ptr<InspectionPool> legacy_pool_;
     std::filesystem::path storage_root_;
     nlohmann::json notifications_ = nlohmann::json::array();
     std::uint64_t next_notification_{};

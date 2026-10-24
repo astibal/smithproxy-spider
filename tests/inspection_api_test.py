@@ -99,7 +99,8 @@ class WriteTests(unittest.TestCase):
     def test_worker_publish_discard_and_catch(self):
         import base64, json, subprocess
         source_dir = pathlib.Path(__file__).resolve().parents[1] / 'src'
-        worker = '\n'.join((source_dir / name).read_text() for name in ('inspection_api.py', 'inspection_language.py', 'inspection_worker.py'))
+        worker = '\n'.join((source_dir / name).read_text() for name in (
+            'inspection_api.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
         def run(script):
             request = {'script': script, 'event': {'details': {'info': {
                 'content': base64.b64encode(self.request).decode()}}}}

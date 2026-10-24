@@ -6,12 +6,14 @@ import sys
 import textwrap
 import traceback
 
-# Trusted administrator scripts, isolated for failures, not a security sandbox.
+# Resource limits complement the mandatory kernel policy installed below.
 resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
 resource.setrlimit(resource.RLIMIT_FSIZE, (32 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-request = json.load(sys.stdin)
+resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+sys.dont_write_bytecode = True
+request = json.loads(sys.stdin.readline(64 * 1024 * 1024 + 1))
 if 'language_action' in request:
     try:
         json.dump(language_query(request), sys.stdout)
@@ -84,29 +86,94 @@ class Api:
             rows.append(f'{offset:08x}  {hexa:<{width * 3 - 1}}  |{text}|')
         return '\n'.join(rows)
 
-output = Output()
-response = {'ok': False, 'replacement': None}
-try:
-    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-        source = 'def __spider_script(api):\n' + textwrap.indent(request['script'] or 'pass', '    ')
-        namespace = {'CommitException': CommitException, 'Header': Header}
-        exec(compile(source, '<inspection>', 'exec'), namespace)
-        api = None if request.get('validate_only') else Api(request)
-        result = None if api is None else namespace['__spider_script'](api)
-        if isinstance(result, str):
-            result = result.encode()
-        if result is not None and not isinstance(result, (bytes, bytearray, memoryview)):
-            raise TypeError('script must return None, str, bytes, bytearray, or memoryview')
-        if result is not None and len(result) > 1024 * 1024:
-            raise ValueError('replacement exceeds 1 MiB')
-        if api is not None:
-            if not isinstance(api.state, dict): raise TypeError('api.state must remain a JSON object')
-            encoded_state = json.dumps(api.state, allow_nan=False, ensure_ascii=False)
-            if len(encoded_state.encode()) > 65536: raise ValueError('api.state exceeds 64 KiB')
-            response['instance_state'] = json.loads(encoded_state)
-        response.update(ok=True, replacement=None if result is None else base64.b64encode(result).decode())
-except BaseException:
-    if isinstance(sys.exc_info()[1], StorageBusy): response['error_kind'] = 'storage_busy'
+def script_error():
+    response = {'ok': False, 'replacement': None, 'logs': []}
+    if isinstance(sys.exc_info()[1], SandboxUnavailable):
+        response['error_kind'] = 'sandbox_unavailable'
+    if isinstance(sys.exc_info()[1], StorageBusy):
+        response['error_kind'] = 'storage_busy'
     response['error'] = traceback.format_exc(limit=8)[-12000:]
-response['logs'] = output.text.splitlines()
-json.dump(response, sys.stdout)
+    return response
+
+
+def invoke_script(current, compiled):
+    output = Output()
+    response = {'ok': False, 'replacement': None}
+    namespace = {'CommitException': CommitException, 'Header': Header}
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            # Fresh script globals and API objects; imports/native module caches
+            # remain private to this deployment's worker, not to a flow instance.
+            exec(compiled, namespace)
+            api = None if current.get('validate_only') else Api(current)
+            result = None if api is None else namespace['__spider_script'](api)
+            if isinstance(result, str):
+                result = result.encode()
+            if result is not None and not isinstance(result, (bytes, bytearray, memoryview)):
+                raise TypeError('script must return None, str, bytes, bytearray, or memoryview')
+            if result is not None and len(result) > 1024 * 1024:
+                raise ValueError('replacement exceeds 1 MiB')
+            if api is not None:
+                if not isinstance(api.state, dict):
+                    raise TypeError('api.state must remain a JSON object')
+                encoded_state = json.dumps(api.state, allow_nan=False, ensure_ascii=False)
+                if len(encoded_state.encode()) > 65536:
+                    raise ValueError('api.state exceeds 64 KiB')
+                response['instance_state'] = json.loads(encoded_state)
+            response.update(ok=True, replacement=None if result is None else base64.b64encode(result).decode())
+    except BaseException:
+        response = script_error()
+    finally:
+        namespace.clear()
+    response['logs'] = output.text.splitlines()
+    return response
+
+
+try:
+    try:
+        install_script_sandbox(request.get('storage_directory'))
+    except Exception as error:
+        raise SandboxUnavailable('Cannot activate script sandbox: ' + str(error)) from error
+    source = 'def __spider_script(api):\n' + textwrap.indent(request['script'] or 'pass', '    ')
+    compiled = compile(source, '<inspection>', 'exec')
+except BaseException:
+    json.dump(script_error(), sys.stdout)
+    sys.stdout.write('\n')
+    sys.stdout.flush()
+    sys.exit(0)
+
+if sys.argv[1:] != ['--persistent']:
+    json.dump(invoke_script(request, compiled), sys.stdout)
+else:
+    import time
+    storage_directory = request.get('storage_directory')
+    started = time.monotonic()
+    sys.stdout.write('{"ready": true}\n')
+    sys.stdout.flush()
+    for calls in range(4096):
+        line = sys.stdin.readline(64 * 1024 * 1024 + 1)
+        if not line:
+            break
+        if len(line) > 64 * 1024 * 1024 or not line.endswith('\n'):
+            break
+        current = json.loads(line)
+        current['storage_directory'] = storage_directory
+        response = invoke_script(current, compiled)
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        # Ask the parent for rolling retirement, but keep serving until replaced.
+        # Otherwise both equally-aged workers can exit while their successors
+        # are still starting. Independent hard limits still bound this grace.
+        cpu_seconds = usage.ru_utime + usage.ru_stime
+        age_seconds = time.monotonic() - started
+        rotate = calls >= 255 or cpu_seconds >= 0.5 or age_seconds >= 300
+        recycle = (not response['ok'] or calls == 4095 or
+                   cpu_seconds >= 1.5 or age_seconds >= 600)
+        response['_request_id'] = current['_request_id']
+        response['_worker_rotate'] = rotate
+        response['_worker_recycle'] = recycle
+        json.dump(response, sys.stdout)
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+        if recycle:
+            break
+        del current, response, line

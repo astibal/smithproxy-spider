@@ -1,5 +1,6 @@
 #include "inspection.hpp"
 #include "inspection_worker.hpp"
+#include "inspection_pool.hpp"
 #include "session_filter.hpp"
 #include <algorithm>
 #include <chrono>
@@ -172,16 +173,35 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
                 (*item)["consecutive_errors"] = 0; (*item)["consecutive_slow"] = 0;
             } else throw std::invalid_argument("Unknown operation");
         }
+        // Prepare both workers before changing the live generation. A failed
+        // warm-up leaves the previous deployment untouched.
+        std::shared_ptr<Runtime> prepared;
+        std::string prepared_id;
+        if (operation == "deploy" || operation == "enable") {
+            const auto target = operation == "deploy" ? item : std::find_if(next.begin(), next.end(),
+                [&](const auto& entry) { return entry["id"] == id; });
+            if (target != next.end() && target->value("enabled", false)) {
+                prepared_id = (*target)["id"].get<std::string>();
+                prepared = std::make_shared<Runtime>();
+                prepared->pool = std::make_shared<InspectionPool>((*target)["script"].get<std::string>(), storage_root_.string());
+                prepared->pool->warm();
+            }
+        }
         // Retire old runtime generations. In-flight work cannot publish state into a new version.
         for (const auto& old : chain_) {
             const auto key = old["id"].get<std::string>();
             const auto live = std::find_if(next.begin(), next.end(), [&](const auto& entry) { return entry["id"] == key; });
             if (live == next.end() || (*live)["version"] != old["version"] ||
                 (operation == "enable" && key == id)) {
-                if (runtimes_.contains(key)) runtimes_[key]->retired = true;
+                if (runtimes_.contains(key)) {
+                    runtimes_[key]->retired = true;
+                    if (runtimes_[key]->pool) runtimes_[key]->pool->retire();
+                }
                 runtimes_.erase(key);
             }
         }
+        if (prepared) runtimes_[prepared_id] = std::move(prepared);
+        if (legacy_pool_) { legacy_pool_->retire(); legacy_pool_.reset(); }
         chain_ = std::move(next); chain_mode_ = true; ++revision_;
         lock.unlock();
         return status();
@@ -194,8 +214,12 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
         auto validation = execute({{"script", source}, {"validate_only", true}});
         if (!validation.value("ok", false)) throw std::invalid_argument(validation.value("error", "Validation failed"));
     }
+    auto prepared_pool = enabled ? std::make_shared<InspectionPool>(source, storage_root_.string()) : nullptr;
+    if (prepared_pool) prepared_pool->warm();
     { std::scoped_lock lock(mutex_);
       if (chain_mode_) throw std::invalid_argument("Use chain operations for multiple scripts");
+      if (legacy_pool_) legacy_pool_->retire();
+      legacy_pool_ = std::move(prepared_pool);
       source_ = source; scope_ = scope; enabled_ = enabled; ++revision_; }
     return status();
 }
@@ -213,12 +237,16 @@ nlohmann::json Inspection::status() const {
         item["waiting"] = it == runtimes_.end() ? 0U : it->second->waiting.load();
         item["executing"] = it == runtimes_.end() ? 0U : it->second->active.load();
         item["rejected"] = it == runtimes_.end() ? 0ULL : it->second->rejected.load();
+        item["workers"] = it != runtimes_.end() && it->second->pool ?
+            it->second->pool->status() : nlohmann::json{{"capacity", 2}, {"idle", 0}, {"busy", 0}, {"starts", 0}};
     }
     return {{"script", chain_mode_ ? "" : source_}, {"scope", chain_mode_ ? "chain" : scope_},
             {"enabled", chain_mode_ ? std::any_of(chain_.begin(), chain_.end(),
                 [](const auto& item) { return item.value("enabled", false); }) : enabled_}, {"revision", revision_},
             {"runs", runs_}, {"errors", errors_}, {"running", running_.load()}, {"recent", recent_},
             {"chain", chain}, {"notifications", notifications_},
+            {"sandbox", {{"required", true}, {"policy", "landlock-seccomp-v1"},
+                         {"network", false}, {"processes", false}, {"filesystem", "runtime-readonly + shared-storage"}}},
             {"storage", {{"directory", storage_root_.string()}, {"quota_bytes", 16 * 1024 * 1024}}},
             {"collection", collection.status()}};
 }
@@ -238,12 +266,17 @@ nlohmann::json Inspection::language(nlohmann::json request) {
     return result;
 }
 nlohmann::json Inspection::run(nlohmann::json request) {
+    return run_request(std::move(request), nullptr);
+}
+nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared_ptr<InspectionPool>& pool) {
     if (!request.contains("script") || !request["script"].is_string() || request["script"].get_ref<const std::string&>().size() > 65536)
         return failure("script must be a string up to 64 KiB");
     if (running_.fetch_add(1) >= 4) { --running_; return capacity_failure("backend inspection busy (4 workers)"); }
     request["storage_directory"] = storage_root_.string();
     nlohmann::json result;
-    try { result = execute(request); } catch (const std::exception& e) { result = failure(e.what()); }
+    try {
+        result = pool ? pool->run(request, std::clamp(request.value("timeout_ms", 3000), 1, 3000)) : execute(request);
+    } catch (const std::exception& e) { result = failure(e.what()); }
     --running_;
     std::scoped_lock lock(mutex_);
     result["run_id"] = ++runs_;
@@ -300,7 +333,14 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         const auto live = std::find_if(chain_.begin(), chain_.end(), [&](const auto& entry) { return entry["id"] == id; });
         if (live == chain_.end() || !live->value("enabled", false) || (*live)["version"] != item["version"])
             return {{"ok", true}, {"replacement", nullptr}, {"logs", nlohmann::json::array()}, {"skipped", true}};
-        if (!runtimes_.contains(id)) runtimes_[id] = std::make_shared<Runtime>();
+        if (!runtimes_.contains(id)) {
+            // Compatibility path for a legacy deployment migrated into a chain.
+            auto created = std::make_shared<Runtime>();
+            created->pool = std::make_shared<InspectionPool>(item["script"].get<std::string>(), storage_root_.string());
+            try { created->pool->warm(); }
+            catch (const std::exception& error) { return failure(error.what()); }
+            runtimes_[id] = std::move(created);
+        }
         runtime = runtimes_[id];
     }
     if (runtime->waiting.fetch_add(1) >= 8) {
@@ -323,11 +363,15 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     const auto previous = key.empty() || !runtime->states.contains(key) ? nlohmann::json::object() : runtime->states.at(key).state;
     const auto budget = std::min(remaining, item.value("timeout_ms", 1000));
     const auto started = std::chrono::steady_clock::now();
-    runtime->active = 1;
-    auto result = run({{"script", item["script"]}, {"event", event}, {"enrichments", enrichments},
+    ++runtime->active;
+    // Stateless messages may use both workers. Stateful deployments retain the
+    // existing serial transaction across read -> script -> state publication.
+    if (mode == "message") serial.unlock();
+    auto result = run_request({{"script", item["script"]}, {"event", event}, {"enrichments", enrichments},
         {"script_id", id}, {"timeout_ms", budget}, {"instance_state", previous},
-        {"instance", {{"mode", mode}, {"key", key}, {"deployment_id", id}, {"version", item["version"]}}}});
-    runtime->active = 0;
+        {"instance", {{"mode", mode}, {"key", key}, {"deployment_id", id}, {"version", item["version"]}}}}, runtime->pool);
+    --runtime->active;
+    if (!serial.owns_lock()) serial.lock();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     result["duration_ms"] = elapsed;
     if (result.value("ok", false)) {
@@ -371,6 +415,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
                     ? "Repeated errors/timeouts; inspect output before resuming" : "Five consecutive runs used at least 80% of the wall-clock budget";
                 live["enabled"] = false; live["suspended"] = true; live["suspension_reason"] = reason;
                 runtime->retired = true;
+                if (runtime->pool) runtime->pool->retire();
                 notifications_.push_back({{"id", ++next_notification_}, {"script_id", id},
                     {"name", live["name"]}, {"version", item["version"]}, {"reason", reason}});
                 if (notifications_.size() > 20) notifications_.erase(notifications_.begin());
@@ -387,6 +432,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         std::scoped_lock lock(mutex_); closed_flows_.erase(event.value("id", "")); return nullptr;
     }
     std::string script;
+    std::shared_ptr<InspectionPool> legacy_pool;
     nlohmann::json chain;
     { std::scoped_lock lock(mutex_);
       if (event.value("action", "") != "connection-content") return nullptr;
@@ -397,6 +443,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
       if (chain.empty() && !enabled_) return nullptr;
       if (chain.empty() && scope_ == "rules" && event.value("traffic_rule", nlohmann::json::object()).value("mode", "") != "inspect") return nullptr;
       script = source_;
+      legacy_pool = legacy_pool_;
     }
     if (!chain.empty()) {
         auto current = event;
@@ -453,7 +500,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         if (!result.is_null()) { result["replacement"] = replacement; result["steps"] = steps; }
         return result;
     }
-    auto result = run({{"script", script}, {"event", event}, {"enrichments", enrichments}});
+    auto result = run_request({{"script", script}, {"event", event}, {"enrichments", enrichments}}, legacy_pool);
     result.erase("instance_state");
     return result;
 }

@@ -424,6 +424,20 @@ def main():
                         {'script': 'api.print(len(api.bytes))\nreturn api.bytes.upper()',
                          'event': sample}, 'frontend-key')
                     assert result['replacement'] == 'QUJD' and result['logs'] == ['3']
+                    assert get_json(inspection_url, 'frontend-key')['sandbox']['required'] is True
+                    # Exercise containment through the real authenticated HTTP API.
+                    # A request must not be able to opt out of the kernel policy.
+                    _, blocked = post_json(inspection_url + '/run', {
+                        'script': 'import socket\nsocket.socket()', 'event': sample,
+                        'sandbox': False, 'storage_directory': '/'}, 'frontend-key')
+                    assert blocked['ok'] is False and blocked['replacement'] is None
+                    assert 'PermissionError' in blocked['error']
+                    # A denied invocation must not damage the next worker.
+                    _, recovered = post_json(inspection_url + '/run', {
+                        'script': 'return api.bytes', 'event': sample}, 'frontend-key')
+                    assert recovered['ok'] is True and recovered['replacement'] == 'YWJj'
+                    before_live = get_json(inspection_url, 'frontend-key')['runs']
+                    assert before_live == before_analysis + 3
                     post_json(inspection_url + '/rules', {'rules': [
                         {'address': '10.0.0.1', 'mode': 'inspect'}]}, 'frontend-key')
                     post_json(inspection_url, {'script': 'return api.bytes.upper()',
@@ -431,7 +445,7 @@ def main():
                     _, result = post_json(callback, sample)
                     assert result['action'] == 'replace' and result['content'] == 'QUJD'
                     state = get_json(inspection_url, 'frontend-key')
-                    assert state['enabled'] and state['runs'] == 2
+                    assert state['enabled'] and state['runs'] == before_live + 1
                     post_json(inspection_url, {'script': 'return api.bytes.upper()',
                         'enabled': False, 'scope': 'rules'}, 'frontend-key')
                     assert post_json(callback, sample)[1]['action'] == 'unchanged'
