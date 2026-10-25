@@ -82,12 +82,12 @@ def get_json(url, token=None):
     with urllib.request.urlopen(request, timeout=1) as response:
         return json.load(response)
 
-def post_json(url, body, token=None):
+def post_json(url, body, token=None, *, timeout=2):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["X-Spider-Token"] = token
     request = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
-    with urllib.request.urlopen(request, timeout=2) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.status, json.load(response)
 
 def post_bytes(url, body):
@@ -123,6 +123,7 @@ def main():
     ], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         deadline = time.monotonic() + 10
+        scenario_started = False
         while time.monotonic() < deadline:
             try:
                 get_json(f"http://127.0.0.1:{spider_port}/api/health")
@@ -143,6 +144,7 @@ def main():
                 actions = [entry["event"].get("action") for entry in events]
                 states = [entry["event"].get("state") for entry in events]
                 if "ping" in actions and "connected" in states:
+                    scenario_started = True
                     status = get_json(f"http://127.0.0.1:{spider_port}/api/status", "frontend-key")
                     ready = get_json(f"http://127.0.0.1:{spider_port}/api/ready", "frontend-key")
                     assert status["callbacks_received"] >= 1
@@ -407,7 +409,9 @@ def main():
                     except urllib.error.HTTPError as error:
                         assert error.code == 401
                     before_analysis = get_json(inspection_url, 'frontend-key')['runs']
-                    _, analysis = post_json(inspection_url + '/language', language_request, 'frontend-key')
+                    # Backend language work has a 2.5 s budget; let it reply before
+                    # the HTTP client deadline, including scheduling overhead.
+                    _, analysis = post_json(inspection_url + '/language', language_request, 'frontend-key', timeout=5)
                     if analysis['ok']:
                         assert 'frames' in [item['label'] for item in analysis['items']]
                     else:
@@ -482,7 +486,7 @@ def main():
 
                     _, completion = post_json(inspection_url + '/language', {
                         'script': 'part = api.message.parts[0]\npart.',
-                        'language_action': 'complete', 'line': 2, 'column': 5}, 'frontend-key')
+                        'language_action': 'complete', 'line': 2, 'column': 5}, 'frontend-key', timeout=5)
                     if completion['ok']:
                         assert {'headers', 'commit', 'get_bytes'} <= {item['label'] for item in completion['items']}
                     replay_url = f"http://127.0.0.1:{spider_port}/api/enrichment/replay"
@@ -565,7 +569,10 @@ def main():
                                 b'Length: 6', b'Length: 14') + b'rewritten body'
                     return 0
             except OSError:
-                pass
+                # Retry only discovery. Replaying a stateful scenario masks the
+                # original error behind stale sessions from its previous run.
+                if scenario_started:
+                    raise
             time.sleep(0.1)
         output = process.stdout.read() if process.poll() is not None else ""
         raise RuntimeError(f"chain did not reach callback ping; spider output: {output}")
