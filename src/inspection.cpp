@@ -266,10 +266,14 @@ nlohmann::json Inspection::language(nlohmann::json request) {
     return result;
 }
 nlohmann::json Inspection::run(nlohmann::json request) {
+    request.erase("translate_state");
+    request.erase("translate_allowed");
+    request.erase("translate_active");
     request.erase("held_parts");
     request.erase("hold_allowed"); // Preview never creates a transport hold.
     auto result = run_request(std::move(request), nullptr);
     result.erase("held_parts");
+    result.erase("translate_state");
     return result;
 }
 nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared_ptr<InspectionPool>& pool) {
@@ -291,6 +295,7 @@ nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared
     summary.erase("replacement");
     summary.erase("instance_state");
     summary.erase("held_parts");
+    summary.erase("translate_state");
     recent_.push_back(std::move(summary));
     if (recent_.size() > 20) recent_.erase(recent_.begin());
     return result;
@@ -308,6 +313,7 @@ void Inspection::expire_instances(Runtime& runtime, int idle_seconds) const {
 void Inspection::clear_flow(const std::string& id) {
     if (id.empty()) return;
     std::scoped_lock lock(mutex_);
+    translations_.erase(id);
     closed_flows_.insert(id);
     if (closed_flows_.size() > 10000) closed_flows_.erase(closed_flows_.begin());
     for (auto& [key, runtime] : runtimes_) {
@@ -319,7 +325,8 @@ void Inspection::clear_flow(const std::string& id) {
 }
 
 nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohmann::json& event,
-                                       const nlohmann::json& enrichments, int remaining, bool hold_allowed) {
+                                       const nlohmann::json& enrichments, int remaining, bool hold_allowed,
+                                       bool translate_allowed, bool translate_active) {
     const auto id = item.at("id").get<std::string>();
     const auto mode = item.value("instancing", "message");
     std::string key;
@@ -368,6 +375,9 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     const auto previous = key.empty() || !runtime->states.contains(key) ? nlohmann::json::object() : runtime->states.at(key).state;
     auto holds = key.empty() || !runtime->states.contains(key)
         ? nlohmann::json::object() : runtime->states.at(key).holds;
+    auto translations = key.empty() || !runtime->states.contains(key)
+        ? nlohmann::json::object() : runtime->states.at(key).translations;
+    if (translate_active && translations.empty()) return failure("Translate state expired or was lost");
     const auto side = event.value("details", nlohmann::json::object())
         .value("info", nlohmann::json::object()).value("side", "");
     const auto budget = std::min(remaining, item.value("timeout_ms", 1000));
@@ -380,6 +390,9 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         {"script_id", id}, {"timeout_ms", budget}, {"instance_state", previous},
         {"held_parts", holds.value(side, nlohmann::json(nullptr))},
         {"hold_allowed", hold_allowed && mode == "flow"},
+        {"translate_allowed", translate_allowed && mode == "flow" && holds.empty()},
+        {"translate_active", translate_active},
+        {"translate_state", translations.value(side, nlohmann::json(nullptr))},
         {"instance", {{"mode", mode}, {"key", key}, {"deployment_id", id}, {"version", item["version"]}}}}, runtime->pool);
     --runtime->active;
     if (!serial.owns_lock()) serial.lock();
@@ -391,15 +404,32 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         if (held.is_null()) holds.erase(side);
         else holds[side] = held;
         const auto state_size = next.dump().size();
-        const auto bytes = state_size + holds.dump().size();
-        if (!next.is_object() || state_size > 65536 ||
-            (!held.is_null() && (!hold_allowed || mode != "flow" || !held.is_object() || held.dump().size() > 1024 * 1024)) ||
-            (!key.empty() && runtime->state_bytes.load() - (runtime->states.contains(key) ? runtime->states.at(key).bytes : 0) + bytes > 4 * 1024 * 1024))
+        const auto translated = result.value("translate_state", nlohmann::json(nullptr));
+
+        if (!translated.is_null()) translations[side] = translated;
+
+        const auto bytes = state_size + holds.dump().size() + translations.dump().size();
+        const auto previous_bytes = runtime->states.contains(key) ? runtime->states.at(key).bytes : 0;
+        const bool invalid_state = !next.is_object() || state_size > 65536;
+        const bool invalid_translation = !translated.is_null() && (
+            !(translate_allowed || translate_active) || mode != "flow" ||
+            !translated.is_object() || translated.dump().size() > 65536);
+        const bool invalid_hold = !held.is_null() && (
+            !hold_allowed || mode != "flow" || !held.is_object() || held.dump().size() > 1024 * 1024);
+        const bool deployment_full = !key.empty() &&
+            runtime->state_bytes.load() - previous_bytes + bytes > 4 * 1024 * 1024;
+
+        if (invalid_state || invalid_translation || invalid_hold || deployment_full) {
             result = failure("Instance state / hold exceeds allowed mode or 64 KiB state / 1 MiB hold / 4 MiB deployment quota");
-        else if (!key.empty() && !runtime->retired) {
+        } else if (!key.empty()) {
             std::scoped_lock lock(mutex_);
-            if (mode != "flow" || !closed_flows_.contains(event.value("id", "")))
-                runtime->states[key] = Instance{next, std::chrono::steady_clock::now(), bytes, holds};
+            const bool closed = mode == "flow" && closed_flows_.contains(event.value("id", ""));
+
+            // A replacement must never outlive the checkpoint it depends on.
+            if ((translate_active || !translated.is_null()) && (runtime->retired || closed))
+                result = failure("Translate owner retired or connection closed during callback");
+            else if (!runtime->retired && !closed)
+                runtime->states[key] = Instance{next, std::chrono::steady_clock::now(), bytes, holds, translations};
         }
     }
     if (!result.value("ok", false) && runtime->states.contains(key)) {
@@ -408,11 +438,12 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
             // Current policy remains fail-open. Do not replay stale held bytes
             // after the failing callback has already been passed through.
             result["hold"] = {{"state", "abandoned"}, {"reason", "script failure; fail-open"}};
-            instance.bytes = instance.state.dump().size() + instance.holds.dump().size();
+            instance.bytes = instance.state.dump().size() + instance.holds.dump().size() + instance.translations.dump().size();
         }
     }
     result.erase("instance_state");
     result.erase("held_parts"); // Never publish checkpoint bytes into GUI/events.
+    result.erase("translate_state");
     // Also discard a previous state if a stop arrived while the worker was executing.
     {
         std::scoped_lock lock(mutex_);
@@ -452,24 +483,85 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     return result;
 }
 
+bool Inspection::translation_required(const nlohmann::json& event) const {
+    const auto control = event.value("details", nlohmann::json::object())
+        .value("info", nlohmann::json::object()).value("webhook_control", nlohmann::json::object());
+    std::scoped_lock lock(mutex_);
+    return translations_.contains(event.value("id", "")) || control.value("mode", "regular") == "strict";
+}
+
 nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann::json& enrichments) {
-    if (event.value("action", "") == "connection-stop") { clear_flow(event.value("id", "")); return nullptr; }
+    if (event.value("action", "") == "connection-stop") {
+        clear_flow(event.value("id", ""));
+        return nullptr;
+    }
+
     if (event.value("action", "") == "connection-start") {
-        std::scoped_lock lock(mutex_); closed_flows_.erase(event.value("id", "")); return nullptr;
+        std::scoped_lock lock(mutex_);
+        const auto id = event.value("id", "");
+        closed_flows_.erase(id);
+        return nullptr;
     }
     std::string script;
     std::shared_ptr<InspectionPool> legacy_pool;
     nlohmann::json chain;
-    { std::scoped_lock lock(mutex_);
-      if (event.value("action", "") != "connection-content") return nullptr;
-      const auto state = event.value("decision", nlohmann::json::object()).value("state", "");
-      if (state == "passed" || state == "forgotten" || state == "auto-accepted") return nullptr;
-      chain = chain_;
-      if (chain_mode_ && chain.empty()) return nullptr;
-      if (chain.empty() && !enabled_) return nullptr;
-      if (chain.empty() && scope_ == "rules" && event.value("traffic_rule", nlohmann::json::object()).value("mode", "") != "inspect") return nullptr;
-      script = source_;
-      legacy_pool = legacy_pool_;
+    const auto session = event.value("id", "");
+    const auto control = event.value("details", nlohmann::json::object())
+        .value("info", nlohmann::json::object()).value("webhook_control", nlohmann::json::object());
+    bool translate_active = false;
+    bool translate_allowed = false;
+    auto translate_failure = [](const std::string& message) {
+        auto result = failure(message);
+        result["translate_failed"] = true;
+        return result;
+    };
+
+    {
+        std::scoped_lock lock(mutex_);
+
+        if (event.value("action", "") != "connection-content") return nullptr;
+
+        const auto pin = translations_.find(session);
+        translate_active = pin != translations_.end();
+
+        if (translate_active) {
+            const auto live = std::find_if(chain_.begin(), chain_.end(), [&](const auto& item) {
+                return item["id"] == pin->second.deployment &&
+                       item["version"] == pin->second.version && item.value("enabled", false);
+            });
+            const bool strict_proxy = control.value("version", 0) == 1 &&
+                                      control.value("mode", "regular") == "strict";
+            const bool next_callback = control.value("sequence", 0ULL) == pin->second.sequence + 1;
+
+            if (pin->second.failed || live == chain_.end() || !strict_proxy || !next_callback) {
+                pin->second.failed = true;
+                return translate_failure("Pinned translate deployment unavailable or proxy lost strict mode");
+            }
+
+            // Once pinned, scope/filter decisions and unrelated deployments cannot
+            // skip or rewrite a callback ahead of the owning translate script.
+            chain = nlohmann::json::array({*live});
+        } else if (control.value("mode", "regular") == "strict") {
+            return translate_failure("Strict connection has no translate state (backend restart or lost flow)");
+        }
+
+        translate_allowed = control.value("sequence", 0ULL) == 1 && !session.empty() &&
+                            control.value("version", 0) == 1 && translations_.size() < 10000;
+        const auto state = event.value("decision", nlohmann::json::object()).value("state", "");
+        const bool bypassed = state == "passed" || state == "forgotten" || state == "auto-accepted";
+
+        if (!translate_active && bypassed) return nullptr;
+        if (!translate_active) chain = chain_;
+
+        if (chain_mode_ && chain.empty()) return nullptr;
+        if (chain.empty() && !enabled_) return nullptr;
+
+        const auto rule_mode = event.value("traffic_rule", nlohmann::json::object()).value("mode", "");
+
+        if (chain.empty() && scope_ == "rules" && rule_mode != "inspect") return nullptr;
+
+        script = source_;
+        legacy_pool = legacy_pool_;
     }
     if (!chain.empty()) {
         auto current = event;
@@ -481,21 +573,43 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         std::string last_enabled;
         for (const auto& entry : chain)
             if (entry.value("enabled", false)) last_enabled = entry["id"].get<std::string>();
+        // First live slice admits only one enabled deployment. No preceding
+        // rewrite may invalidate the original HPACK input or its annotations.
+        translate_allowed = translate_allowed && std::count_if(chain.begin(), chain.end(),
+            [](const auto& item) { return item.value("enabled", false); }) == 1;
         for (const auto& item : chain) {
             if (!item.value("enabled", false)) continue;
-            if (item.value("scope", "rules") == "rules" &&
+            if (!translate_active && item.value("scope", "rules") == "rules" &&
                 event.value("traffic_rule", nlohmann::json::object()).value("mode", "") != "inspect") continue;
             std::string error;
             const auto filter = item.value("filter", "");
-            if (!filter.empty()) {
+            if (!translate_active && !filter.empty()) {
                 auto compiled = SessionFilter::compile(filter, error);
                 if (!compiled || !compiled->matches(event)) continue;
             }
             const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                 deadline - std::chrono::steady_clock::now()).count();
             result = remaining <= 0 ? capacity_failure("Inspection chain exceeded its 3 s budget") :
-                run_instance(item, current, annotations, static_cast<int>(remaining), item["id"] == last_enabled);
-            if (result.value("skipped", false)) continue;
+                run_instance(item, current, annotations, static_cast<int>(remaining), item["id"] == last_enabled,
+                             translate_allowed, translate_active);
+            if (result.value("skipped", false) && !translate_active) continue;
+            if (translate_active && (result.value("skipped", false) ||
+                (result.value("ok", false) && !result.value("translated", false))))
+                result = translate_failure("Active translate callback did not produce an explicit translation");
+            if (translate_active || result.value("translated", false)) {
+                std::scoped_lock lock(mutex_);
+                // connection-stop may race with the worker. Do not resurrect its pin.
+                if (closed_flows_.contains(session))
+                    result = translate_failure("Connection closed during translate callback");
+
+                const bool ok = result.value("ok", false);
+
+                if (!closed_flows_.contains(session))
+                    translations_[session] = TranslationPin{item["id"].get<std::string>(), item["version"], !ok,
+                        control.value("sequence", 0ULL)};
+
+                if (!ok) result["translate_failed"] = true;
+            }
             {
                 std::scoped_lock lock(mutex_);
                 for (auto& live : chain_) if (live["id"] == item["id"] && live["version"] == item["version"]) {

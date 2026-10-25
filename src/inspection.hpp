@@ -24,6 +24,7 @@ public:
     nlohmann::json run(nlohmann::json request);
     nlohmann::json language(nlohmann::json request);
     nlohmann::json automatic(const nlohmann::json& event, const nlohmann::json& enrichments);
+    bool translation_required(const nlohmann::json& event) const;
     Collection collection;
 private:
     struct Instance {
@@ -31,6 +32,7 @@ private:
         std::chrono::steady_clock::time_point used = std::chrono::steady_clock::now();
         std::size_t bytes{2};
         nlohmann::json holds = nlohmann::json::object(); // L/R typed Parts checkpoints
+        nlohmann::json translations = nlohmann::json::object(); // L/R HPACK tables
     };
     struct Runtime {
         std::shared_ptr<InspectionPool> pool;
@@ -42,7 +44,8 @@ private:
         unsigned consecutive_errors{}, consecutive_slow{};
     };
     nlohmann::json run_instance(const nlohmann::json& item, const nlohmann::json& event,
-                               const nlohmann::json& enrichments, int remaining, bool hold_allowed);
+                               const nlohmann::json& enrichments, int remaining, bool hold_allowed,
+                               bool translate_allowed = false, bool translate_active = false);
     nlohmann::json run_request(nlohmann::json request, const std::shared_ptr<InspectionPool>& pool);
     void expire_instances(Runtime& runtime, int idle_seconds) const;
     void clear_flow(const std::string& id);
@@ -52,6 +55,13 @@ private:
     nlohmann::json notifications_ = nlohmann::json::array();
     std::uint64_t next_notification_{};
     std::set<std::string> closed_flows_;
+    struct TranslationPin {
+        std::string deployment;
+        nlohmann::json version;
+        bool failed{false};
+        std::uint64_t sequence{};
+    };
+    std::map<std::string, TranslationPin> translations_; // guarded by mutex_
     mutable std::mutex mutex_;
     std::string source_;
     std::string scope_{"rules"};

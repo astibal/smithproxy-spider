@@ -73,7 +73,8 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
         const bool managed = event.contains("collections") ||
             event.value("traffic_rule", nlohmann::json::object()).value("mode", "") == "inspect" ||
             (inspection && inspection->has_enabled_scripts());
-        const auto cutoff = decisions.heavy_traffic.observe(event.value("id", ""), size, managed);
+        const auto cutoff = inspection && inspection->translation_required(event) ? nlohmann::json(nullptr) :
+            decisions.heavy_traffic.observe(event.value("id", ""), size, managed);
         if (!cutoff.is_null()) {
             if (ticket) {
                 decisions.handle_message({{"type", "decision"}, {"decision_id", ticket->id}, {"action", "accept"}});
@@ -135,6 +136,11 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     }
     if (action == "access-request") return {200, {{"access-response", "accept"}}};
     if (!script_result.is_null()) {
+        if (script_result.value("translate_failed", false))
+            return {503, {{"error", "Translate callback failed; strict connection must close"}}};
+        if (script_result.value("translated", false) && script_result.value("ok", false))
+            return {200, {{"action", "replace"}, {"content", script_result["replacement"]},
+                          {"control", {{"mode", "strict"}}}}};
         if (script_result.value("ok", false) && script_result.value("need_more", false))
             return {200, {{"action", "need-more"}}};
         if (script_result.value("ok", false) && !script_result.value("replacement", nlohmann::json(nullptr)).is_null())

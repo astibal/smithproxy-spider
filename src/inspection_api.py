@@ -170,6 +170,18 @@ class Message:
         except (ValueError, TypeError, AttributeError, OverflowError) as error:
             raise CommitException(str(error)) from error
 
+    @api_method('', 'bytes',
+                'Explicitly translate every callback of a pinned H2 flow. Header edits only; requires a capable strict-control proxy, python-hpack and complete blocks. No silent background runs.',
+                'if api.instance.mode == "flow":\n    return api.message.translate()',
+                availability='First observed content of a new flow, sole enabled deployment; every callback thereafter.',
+                access='assemble translated output')
+    def translate(self):
+        transaction = getattr(self, '_translation', None)
+        if transaction is None:
+            raise CommitException(getattr(self, '_translation_error',
+                'Translate requires a live flow deployment and a strict-control capable proxy'))
+        return transaction.translate()
+
     @api_method('', 'MessageSnapshot', 'Create an independent editable draft of this callback. No live bytes change until the script returns draft.commit().',
         'draft = api.message.snapshot()\napi.print(draft.http1.available)',
         availability='Always available; HTTP/1 editing requires one complete supported message.', access='create private draft')
@@ -579,7 +591,7 @@ def make_http2(info, payload, enrichments):
 
 @dataclass(frozen=True)
 class InspectionViews:
-    """Typed API v0.5. Original protocol views are read-only; message.parts provides H2 REWRITE drafts and message.snapshot() provides an H1 draft."""
+    """Typed API v0.6. Read-only input views, editable Parts, H1 snapshots and explicit live H2 translation."""
     message: Message = documented('Current content fragment.', 'api.print(api.message.size)')
     metadata: ContentMetadata = documented('Metadata of the current content callback.', 'api.print(api.metadata.side)')
     http1: Http1 = documented('HTTP/1 head supplied by backend enrichment.', 'if api.http1.available:\n    api.print(api.http1.target)')
@@ -610,7 +622,7 @@ def api_schema():
     types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock,
              InstanceContext, SharedStorage, StorageNamespace, MessageSnapshot, Http1Draft, CommitException,
              RewritePart, PartContent, H2Headers, HpackField, PartList, HeldCommit]
-    return {'version': '0.5', 'root': 'InspectionViews', 'types': {
+    return {'version': '0.6', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),
              **dict(f.metadata)} for f in (fields(cls) if is_dataclass(cls) else ())],
@@ -626,3 +638,5 @@ if '__file__' in globals():
     exec(compile(_h2_source.read_text(), str(_h2_source), 'exec'), globals())
     _hold_source = _ApiPath(__file__).with_name('inspection_hold.py')
     exec(compile(_hold_source.read_text(), str(_hold_source), 'exec'), globals())
+    _translate_source = _ApiPath(__file__).with_name('inspection_translate.py')
+    exec(compile(_translate_source.read_text(), str(_translate_source), 'exec'), globals())

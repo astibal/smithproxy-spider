@@ -22,9 +22,11 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_worker.py" INSPECTION_WORK
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py" INSPECTION_API_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_h2.py" INSPECTION_H2_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_hold.py" INSPECTION_HOLD_SOURCE)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_translate.py" INSPECTION_TRANSLATE_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_language.py" INSPECTION_LANGUAGE_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_sandbox.py" INSPECTION_SANDBOX_SOURCE)
-set(INSPECTION_WORKER_SOURCE "${INSPECTION_API_SOURCE}\n${INSPECTION_H2_SOURCE}\n${INSPECTION_HOLD_SOURCE}\n${INSPECTION_LANGUAGE_SOURCE}\n${INSPECTION_SANDBOX_SOURCE}\n${INSPECTION_WORKER_SOURCE}")
+set(INSPECTION_WORKER_SOURCE "${INSPECTION_API_SOURCE}\n${INSPECTION_H2_SOURCE}\n${INSPECTION_HOLD_SOURCE}\n${INSPECTION_TRANSLATE_SOURCE}\n${INSPECTION_LANGUAGE_SOURCE}\n${INSPECTION_SANDBOX_SOURCE}\n${INSPECTION_WORKER_SOURCE}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_translate.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_hold.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_h2.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_worker.py src/inspection_api.py src/inspection_language.py src/inspection_sandbox.py tools/generate-inspection-schema.py)
@@ -86,6 +88,25 @@ if(BUILD_TESTING)
     add_test(NAME inspection_cookbook_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_cookbook_test.py)
     set_tests_properties(inspection_cookbook_tests PROPERTIES TIMEOUT 45)
+    option(SPIDER_TEST_TRANSLATE_POC "Enable isolated python-hpack translate experiment" OFF)
+    if(SPIDER_TEST_TRANSLATE_POC)
+        execute_process(COMMAND ${Python3_EXECUTABLE} -c "import hpack"
+                        RESULT_VARIABLE HPACK_IMPORT_RESULT)
+        if(NOT HPACK_IMPORT_RESULT EQUAL 0)
+            message(FATAL_ERROR "Translate POC tests require python-hpack; production does not")
+        endif()
+        add_test(NAME inspection_translate_poc_tests
+                 COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_poc_test.py)
+        set_tests_properties(inspection_translate_poc_tests PROPERTIES TIMEOUT 30 LABELS "experimental")
+        add_executable(inspection_translate_live_tests tests/inspection_translate_live_test.cpp)
+        target_link_libraries(inspection_translate_live_tests PRIVATE spider_core)
+        target_compile_options(inspection_translate_live_tests PRIVATE -UNDEBUG)
+        add_test(NAME inspection_translate_live_tests COMMAND inspection_translate_live_tests)
+        set_tests_properties(inspection_translate_live_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_translate_worker_tests
+                 COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_worker_test.py)
+        set_tests_properties(inspection_translate_worker_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+    endif()
     add_test(NAME inspection_parts_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_parts_test.py)
     add_test(NAME inspection_h2_tests

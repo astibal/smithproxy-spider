@@ -394,7 +394,7 @@ def main():
                         assert error.code == 400
                     post_json(inspection_url + '/heavy-traffic', {'enabled': False}, 'frontend-key')
                     schema = get_json(inspection_url + '/schema', 'frontend-key')
-                    assert schema['version'] == '0.5'
+                    assert schema['version'] == '0.6'
                     assert 'Http2' in schema['types']
                     assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == ['message', 'metadata', 'http1', 'http2', 'state', 'storage', 'instance']
                     assert schema['types']['Message']['fields'][0]['type'] == 'bytes'

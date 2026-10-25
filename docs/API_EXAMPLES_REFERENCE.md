@@ -11,7 +11,7 @@ Nejde o jeden souvislý skript: každý blok je samostatná ukázka.
 
 ## InspectionViews
 
-Typed API v0.5. Original protocol views are read-only; message.parts provides H2 REWRITE drafts and message.snapshot() provides an H1 draft.
+Typed API v0.6. Read-only input views, editable Parts, H1 snapshots and explicit live H2 translation.
 
 ### InspectionViews.message
 
@@ -156,6 +156,19 @@ Přístup: assemble private draft; typ/výsledek: `bytes | HeldCommit`.
 
 ```python
 return api.message.commit()
+```
+
+### Message.translate
+
+Explicitly translate every callback of a pinned H2 flow. Header edits only; requires a capable strict-control proxy, python-hpack and complete blocks. No silent background runs.
+
+Dostupnost: First observed content of a new flow, sole enabled deployment; every callback thereafter.
+
+Přístup: assemble translated output; typ/výsledek: `bytes`.
+
+```python
+if api.instance.mode == "flow":
+    return api.message.translate()
 ```
 
 ### Message.snapshot

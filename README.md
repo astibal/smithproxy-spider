@@ -12,6 +12,12 @@ covers every typed schema member; regenerate with `python3 tools/generate-api-ex
 The test rejects stale generated documentation. This is public API example coverage,
 not a claim of exhaustive input or branch coverage.
 
+**Experimental:** [Live H2 translate](docs/H2_TRANSLATE_LIVE.md) connects explicit
+script translation to flow deployments and checkpointed HPACK state. It requires
+the new proxy control/sequence metadata and python-hpack, and deliberately rejects
+unsupported framing/SETTINGS instead of silently skipping callbacks. The original
+[isolated POC](docs/H2_TRANSLATE_POC.md) remains an additional test harness.
+
 ### Python editor type inference
 
 The editor uses an authenticated backend language service (`POST /api/inspection/language`)

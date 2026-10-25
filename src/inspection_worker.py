@@ -49,6 +49,7 @@ class Api:
         self.message = views.message
         if request.get('held_parts'):
             resume_message(self.message, request['held_parts'], info, self.enrichments)
+        _prepare_translation(self.message, request)
         self.metadata = views.metadata
         self.http1 = views.http1
         self.http2 = views.http2
@@ -109,6 +110,12 @@ def invoke_script(current, compiled):
             exec(compiled, namespace)
             api = None if current.get('validate_only') else Api(current)
             result = None if api is None else namespace['__spider_script'](api)
+            translation = getattr(api.message, '_translation', None) if api is not None else None
+            if current.get('translate_active') or (translation is not None and translation.result is not None):
+                if translation is None or translation.result is None or result is not translation.result:
+                    raise CommitException('Active translate requires return api.message.translate() on every callback')
+                response['translate_state'] = translation.checkpoint
+                response['translated'] = True
             held = None
             if isinstance(result, HeldCommit):
                 if not current.get('hold_allowed') or api.instance.mode != 'flow' or api.side not in ('L', 'R'):

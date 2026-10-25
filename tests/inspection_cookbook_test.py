@@ -12,7 +12,7 @@ import unittest
 from inspection_h2_test import frame, literal, unpack, Oracle
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SOURCES = ('inspection_api.py', 'inspection_h2.py', 'inspection_hold.py',
+SOURCES = ('inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_translate.py',
            'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py')
 WORKER = '\n'.join((ROOT / 'src' / name).read_text() for name in SOURCES)
 
