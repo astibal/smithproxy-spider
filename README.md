@@ -5,6 +5,13 @@ defines the required Parts model, lazy representations, transactional commit and
 semantic hold buffers. It distinguishes the target architecture from implemented
 features; API changes must follow this contract.
 
+**API examples:** [Practical cookbook](docs/INSPECTION_COOKBOOK.md) includes small
+H1/H2 rewrite, hold, storage and expected-failure scripts, executed by the real
+worker in `inspection_cookbook_tests`. The [complete example inventory](docs/API_EXAMPLES_REFERENCE.md)
+covers every typed schema member; regenerate with `python3 tools/generate-api-examples.py`.
+The test rejects stale generated documentation. This is public API example coverage,
+not a claim of exhaustive input or branch coverage.
+
 ### Python editor type inference
 
 The editor uses an authenticated backend language service (`POST /api/inspection/language`)
