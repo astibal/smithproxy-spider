@@ -265,6 +265,7 @@ int main() {
     assert(split_output.size() == 1);
     assert(split_output[0].metadata["operation"] == "hpack.decode");
     assert(split_output[0].metadata["source"]["stream_id"] == 1);
+    assert(!split_output[0].metadata["source"].contains("payload_offset"));
     assert(split_output[0].metadata["headers"][0]["name"] == ":method");
     assert(split_output[0].metadata["headers"][1]["value"] == "/video");
     assert(split_output[0].metadata["headers"][2]["value"] == "dynamic-value");
@@ -323,6 +324,7 @@ int main() {
     assert(continuation_output.size() == 1);
     assert(continuation_output[0].metadata["source"]["stream_id"] == 3);
     assert(continuation_output[0].metadata["source"]["spans_previous_envelopes"] == true);
+    assert(!continuation_output[0].metadata["source"].contains("payload_offset"));
     assert(continuation_output[0].metadata["headers"][1]["value"] == "/again");
     // Replay rebuilds HPACK history independently of the live engine and input rule mode.
     auto replay_first = h2_event("replay", "L", complete_h2_annotations(first_headers.size(), "h2.headers"));
@@ -357,8 +359,27 @@ int main() {
     const auto padded_output = enrichment.process(h2_event("h2-padded", "R",
         complete_h2_annotations(padded_frame.size(), "h2.headers")), padded_frame);
     assert(padded_output.size() == 1);
+    assert(padded_output[0].metadata["source"]["payload_offset"] == 0);
     assert(padded_output[0].metadata["headers"][0]["name"] == ":status");
     assert(padded_output[0].metadata["headers"][1]["value"] == "text/plain");
+
+    // Same-callback CONTINUATION keeps the first HEADERS anchor, not the last
+    // frame's offset. A second block on the same stream has its own anchor.
+    HpackEncoder local_encoder;
+    const auto local_block = local_encoder.encode({{":status", "200"}});
+    const auto local_first = h2_frame(1, 0, 9, local_block);
+    const auto local_last = h2_frame(9, 4, 9, "");
+    const auto local_next = h2_frame(1, 4, 9, local_encoder.encode({{"x-trailer", "yes"}}));
+    const auto local_payload = local_first + local_last + local_next;
+    auto local_annotations = complete_h2_annotations(local_first.size(), "h2.headers");
+    const auto next_offset = local_first.size() + local_last.size();
+    local_annotations.push_back({local_first.size(), next_offset, "h2.frame.header"});
+    local_annotations.push_back({next_offset, next_offset + 9, "h2.frame.header"});
+    local_annotations.push_back({next_offset + 9, local_payload.size(), "h2.headers"});
+    const auto local_output = enrichment.process(h2_event("h2-local", "R", local_annotations), local_payload);
+    assert(local_output.size() == 2);
+    assert(local_output[0].metadata["source"]["payload_offset"] == 0);
+    assert(local_output[1].metadata["source"]["payload_offset"] == next_offset);
 
     const std::string settings_payload{"\x00\x01\x00\x01\x00\x00", 6};
     const auto settings_frame = h2_frame(4, 0, 0, settings_payload);
