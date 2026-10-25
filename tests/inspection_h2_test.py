@@ -64,6 +64,10 @@ class Oracle:
         self.lib.nghttp2_hd_inflate_hd2.restype = c.c_ssize_t
         assert self.lib.nghttp2_hd_inflate_new(c.byref(self.ptr)) == 0
 
+    def resize(self, size):
+        self.lib.nghttp2_hd_inflate_change_table_size.argtypes = [c.c_void_p, c.c_size_t]
+        assert self.lib.nghttp2_hd_inflate_change_table_size(self.ptr, size) == 0
+
     def decode(self, data):
         fields = []
         while True:

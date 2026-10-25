@@ -2,7 +2,8 @@
 
 def language_prelude():
     import json
-    lines = ['from typing import Any', 'class PartType:', '    Opaque: str',
+    lines = ['from typing import Any', 'class Mode:', '    Rewrite: str', '    Translate: str',
+             'class PartType:', '    Opaque: str',
              '    class Http2:', '        Part: str', '        Header: str',
              '        Data: str', '        Frame: str',
              '    class Http1:', '        Part: str', '        Header: str', '        Body: str']

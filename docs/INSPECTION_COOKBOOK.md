@@ -1,5 +1,10 @@
 # Inspection cookbook
 
+Živé spojení má také `api.connection`: explicitní režim přes `set_mode(Mode.Translate)`
+a trvalou H2 politiku přes `http2.enforce_header_table_limit(0)`. Praktický kontrakt
+a příklad jsou v [H2 translate](H2_TRANSLATE_LIVE.md); vyžadují živou flow instanci,
+nikoli offline fixture. Settery nenahrazují `return api.message.translate()`.
+
 Krátké scénáře pro vlastní lab a autorizované testování. Každý blok vlož jako
 samostatný skript. Nejde o skripty, které se mají spustit všechny za sebou.
 Test `inspection_cookbook_tests` spouští všechny zdejší Python bloky ve skutečném

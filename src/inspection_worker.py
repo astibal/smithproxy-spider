@@ -58,6 +58,7 @@ class Api:
         identity = request.get('instance', {})
         self.instance = InstanceContext(identity.get('mode', 'message'), identity.get('key', ''),
                                         identity.get('deployment_id', ''), identity.get('version', 0))
+        self.connection = Connection(self.message, request.get('translate_active', False), self.instance.mode)
         starts, ends = info.get('L7_payload_start', []), info.get('L7_payload_end', [])
         self.l7_state = 'unavailable'
         self.l7_ranges = []
@@ -102,7 +103,7 @@ def script_error():
 def invoke_script(current, compiled):
     output = Output()
     response = {'ok': False, 'replacement': None}
-    namespace = {'CommitException': CommitException, 'Header': Header, 'PartType': PartType}
+    namespace = {'CommitException': CommitException, 'Header': Header, 'PartType': PartType, 'Mode': Mode}
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             # Fresh script globals and API objects; imports/native module caches
@@ -111,10 +112,12 @@ def invoke_script(current, compiled):
             api = None if current.get('validate_only') else Api(current)
             result = None if api is None else namespace['__spider_script'](api)
             translation = getattr(api.message, '_translation', None) if api is not None else None
-            if current.get('translate_active') or (translation is not None and translation.result is not None):
+            requested = api is not None and api.connection._requested
+            if requested or (translation is not None and translation.result is not None):
                 if translation is None or translation.result is None or result is not translation.result:
                     raise CommitException('Active translate requires return api.message.translate() on every callback')
                 response['translate_state'] = translation.checkpoint
+                response['translate_control'] = translation.control_checkpoint
                 response['translated'] = True
             held = None
             if isinstance(result, HeldCommit):

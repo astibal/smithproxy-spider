@@ -267,6 +267,7 @@ nlohmann::json Inspection::language(nlohmann::json request) {
 }
 nlohmann::json Inspection::run(nlohmann::json request) {
     request.erase("translate_state");
+    request.erase("translate_control");
     request.erase("translate_allowed");
     request.erase("translate_active");
     request.erase("held_parts");
@@ -274,6 +275,7 @@ nlohmann::json Inspection::run(nlohmann::json request) {
     auto result = run_request(std::move(request), nullptr);
     result.erase("held_parts");
     result.erase("translate_state");
+    result.erase("translate_control");
     return result;
 }
 nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared_ptr<InspectionPool>& pool) {
@@ -296,6 +298,7 @@ nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared
     summary.erase("instance_state");
     summary.erase("held_parts");
     summary.erase("translate_state");
+    summary.erase("translate_control");
     recent_.push_back(std::move(summary));
     if (recent_.size() > 20) recent_.erase(recent_.begin());
     return result;
@@ -393,6 +396,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         {"translate_allowed", translate_allowed && mode == "flow" && holds.empty()},
         {"translate_active", translate_active},
         {"translate_state", translations.value(side, nlohmann::json(nullptr))},
+        {"translate_control", translations.value("settings", nlohmann::json(nullptr))},
         {"instance", {{"mode", mode}, {"key", key}, {"deployment_id", id}, {"version", item["version"]}}}}, runtime->pool);
     --runtime->active;
     if (!serial.owns_lock()) serial.lock();
@@ -405,15 +409,20 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         else holds[side] = held;
         const auto state_size = next.dump().size();
         const auto translated = result.value("translate_state", nlohmann::json(nullptr));
+        const auto settings = result.value("translate_control", nlohmann::json(nullptr));
 
-        if (!translated.is_null()) translations[side] = translated;
+        if (!translated.is_null()) {
+            translations[side] = translated;
+            translations["settings"] = settings;
+        }
 
         const auto bytes = state_size + holds.dump().size() + translations.dump().size();
         const auto previous_bytes = runtime->states.contains(key) ? runtime->states.at(key).bytes : 0;
         const bool invalid_state = !next.is_object() || state_size > 65536;
         const bool invalid_translation = !translated.is_null() && (
             !(translate_allowed || translate_active) || mode != "flow" ||
-            !translated.is_object() || translated.dump().size() > 65536);
+            !translated.is_object() || translated.dump().size() > 65536 ||
+            !settings.is_object() || settings.dump().size() > 16384);
         const bool invalid_hold = !held.is_null() && (
             !hold_allowed || mode != "flow" || !held.is_object() || held.dump().size() > 1024 * 1024);
         const bool deployment_full = !key.empty() &&
@@ -444,6 +453,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     result.erase("instance_state");
     result.erase("held_parts"); // Never publish checkpoint bytes into GUI/events.
     result.erase("translate_state");
+    result.erase("translate_control");
     // Also discard a previous state if a stop arrived while the worker was executing.
     {
         std::scoped_lock lock(mutex_);

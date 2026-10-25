@@ -188,7 +188,7 @@ class Http2Tests(unittest.TestCase):
             for name, definition in api_schema()['types'].items():
                 for field in definition['fields'] + definition.get('methods', []):
                     with self.subTest(type=name, field=field['name'], size=len(data)):
-                        from inspection_api import PartType
+                        from inspection_api import PartType, Mode
                         from textwrap import indent
                         views = make_views(event, data, enrichments)
                         api = SimpleNamespace(**vars(views), print=lambda *args: None)
@@ -196,10 +196,15 @@ class Http2Tests(unittest.TestCase):
                         # Execute each independently, inside a real script function
                         # so explicit `return api.message.commit()` is exercised.
                         part = api.http2.Frame(1, 5, 1, b'\x00\x01x\x01v')
-                        scope = {}
+                        scope = {'Mode': Mode}
                         source = 'def example(api, part, entry, PartType):\n' + indent(field['example'], '    ')
                         exec(compile(source, '<api-example>', 'exec'), scope)
-                        scope['example'](api, part, part.headers.entries[0], PartType)
+                        if name in ('Connection', 'ConnectionHttp2') or field['name'] == 'connection':
+                            # Offline views cannot activate live connection policy.
+                            with self.assertRaisesRegex(CommitException, 'flow instantiation'):
+                                scope['example'](api, part, part.headers.entries[0], PartType)
+                        else:
+                            scope['example'](api, part, part.headers.entries[0], PartType)
 
 
 if __name__ == '__main__':

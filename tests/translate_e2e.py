@@ -106,6 +106,8 @@ def main():
     parser.add_argument('--spider', type=Path, required=True)
     parser.add_argument('--failure', choices=('exception', 'missing-translate'), default='exception')
     parser.add_argument('--fragmented', action='store_true', help='Split HEADERS/CONTINUATION into single-byte callbacks')
+    parser.add_argument('--settings', action='store_true', help='Exercise acknowledged table eviction and growth in both directions')
+    parser.add_argument('--policy', action='store_true', help='Enforce zero capacity after handshake, including synthetic ACK consumption')
     args = parser.parse_args()
     source = args.smithproxy_source.resolve()
     sys.path.insert(0, str(source / 'tests/tls'))
@@ -140,6 +142,10 @@ def main():
             inspection = base + '/api/inspection'
             state = get_json(inspection, 'frontend-key')
             script = SCRIPT
+            if args.policy:
+                script = script.replace("control = api.info", "api.connection.set_mode(Mode.Translate)\n"
+                    "if api.state['callbacks'] >= 5:\n"
+                    "    api.connection.http2.enforce_header_table_limit(0)\ncontrol = api.info")
             if args.failure == 'missing-translate':
                 script = script.replace("raise ValueError('intentional E2E failure')", 'return None')
             _, state = post_json(inspection, {
@@ -187,6 +193,23 @@ def main():
                         encoders = [hpack.Encoder(), hpack.Encoder()]
                         decoders = [Oracle(), Oracle()]
                         header_callbacks = 0
+                        settings_callbacks = 0
+
+                        if args.policy:
+                            trigger = frame(b'policy00', 6, 0, 0)
+                            zero = frame(b'\x00\x01\x00\x00\x00\x00', 4, 0, 0)
+                            client.sendall(trigger)
+                            assert b''.join(receive_frame(origin)) == trigger
+                            assert b''.join(receive_frame(origin)) == zero
+                            origin.sendall(ack)
+                            # The synthetic ACK disappears; only opposite SETTINGS arrives.
+                            assert b''.join(receive_frame(client)) == zero
+                            client.sendall(ack)
+                            wait_until(lambda: get_json(inspection, 'frontend-key')['chain'][0]['runs'] == 7,
+                                       processes)
+                            for encoder in encoders:
+                                encoder.header_table_size = 0
+                            settings_callbacks += 3
 
                         def send_headers(sender, receiver, block, stream):
                             nonlocal header_callbacks
@@ -225,6 +248,20 @@ def main():
                                     raise AssertionError(f'Incomplete header block leaked {leaked!r}')
 
                         for turn in range(1, 5):
+                            if args.settings and turn > 1:
+                                capacity = {2: 0, 3: 128, 4: 8192}[turn]
+                                update = frame(b'\x00\x01' + capacity.to_bytes(4, 'big'), 4, 0, 0)
+
+                                for sender, receiver, encoder, decoder in zip(
+                                        (client, origin), (origin, client), encoders, decoders):
+                                    receiver.sendall(update)
+                                    assert b''.join(receive_frame(sender)) == update
+                                    sender.sendall(ack)
+                                    assert b''.join(receive_frame(receiver)) == ack
+                                    encoder.header_table_size = capacity
+                                    decoder.resize(capacity)
+                                    settings_callbacks += 2
+
                             stream = 2 * turn - 1
                             for side, sender, receiver, encoder, decoder in zip(
                                     ('L', 'R'), (client, origin), (origin, client), encoders, decoders):
@@ -233,7 +270,7 @@ def main():
                                           if side == 'L' else [(b':status', b'200')])
                                 fields += [(b'x-lab', b'original')]
                                 block = encoder.encode(fields, huffman=False)
-                                if turn > 1:
+                                if turn > 1 and not args.settings and not args.policy:
                                     assert block[-1:] == b'\xbe', 'Expected indexed x-lab'
                                 send_headers(sender, receiver, block, stream)
                                 head, body = receive_headers(receiver)
@@ -251,7 +288,7 @@ def main():
                         origin.sendall(pong)
                         assert b''.join(receive_frame(client)) == pong
                         state = get_json(inspection, 'frontend-key')['chain'][0]
-                        expected_runs = 4 + header_callbacks + 2  # SETTINGS/ACK, headers, final PING/ACK.
+                        expected_runs = 4 + header_callbacks + settings_callbacks + 2
                         assert state['runs'] == expected_runs, state
                         assert state['errors'] == 0, state
                         assert state['last_result']['logs'] == [f'R {expected_runs}'], state

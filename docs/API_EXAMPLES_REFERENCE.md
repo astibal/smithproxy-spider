@@ -102,6 +102,19 @@ Přístup: read-only snapshot; typ/výsledek: `InstanceContext`.
 api.print(api.instance.mode, api.instance.key, api.instance.version)
 ```
 
+### InspectionViews.connection
+
+Explicit live connection mode and HTTP/2 policy.
+
+Dostupnost: Always available for a content callback.
+
+Přístup: staged connection policy; typ/výsledek: `Connection`.
+
+```python
+api.connection.set_mode(Mode.Translate)
+return api.message.translate()
+```
+
 ## Message
 
 Current webhook content fragment, not necessarily a complete application message.
@@ -1195,3 +1208,52 @@ if api.message.parts:
 Opaque committed prefix plus retained Parts. Return it from the script; do not serialize it yourself.
 
 Typ bez veřejných členů ve schematu; praktické použití je v cookbooku.
+
+## Connection
+
+Connection intent is staged; setters never send or translate payloads by themselves.
+
+### Connection.http2
+
+HTTP/2 connection policy.
+
+Dostupnost: Always available for a content callback.
+
+Přístup: staged connection policy; typ/výsledek: `ConnectionHttp2`.
+
+```python
+api.connection.set_mode(Mode.Translate)
+api.connection.http2.enforce_header_table_limit(0)
+return api.message.translate()
+```
+
+### Connection.set_mode
+
+Request Mode.Translate explicitly. Requires flow instantiation and a live eligible connection. Mode.Rewrite is a no-op before activation; an active translated connection cannot revert.
+
+Dostupnost: Live flow deployment. The returned translate result activates the mode atomically.
+
+Přístup: staged connection mode; typ/výsledek: `None`.
+
+```python
+api.connection.set_mode(Mode.Translate)
+return api.message.translate()
+```
+
+## ConnectionHttp2
+
+Persistent HTTP/2 policy, applied only by an explicitly returned translate result.
+
+### ConnectionHttp2.enforce_header_table_limit
+
+Enforce a maximum HPACK table capacity in both directions. Idempotent; never increases a peer-advertised limit. SETTINGS and synthetic ACK handling occur only through message.translate().
+
+Dostupnost: Live H2 flow deployment; requires Translate mode. Each direction is updated on its next eligible callback, after its first SETTINGS.
+
+Přístup: staged connection policy; typ/výsledek: `None`.
+
+```python
+api.connection.set_mode(Mode.Translate)
+api.connection.http2.enforce_header_table_limit(0)
+return api.message.translate()
+```

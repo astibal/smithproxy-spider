@@ -601,6 +601,8 @@ class InspectionViews:
     storage: SharedStorage = documented('Persistent shared JSON namespaces across scripts and versions. Writes commit per operation, even if the script later fails.',
         'shared = api.storage.namespace("stats")\napi.print(shared.increment("callbacks"))', access='shared persistent storage')
     instance: InstanceContext = documented('Identity and lifecycle mode of this invocation.', 'api.print(api.instance.mode, api.instance.key, api.instance.version)')
+    connection: Connection = documented('Explicit live connection mode and HTTP/2 policy.',
+        'api.connection.set_mode(Mode.Translate)\nreturn api.message.translate()', access='staged connection policy')
 
 
 def make_views(event, payload, enrichments):
@@ -614,14 +616,14 @@ def make_views(event, payload, enrichments):
         ContentMetadata(event.get('id', ''), info.get('side', ''), info.get('payload_layer')),
         Http1(bool(head), head.get('method'), head.get('target'), head.get('status'),
               tuple(Header(h['name'], h['value']) for h in head.get('headers', []))),
-        make_http2(info, payload, enrichments), {}, SharedStorage(), InstanceContext('message', '', '', 0))
+        make_http2(info, payload, enrichments), {}, SharedStorage(), InstanceContext('message', '', '', 0), Connection())
 
 
 def api_schema():
     """Generate reference directly from runtime dataclasses, types and field comments."""
     types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock,
              InstanceContext, SharedStorage, StorageNamespace, MessageSnapshot, Http1Draft, CommitException,
-             RewritePart, PartContent, H2Headers, HpackField, PartList, HeldCommit]
+             RewritePart, PartContent, H2Headers, HpackField, PartList, HeldCommit, Connection, ConnectionHttp2]
     return {'version': '0.6', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),

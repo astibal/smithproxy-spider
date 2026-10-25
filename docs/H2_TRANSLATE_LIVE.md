@@ -131,6 +131,7 @@ nesmějí tiše vynechat. Skript lze vevnitř větvit, ale musí vrátit transla
 - Stav se přenáší jako omezený JSON checkpoint, ne pickle ani Python globals.
   Worker může být mezi callbacky jiný. Limit je 64 KiB na směr; checkpointy
   vstupují také do deployment limitu 4 MiB společně s user state a holdem.
+  Společný SETTINGS checkpoint má navíc limit 16 KiB.
 - První úspěšný výsledek obsahuje `control.mode=strict` spolu s replacementem.
   Nová proxy aplikuje control před replacementem. Další callback musí potvrdit
   strict a přesně navazující sequence. Jde o capability + stavovou kontrolu,
@@ -144,19 +145,73 @@ nesmějí tiše vynechat. Skript lze vevnitř větvit, ale musí vrátit transla
 - Tabulky nejsou publikovány do GUI ani do uživatelského `api.state`.
   Úspěch přípravy není odeslání: teprve návrat výsledku ze skriptu je publikuje.
 
+## SETTINGS a potvrzení limitů
+
+### Explicitní režim a trvalý limit
+
+```python
+api.connection.set_mode(Mode.Translate)
+api.connection.http2.enforce_header_table_limit(0)
+
+for part in api.message.parts:
+    if not part.complete:
+        api.message.parts.hold_from(part)
+        break
+
+return api.message.translate()
+```
+
+Obě volání jsou idempotentní a pouze připravují záměr. První vyžaduje flow
+instanciaci a způsobilé živé H2 spojení. Druhé nastaví stálý maximální limit
+pro oba směry. Vynechání návratu `message.translate()` po `set_mode()` je chyba;
+nic se nepublikuje. Původní aktivace samotným `message.translate()` zůstává
+kompatibilní. `Mode.Rewrite` nelze použít pro návrat již přeloženého spojení.
+
+Politika omezuje budoucí SETTINGS a nikdy nezvýší menší limit oznámený peerem.
+Pokud už handshake proběhl, může vložit vlastní SETTINGS; jeho ACK spotřebuje
+engine a nepředá ho protistraně jako potvrzení jejího požadavku. Původní ACK
+nadále procházejí. Opakované stejné nastavení negeneruje další rámce.
+
+Každý směr politiku dostane při nejbližším způsobilém callbacku, až po jeho
+prvním SETTINGS. Samostatné vložení čeká také na uvolnění holdu. Není to okamžitý
+broadcast do obou socketů ani background task. Nula zakáže dynamickou tabulku,
+nikoli statické indexy nebo Huffman. Po `translate()` už settery volat nelze.
+
+SETTINGS i ACK nadále procházejí explicitním `return api.message.translate()`.
+Rámce se předávají beze změny; skript nepotřebuje zvláštní volání pro jejich
+zpracování. SETTINGS odeslané z R nastavují omezení pro L a naopak.
+
+- Každý směr má FIFO frontu nejvýše 64 čekajících SETTINGS, včetně prázdných
+  nebo těch s neznámými identifikátory. ACK potvrzuje nejstarší položku.
+- Nový limit se při kontrole vstupu uplatní po ACK. Před ním mohou ještě přijít
+  data podle starých limitů. ACK bez čekajícího SETTINGS je chyba.
+- Zmenšení HPACK tabulky vyžaduje odpovídající table-size update v následujícím
+  header bloku. Při zmenšení a zvětšení se zachová nejmenší mez i konečná hodnota.
+- Vstupní dekodér respektuje oznámenou kapacitu; stále platí velikostní kvóty
+  checkpointu. Výstupní encoder používá nejvýše 4096 bajtů tabulky, i když peer
+  povolí více. To je legální menší kapacita, nikoliv limit peerova vstupu.
+- MAX_FRAME_SIZE řídí kontrolu vstupních rámců i dělení výstupních
+  HEADERS/CONTINUATION. Změna se může potvrdit uprostřed jednoho callbacku.
+- Zadržený SETTINGS/ACK nemění publikovaný stav. Ten se posune až spolu
+  s emitovaným prefixem. Neúspěšný commit nepublikuje nic.
+
+Synchronizace vychází z [RFC 9113 §6.5.3](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.5.3)
+a změny HPACK kapacity z [RFC 7541 §4.2](https://www.rfc-editor.org/rfc/rfc7541.html#section-4.2).
+
 ## Co tento první krok ještě neumí
 
 - PUSH_PROMISE;
-- změny DATA nebo control rámců, vložení/mazání/přeskládání Parts;
+- uživatelské změny DATA nebo control rámců, vložení/mazání/přeskládání Parts
+  (výjimkou je explicitní SETTINGS politika výše);
 - raw HPACK a explicitní manipulace s indexy (to zůstává rewrite);
-- SETTINGS měnící kapacitu HPACK tabulky z 4096 nebo max frame size z 16384;
 - převzetí již rozběhlého spojení, více aktivních překladových deploymentů,
   živý návrat přeloženého spojení do rewrite;
 - garanci HTTP sémantiky uživatelem změněných hlaviček. Překládá se HPACK stav,
   nejde o automatickou opravu libovolně pozměněného aplikačního protokolu.
 
 Známá H2 preface a nezměněné DATA/control frames projdou byte-for-byte.
-Přípustné defaultní SETTINGS se explicitně zpracují skriptem a předají nezměněné.
+Bez zapnuté politiky limitu se přípustné SETTINGS explicitně zpracují skriptem
+a předají nezměněné. Politika smí změnit SETTINGS a spotřebovat vlastní ACK.
 Output encoder vlastní indexování; `never` zůstává never-indexed.
 
 ## Ověření
@@ -192,7 +247,7 @@ replacement. Pouze discovery management API je testovací stub, který získá
 náhodnou callback URL Spideru pro dočasnou konfiguraci proxy. Registraci/obnovu
 lease proti skutečnému management API tento harness netestuje.
 
-Každý scénář ověřuje:
+Základní scénáře ověřují:
 
 - H2 preface, výchozí SETTINGS a ACK;
 - čtyři request/response streamy se skutečným dynamickým indexem 62 na vstupu;
@@ -204,6 +259,11 @@ Každý scénář ověřuje:
   socketu, žádný propuštěný bajt a jedna zaznamenaná chyba deploymentu.
 
 Test používá plaintext H2 na loopbacku, malé rámce a výchozí SETTINGS.
+Varianta `--settings --fragmented` mění tabulky v obou směrech
+`4096 → 0 → 128 → 8192`, potvrzuje je přes ACK a ověřuje výstup nezávislým
+libnghttp2 dekodérem. Jednotková sada `inspection_translate_settings_tests`
+navíc kontroluje pořadí ACK, stará data před ACK, chybné limity, kvótu fronty,
+duplicitní změny kapacity, velké HEADERS/CONTINUATION a zadržení SETTINGS/ACK.
 Varianta `--fragmented` navíc dělí HEADERS/CONTINUATION po jednotlivých bajtech,
 čeká na každý callback, kontroluje ticho do dokončení bloku a testuje hotový
 PING prefix i odpověď v protisměru během holdu. Jednotková sada
@@ -220,6 +280,10 @@ python3 tests/translate_e2e.py \
 ```
 
 Pro druhý scénář použij `--failure missing-translate`, pro fragmentaci `--fragmented`.
+Pro kombinaci fragmentace a změn limitů přidej `--fragmented --settings`.
+Varianta `--fragmented --policy` aktivuje nulový limit až po handshaku,
+ověřuje vložené SETTINGS a spotřebování obou syntetických ACK na skutečných
+socketech. Další callbacky opakují stejné nastavení bez dalších SETTINGS.
 CTest registraci všech variant
 zapneš spolu s `SPIDER_TEST_TRANSLATE_POC=ON` nastavením absolutních cest
 `SPIDER_E2E_SMITHPROXY_SOURCE` a `SPIDER_E2E_SMITHPROXY_BINARY` při konfiguraci
@@ -239,3 +303,20 @@ Nová hold sada obsahuje devět testů včetně všech hranic dělení testovac�
 jednotlivých bajtů a atomických chyb. Fragmentovaný E2E potvrdil přesně 225
 úspěšných explicitních callbacků v obou směrech a zavření bez úniku při následné
 výjimce. Samostatně prošel i live test prvního `need-more` s aktivací strict.
+
+Po doplnění SETTINGS/ACK: všech 31 sad prošlo (83,64 s), včetně čtyř skutečných
+E2E variant. Nová SETTINGS sada obsahuje devět testů; worker sada navíc ověřuje
+společný stav protisměrů mezi čerstvými sandboxovanými procesy. SETTINGS E2E
+prošel s fragmentací HEADERS/CONTINUATION, evikcí a opětovným růstem tabulek
+a nezávislým libnghttp2 dekodérem (21,95 s). Build, kontrola generovaných API
+příkladů i `git diff --check` prošly. Proxy zůstává na `ddb5ce1`, beze změn.
+
+Po přidání `api.connection` a trvalé politiky: SETTINGS sada má 16 testů,
+worker ověřuje explicitní mode, chybějící translate i nekompatibilní instanciaci;
+editorové testy ověřují completion nových členů. Policy E2E prošel samostatně
+(24,20 s) i v celé sadě (24,18 s). Celý běh měl 32 sad: 30 prošlo přímo,
+dvě vyžadovaly aktualizaci očekávaného API schématu a offline příkladů.
+API sada poté prošla; chain při opakování jednou narazil na bootstrap assertion
+`active_sessions == 0`, následující samostatný běh prošel (7,62 s).
+Všech 32 sad tedy má úspěšný běh; není to tvrzení o jednom čistém full-run.
+Build, generovaná reference a kontrola whitespace prošly.

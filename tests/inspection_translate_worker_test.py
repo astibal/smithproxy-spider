@@ -17,6 +17,49 @@ def event(data, side='L'):
 
 
 class TranslateWorkerTests(unittest.TestCase):
+    def test_explicit_mode_policy_and_missing_commit(self):
+        script = ('api.connection.set_mode(Mode.Translate)\n'
+                  'api.connection.http2.enforce_header_table_limit(0)\n')
+        wire = frame(b'', 4, 0, 0)
+        for mode, suffix, ok in [('flow', 'return api.message.translate()', True),
+                                 ('flow', 'return None', False),
+                                 ('message', 'return api.message.translate()', False)]:
+            with self.subTest(mode=mode, suffix=suffix):
+                result = run(script + suffix, event(wire), translate_allowed=True,
+                             instance={'mode': mode})
+                self.assertEqual(result['ok'], ok, result)
+                if ok:
+                    self.assertEqual(base64.b64decode(result['replacement']),
+                                     frame(b'\x00\x01\x00\x00\x00\x00', 4, 0, 0))
+                else:
+                    self.assertIsNone(result['replacement'])
+                    self.assertNotIn('translate_control', result)
+
+    def test_settings_checkpoint_across_fresh_workers_and_directions(self):
+        states, control = {}, None
+        sender, receiver = hpack.Encoder(), hpack.Decoder()
+        sender.header_table_size = 0
+        receiver.max_allowed_table_size = 0
+        fields = [(b'x-test', b'value')]
+        frames = [
+            ('R', frame(b'\x00\x01\x00\x00\x00\x00', 4, 0, 0)),
+            ('L', frame(b'', 4, 1, 0)),
+            ('L', frame(sender.encode(fields), 1, 4)),
+        ]
+
+        for side, wire in frames:
+            result = run('return api.message.translate()', event(wire, side),
+                         translate_allowed=control is None, translate_active=control is not None,
+                         translate_state=states.get(side), translate_control=control)
+            self.assertTrue(result['ok'], result)
+            states[side] = result['translate_state']
+            control = result['translate_control']
+
+        output = base64.b64decode(result['replacement'])
+        self.assertEqual(receiver.decode(unpack(output)[0][3], raw=True), fields)
+        self.assertEqual(control['L']['table'], 0)
+        self.assertEqual(control['R']['table'], 4096)
+
     def test_documented_examples_with_real_dynamic_indices(self):
         documentation = (Path(__file__).resolve().parents[1] / 'docs/H2_TRANSLATE_LIVE.md').read_text()
         examples = dict(re.findall(
@@ -97,7 +140,7 @@ class TranslateWorkerTests(unittest.TestCase):
             self.assertEqual(base64.b64decode(result['replacement']), wire)
 
     def test_unsupported_input_does_not_break_regular_rewrite(self):
-        wire = frame(b'\x00\x01\x00\x01\x00\x00', 4, 0, 0)
+        wire = frame(b'\x00\x05\x00\x00\x3f\xff', 4, 0, 0)
         for script, expected in (('return None', True), ('return api.message.translate()', False)):
             result = run(script, event(wire), translate_allowed=True)
             self.assertEqual(result['ok'], expected, result)

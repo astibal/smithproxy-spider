@@ -20,6 +20,9 @@ class LanguageTests(unittest.TestCase):
         return {item['label'] for item in self.query(source)['items']}
 
     def test_alias_and_iteration(self):
+        self.assertIn('Translate', self.labels('Mode.'))
+        self.assertIn('set_mode', self.labels('api.connection.'))
+        self.assertIn('enforce_header_table_limit', self.labels('h2 = api.connection.http2\nh2.'))
         self.assertIn('header_blocks', self.labels('h2 = api.http2\nh2.'))
         self.assertIn('stream_id', self.labels('for frame in api.http2.frames:\n    frame.'))
         self.assertIn('value', self.labels('for block in api.http2.header_blocks:\n    for header in block.headers:\n        header.'))
