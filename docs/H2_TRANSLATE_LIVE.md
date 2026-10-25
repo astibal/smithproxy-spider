@@ -138,9 +138,55 @@ ctest --test-dir build --output-on-failure
 ```
 
 Proxy control/sequence se zvlášť ověřuje jejími JSON a SXBN integračními testy.
-Tyto dvě produktové vrstvy zatím netvoří jeden automatický end-to-end test
-s oběma živými procesy najednou. Žádné nasazení do lab1 se neprovádělo.
+Žádné nasazení do lab1 se neprovádělo.
+
+### Skutečný end-to-end harness
+
+`tests/translate_e2e.py` spouští oba produktové procesy a řízené H2 protějšky:
+
+```text
+H2 klient -- SOCKS --> Smithproxy -- TCP --> H2 origin
+                          |
+                          +-- content webhook --> Spider --> sandbox worker
+```
+
+Content webhook vede přímo z proxy do Spideru; žádný mock nevytváří anotace ani
+replacement. Pouze discovery management API je testovací stub, který získá
+náhodnou callback URL Spideru pro dočasnou konfiguraci proxy. Registraci/obnovu
+lease proti skutečnému management API tento harness netestuje.
+
+Každý scénář ověřuje:
+
+- H2 preface, výchozí SETTINGS a ACK;
+- čtyři request/response streamy se skutečným dynamickým indexem 62 na vstupu;
+- změnu hlavičky jen ve druhém requestu i response a původní hodnotu v dalších;
+- nezávislé dekódování výstupu pomocí libnghttp2;
+- PING/ACK bez změny bajtů a přesně 14 spuštění skriptu;
+- capability, strict mode a souvislou sequence uvnitř každého callbacku;
+- patnáctý callback s výjimkou nebo chybějícím translate: EOF/reset na origin
+  socketu, žádný propuštěný bajt a jedna zaznamenaná chyba deploymentu.
+
+Test používá plaintext H2 na loopbacku, kompletní malé rámce a výchozí SETTINGS.
+Není to test TLS, fragmentace, dlouhodobé zátěže nebo všech H2 stavových přechodů.
+Porty, konfigurace i úložiště jsou dočasné; skutečné lab instance se nemění.
+
+```sh
+python3 tests/translate_e2e.py \
+  --smithproxy-source ../smithproxy-need-more-test \
+  --smithproxy ../smithproxy-need-more-test/build/smithproxy \
+  --spider build/smithproxy-spider --failure exception
+```
+
+Pro druhý scénář použij `--failure missing-translate`. CTest registraci obou
+zapneš spolu s `SPIDER_TEST_TRANSLATE_POC=ON` nastavením absolutních cest
+`SPIDER_E2E_SMITHPROXY_SOURCE` a `SPIDER_E2E_SMITHPROXY_BINARY` při konfiguraci
+CMake. Testy vyžadují loopback sockety, sandbox worker a `python-hpack`.
 
 Lokální ověření 2026-10-25: build úspěšný, všech 25 CTest sad Spideru prošlo
 (32,34 s), včetně tří translate sad. Proxy prošla pěti control/need-more sadami
 (28,47 s). Generované API příklady odpovídají schématu; `git diff --check` čistý.
+
+Po přidání skutečného E2E: všech 27 sad Spideru prošlo (41,09 s), včetně obou
+variant selhání. Samostatně každá E2E varianta prošla třikrát za sebou (celkem
+6/6 běhů, 23,43 s). Proxy control/need-more regrese opět 5/5 (28,47 s).
+Testovaná proxy obsahuje commit `ddb5ce1` nad `412680e`.

@@ -106,6 +106,19 @@ if(BUILD_TESTING)
         add_test(NAME inspection_translate_worker_tests
                  COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_worker_test.py)
         set_tests_properties(inspection_translate_worker_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        set(SPIDER_E2E_SMITHPROXY_SOURCE "" CACHE PATH "Smithproxy source for optional real translate E2E")
+        set(SPIDER_E2E_SMITHPROXY_BINARY "" CACHE FILEPATH "Built Smithproxy with webhook control/sequence support")
+        if(SPIDER_E2E_SMITHPROXY_SOURCE AND SPIDER_E2E_SMITHPROXY_BINARY)
+            foreach(failure exception missing-translate)
+                add_test(NAME inspection_translate_e2e_${failure}
+                    COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                        --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                        --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                        --spider $<TARGET_FILE:smithproxy-spider> --failure ${failure})
+                set_tests_properties(inspection_translate_e2e_${failure}
+                    PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+            endforeach()
+        endif()
     endif()
     add_test(NAME inspection_parts_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_parts_test.py)
