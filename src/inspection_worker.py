@@ -47,6 +47,8 @@ class Api:
             item['bytes'] = base64.b64decode(item.get('content', ''), validate=True)
         views = make_views(event, self.bytes, self.enrichments)
         self.message = views.message
+        if request.get('held_parts'):
+            resume_message(self.message, request['held_parts'], info, self.enrichments)
         self.metadata = views.metadata
         self.http1 = views.http1
         self.http2 = views.http2
@@ -99,7 +101,7 @@ def script_error():
 def invoke_script(current, compiled):
     output = Output()
     response = {'ok': False, 'replacement': None}
-    namespace = {'CommitException': CommitException, 'Header': Header}
+    namespace = {'CommitException': CommitException, 'Header': Header, 'PartType': PartType}
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             # Fresh script globals and API objects; imports/native module caches
@@ -107,6 +109,20 @@ def invoke_script(current, compiled):
             exec(compiled, namespace)
             api = None if current.get('validate_only') else Api(current)
             result = None if api is None else namespace['__spider_script'](api)
+            held = None
+            if isinstance(result, HeldCommit):
+                if not current.get('hold_allowed') or api.instance.mode != 'flow' or api.side not in ('L', 'R'):
+                    raise CommitException('Hold requires a live flow deployment at the end of the enabled chain and an L/R side')
+                held = result.checkpoint
+                response['hold'] = {'state': 'holding', 'parts': result.count}
+                result = result.prefix
+                response['need_more'] = not result
+            elif api is not None and api.message.parts._held_from is not None:
+                raise CommitException('Return message.commit() to publish the requested hold')
+            elif current.get('held_parts'):
+                if result is None:
+                    raise CommitException('Resumed Parts require an explicit result: return message.commit() or hold again')
+                response['hold'] = {'state': 'released', 'parts': 0}
             if isinstance(result, str):
                 result = result.encode()
             if result is not None and not isinstance(result, (bytes, bytearray, memoryview)):
@@ -121,6 +137,7 @@ def invoke_script(current, compiled):
                     raise ValueError('api.state exceeds 64 KiB')
                 response['instance_state'] = json.loads(encoded_state)
             response.update(ok=True, replacement=None if result is None else base64.b64encode(result).decode())
+            response['held_parts'] = held
     except BaseException:
         response = script_error()
     finally:

@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = '\n'.join((ROOT / 'src' / name).read_text() for name in (
-    'inspection_api.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
+    'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
 
 
 class SandboxTests(unittest.TestCase):

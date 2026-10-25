@@ -135,6 +135,8 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     }
     if (action == "access-request") return {200, {{"access-response", "accept"}}};
     if (!script_result.is_null()) {
+        if (script_result.value("ok", false) && script_result.value("need_more", false))
+            return {200, {{"action", "need-more"}}};
         if (script_result.value("ok", false) && !script_result.value("replacement", nlohmann::json(nullptr)).is_null())
             return {200, {{"action", "replace"}, {"content", script_result["replacement"]}}};
         return {200, {{"action", "unchanged"}}};

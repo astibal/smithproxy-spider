@@ -100,7 +100,7 @@ class WriteTests(unittest.TestCase):
         import base64, json, subprocess
         source_dir = pathlib.Path(__file__).resolve().parents[1] / 'src'
         worker = '\n'.join((source_dir / name).read_text() for name in (
-            'inspection_api.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
+            'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
         def run(script):
             request = {'script': script, 'event': {'details': {'info': {
                 'content': base64.b64encode(self.request).decode()}}}}
@@ -185,12 +185,21 @@ class Http2Tests(unittest.TestCase):
                 [h2, {'metadata': {'operation': 'http1.parse-head', 'context': 'complete', 'message': head}}]))
         fixtures.append((fixtures[1][0], payload[:-2], []))
         for event, data, enrichments in fixtures:
-            views = make_views(event, data, enrichments)
-            api = SimpleNamespace(**vars(views), print=lambda *args: None)
             for name, definition in api_schema()['types'].items():
                 for field in definition['fields'] + definition.get('methods', []):
                     with self.subTest(type=name, field=field['name'], size=len(data)):
-                        exec(compile(field['example'], '<api-example>', 'exec'), {'api': api})
+                        from inspection_api import PartType
+                        from textwrap import indent
+                        views = make_views(event, data, enrichments)
+                        api = SimpleNamespace(**vars(views), print=lambda *args: None)
+                        # Part/entry reference examples assume an existing draft.
+                        # Execute each independently, inside a real script function
+                        # so explicit `return api.message.commit()` is exercised.
+                        part = api.http2.Frame(1, 5, 1, b'\x00\x01x\x01v')
+                        scope = {}
+                        source = 'def example(api, part, entry, PartType):\n' + indent(field['example'], '    ')
+                        exec(compile(source, '<api-example>', 'exec'), scope)
+                        scope['example'](api, part, part.headers.entries[0], PartType)
 
 
 if __name__ == '__main__':

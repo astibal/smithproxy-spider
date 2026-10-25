@@ -30,6 +30,7 @@ private:
         nlohmann::json state = nlohmann::json::object();
         std::chrono::steady_clock::time_point used = std::chrono::steady_clock::now();
         std::size_t bytes{2};
+        nlohmann::json holds = nlohmann::json::object(); // L/R typed Parts checkpoints
     };
     struct Runtime {
         std::shared_ptr<InspectionPool> pool;
@@ -41,7 +42,7 @@ private:
         unsigned consecutive_errors{}, consecutive_slow{};
     };
     nlohmann::json run_instance(const nlohmann::json& item, const nlohmann::json& event,
-                               const nlohmann::json& enrichments, int remaining);
+                               const nlohmann::json& enrichments, int remaining, bool hold_allowed);
     nlohmann::json run_request(nlohmann::json request, const std::shared_ptr<InspectionPool>& pool);
     void expire_instances(Runtime& runtime, int idle_seconds) const;
     void clear_flow(const std::string& id);

@@ -266,7 +266,11 @@ nlohmann::json Inspection::language(nlohmann::json request) {
     return result;
 }
 nlohmann::json Inspection::run(nlohmann::json request) {
-    return run_request(std::move(request), nullptr);
+    request.erase("held_parts");
+    request.erase("hold_allowed"); // Preview never creates a transport hold.
+    auto result = run_request(std::move(request), nullptr);
+    result.erase("held_parts");
+    return result;
 }
 nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared_ptr<InspectionPool>& pool) {
     if (!request.contains("script") || !request["script"].is_string() || request["script"].get_ref<const std::string&>().size() > 65536)
@@ -286,6 +290,7 @@ nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared
     auto summary = result;
     summary.erase("replacement");
     summary.erase("instance_state");
+    summary.erase("held_parts");
     recent_.push_back(std::move(summary));
     if (recent_.size() > 20) recent_.erase(recent_.begin());
     return result;
@@ -314,7 +319,7 @@ void Inspection::clear_flow(const std::string& id) {
 }
 
 nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohmann::json& event,
-                                       const nlohmann::json& enrichments, int remaining) {
+                                       const nlohmann::json& enrichments, int remaining, bool hold_allowed) {
     const auto id = item.at("id").get<std::string>();
     const auto mode = item.value("instancing", "message");
     std::string key;
@@ -361,6 +366,10 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         ++runtime->rejected; return capacity_failure("Deployment instance limit reached");
     }
     const auto previous = key.empty() || !runtime->states.contains(key) ? nlohmann::json::object() : runtime->states.at(key).state;
+    auto holds = key.empty() || !runtime->states.contains(key)
+        ? nlohmann::json::object() : runtime->states.at(key).holds;
+    const auto side = event.value("details", nlohmann::json::object())
+        .value("info", nlohmann::json::object()).value("side", "");
     const auto budget = std::min(remaining, item.value("timeout_ms", 1000));
     const auto started = std::chrono::steady_clock::now();
     ++runtime->active;
@@ -369,6 +378,8 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     if (mode == "message") serial.unlock();
     auto result = run_request({{"script", item["script"]}, {"event", event}, {"enrichments", enrichments},
         {"script_id", id}, {"timeout_ms", budget}, {"instance_state", previous},
+        {"held_parts", holds.value(side, nlohmann::json(nullptr))},
+        {"hold_allowed", hold_allowed && mode == "flow"},
         {"instance", {{"mode", mode}, {"key", key}, {"deployment_id", id}, {"version", item["version"]}}}}, runtime->pool);
     --runtime->active;
     if (!serial.owns_lock()) serial.lock();
@@ -376,17 +387,32 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     result["duration_ms"] = elapsed;
     if (result.value("ok", false)) {
         const auto next = result.value("instance_state", nlohmann::json::object());
-        const auto bytes = next.dump().size();
-        if (!next.is_object() || bytes > 65536 ||
+        const auto held = result.value("held_parts", nlohmann::json(nullptr));
+        if (held.is_null()) holds.erase(side);
+        else holds[side] = held;
+        const auto state_size = next.dump().size();
+        const auto bytes = state_size + holds.dump().size();
+        if (!next.is_object() || state_size > 65536 ||
+            (!held.is_null() && (!hold_allowed || mode != "flow" || !held.is_object() || held.dump().size() > 1024 * 1024)) ||
             (!key.empty() && runtime->state_bytes.load() - (runtime->states.contains(key) ? runtime->states.at(key).bytes : 0) + bytes > 4 * 1024 * 1024))
-            result = failure("Instance state exceeds JSON object / 64 KiB / 4 MiB deployment quota");
+            result = failure("Instance state / hold exceeds allowed mode or 64 KiB state / 1 MiB hold / 4 MiB deployment quota");
         else if (!key.empty() && !runtime->retired) {
             std::scoped_lock lock(mutex_);
             if (mode != "flow" || !closed_flows_.contains(event.value("id", "")))
-                runtime->states[key] = Instance{next, std::chrono::steady_clock::now(), bytes};
+                runtime->states[key] = Instance{next, std::chrono::steady_clock::now(), bytes, holds};
+        }
+    }
+    if (!result.value("ok", false) && runtime->states.contains(key)) {
+        auto& instance = runtime->states.at(key);
+        if (instance.holds.erase(side)) {
+            // Current policy remains fail-open. Do not replay stale held bytes
+            // after the failing callback has already been passed through.
+            result["hold"] = {{"state", "abandoned"}, {"reason", "script failure; fail-open"}};
+            instance.bytes = instance.state.dump().size() + instance.holds.dump().size();
         }
     }
     result.erase("instance_state");
+    result.erase("held_parts"); // Never publish checkpoint bytes into GUI/events.
     // Also discard a previous state if a stop arrived while the worker was executing.
     {
         std::scoped_lock lock(mutex_);
@@ -452,6 +478,9 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         auto steps = nlohmann::json::array();
         nlohmann::json replacement = nullptr;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        std::string last_enabled;
+        for (const auto& entry : chain)
+            if (entry.value("enabled", false)) last_enabled = entry["id"].get<std::string>();
         for (const auto& item : chain) {
             if (!item.value("enabled", false)) continue;
             if (item.value("scope", "rules") == "rules" &&
@@ -465,7 +494,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                 deadline - std::chrono::steady_clock::now()).count();
             result = remaining <= 0 ? capacity_failure("Inspection chain exceeded its 3 s budget") :
-                run_instance(item, current, annotations, static_cast<int>(remaining));
+                run_instance(item, current, annotations, static_cast<int>(remaining), item["id"] == last_enabled);
             if (result.value("skipped", false)) continue;
             {
                 std::scoped_lock lock(mutex_);
@@ -502,6 +531,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
     }
     auto result = run_request({{"script", script}, {"event", event}, {"enrichments", enrichments}}, legacy_pool);
     result.erase("instance_state");
+    result.erase("held_parts");
     return result;
 }
 }

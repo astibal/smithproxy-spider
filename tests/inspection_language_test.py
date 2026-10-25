@@ -28,6 +28,13 @@ class LanguageTests(unittest.TestCase):
         self.assertIn('get', self.labels('state = api.state\nstate.'))
         self.assertIn('commit', self.labels('draft = api.message.snapshot()\ndraft.'))
         self.assertIn('set_header', self.labels('draft = api.message.snapshot()\ndraft.http1.'))
+        self.assertIn('headers', self.labels('part = api.message.parts[0]\npart.'))
+        self.assertIn('set_header', self.labels('for part in api.message.parts:\n    part.headers.'))
+        self.assertIn('indexing', self.labels('part = api.message.parts[0]\nentry = part.headers.entries[0]\nentry.'))
+        self.assertIn('get_bytes', self.labels('ping = api.http2.Ping()\nping.'))
+        self.assertIn('Data', self.labels('PartType.Http2.'))
+        self.assertIn('hold_from', self.labels('parts = api.message.parts\nparts.'))
+        self.assertIn('Body', self.labels('PartType.Http1.'))
 
     def test_scope(self):
         self.assertNotIn('stream_id', self.labels('frame = api.http2.frames[0]\ndef f(frame: str):\n    frame.'))

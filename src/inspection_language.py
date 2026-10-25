@@ -2,9 +2,13 @@
 
 def language_prelude():
     import json
-    lines = ['from typing import Any']
+    lines = ['from typing import Any', 'class PartType:', '    Opaque: str',
+             '    class Http2:', '        Part: str', '        Header: str',
+             '        Data: str', '        Frame: str',
+             '    class Http1:', '        Part: str', '        Header: str', '        Body: str']
     for name, definition in api_schema()['types'].items():
-        lines += [f'class {name}:', '    ' + json.dumps(definition['description'])]
+        base = '(list[RewritePart])' if name == 'PartList' else ''
+        lines += [f'class {name}{base}:', '    ' + json.dumps(definition['description'])]
         for field in definition['fields']:
             # Properties give Jedi both a return type and a docstring for aliases.
             lines += ['    @property', f'    def {field["name"]}(self) -> {field["type"]}:',

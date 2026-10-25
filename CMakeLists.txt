@@ -20,9 +20,13 @@ find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_worker.py" INSPECTION_WORKER_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py" INSPECTION_API_SOURCE)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_h2.py" INSPECTION_H2_SOURCE)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_hold.py" INSPECTION_HOLD_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_language.py" INSPECTION_LANGUAGE_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_sandbox.py" INSPECTION_SANDBOX_SOURCE)
-set(INSPECTION_WORKER_SOURCE "${INSPECTION_API_SOURCE}\n${INSPECTION_LANGUAGE_SOURCE}\n${INSPECTION_SANDBOX_SOURCE}\n${INSPECTION_WORKER_SOURCE}")
+set(INSPECTION_WORKER_SOURCE "${INSPECTION_API_SOURCE}\n${INSPECTION_H2_SOURCE}\n${INSPECTION_HOLD_SOURCE}\n${INSPECTION_LANGUAGE_SOURCE}\n${INSPECTION_SANDBOX_SOURCE}\n${INSPECTION_WORKER_SOURCE}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_hold.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_h2.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_worker.py src/inspection_api.py src/inspection_language.py src/inspection_sandbox.py tools/generate-inspection-schema.py)
 configure_file(src/inspection_worker.hpp.in generated/inspection_worker.hpp @ONLY)
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate-inspection-schema.py"
@@ -81,6 +85,15 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_api_test.py)
     add_test(NAME inspection_parts_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_parts_test.py)
+    add_test(NAME inspection_h2_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_test.py)
+    add_test(NAME inspection_hold_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_hold_test.py)
+    add_executable(inspection_hold_live_tests tests/inspection_hold_live_test.cpp)
+    target_link_libraries(inspection_hold_live_tests PRIVATE spider_core)
+    target_compile_options(inspection_hold_live_tests PRIVATE -UNDEBUG)
+    add_test(NAME inspection_hold_live_tests COMMAND inspection_hold_live_tests)
+    set_tests_properties(inspection_hold_live_tests PROPERTIES TIMEOUT 30)
     add_test(NAME inspection_language_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_language_test.py)
     add_test(NAME inspection_storage_tests

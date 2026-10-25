@@ -143,11 +143,32 @@ class InstanceContext:
     version: int = documented('Deployed version; zero for ad-hoc runs. New versions have new state.', 'api.print(api.instance.version)')
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class Message:
     """Current webhook content fragment, not necessarily a complete application message."""
     bytes: bytes = documented('Original callback bytes. No decoding or reassembly.', '# Inspect a bounded prefix without assuming text or a complete message.\napi.print(api.message.bytes[:32].hex())')
     size: int = documented('Length of this fragment in bytes.', 'api.print(api.message.size)')
+    parts: PartList = documented('Ordered drafts, including resumed held parts. hold_from(part) retains a suffix when the committed result is returned.', 'for part in api.message.parts:\n    if part.headers is not None:\n        part.headers.set_header(b"x-test", b"yes")\nreturn api.message.commit()', access='mutable rewrite draft')
+
+    def __init__(self, data, size, info=None, enrichments=()):
+        object.__setattr__(self, 'bytes', data)
+        object.__setattr__(self, 'size', size)
+        parts = PartList(make_message_parts(data, info or {}, enrichments))
+        object.__setattr__(self, 'parts', parts)
+        sizes = {id(group[0]): sum(len(p._data) for p in group if p.frame_type == 0)
+                 for group in _h2_content_groups(parts)}
+        object.__setattr__(self, '_body_sizes', sizes)
+
+    @api_method('update_content_length: bool = True', 'bytes | HeldCommit',
+                'Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.',
+                'return api.message.commit()', access='assemble private draft')
+    def commit(self, update_content_length=True):
+        try:
+            return commit_message(self, update_content_length)
+        except CommitException:
+            raise
+        except (ValueError, TypeError, AttributeError, OverflowError) as error:
+            raise CommitException(str(error)) from error
 
     @api_method('', 'MessageSnapshot', 'Create an independent editable draft of this callback. No live bytes change until the script returns draft.commit().',
         'draft = api.message.snapshot()\napi.print(draft.http1.available)',
@@ -492,6 +513,29 @@ class Http2:
     header_blocks: tuple[H2HeaderBlock, ...] = documented('All complete HPACK enrichments emitted for this callback, in backend order.', 'for block in api.http2.header_blocks:\n    for header in block.headers:\n        if header.name in (":method", ":path", ":status"):\n            api.print(block.stream_id, header.name, header.value)')
 
 
+    @api_method('name: bytes, value: bytes, indexing: str = "without"', 'HpackField', 'Create a literal HPACK field. Indexing may affect future peer state, which REWRITE does not repair.', 'part.headers.entries.append(api.http2.Header(b"x-test", b"yes"))', access='create private draft')
+    def Header(self, name, value, indexing='without'):
+        return HpackField(name, value, indexing, 0, 0)
+
+    @api_method('index: int', 'HpackField', 'Create an explicit HPACK field reference. Existence in the peer table is the script author\'s responsibility.', 'part.headers.entries.append(api.http2.HeaderIndex(62))', access='create private draft')
+    def HeaderIndex(self, index):
+        return HpackField(None, None, 'indexed', index, 0)
+
+    @api_method('size: int', 'HpackField', 'Create an HPACK table-size update; insert before header fields.', 'part.headers.entries.insert(0, api.http2.TableSize(4096))', access='create private draft')
+    def TableSize(self, size):
+        return HpackField(None, None, 'table-size', size, 0)
+
+    @api_method('frame_type: int, flags: int, stream_id: int, payload: bytes', 'RewritePart', 'Construct a frame from its raw payload, including any padding/priority fields. Known DATA/header blocks are interpreted for subsequent editing.', 'api.message.parts.append(api.http2.Frame(0, 1, 3, b"body"))', access='create private draft')
+    def Frame(self, frame_type, flags, stream_id, payload):
+        return _h2_new_frame(frame_type, flags, stream_id, payload)
+
+    @api_method('data: bytes = b"12345678", ack: bool = False', 'RewritePart', 'Construct a connection-level PING with exactly eight opaque bytes.', 'api.message.parts.append(api.http2.Ping())', access='create private draft')
+    def Ping(self, data=b'12345678', ack=False):
+        if not isinstance(data, bytes) or len(data) != 8:
+            raise CommitException('PING requires eight bytes')
+        return _h2_new_frame(6, int(bool(ack)), 0, data)
+
+
 def make_http2(info, payload, enrichments):
     frames, blocks, offsets = [], [], set()
     annotations = info.get('content_annotations', [])
@@ -535,7 +579,7 @@ def make_http2(info, payload, enrichments):
 
 @dataclass(frozen=True)
 class InspectionViews:
-    """Typed API v0.4. Original protocol views are read-only; message.snapshot() creates a writable draft."""
+    """Typed API v0.5. Original protocol views are read-only; message.parts provides H2 REWRITE drafts and message.snapshot() provides an H1 draft."""
     message: Message = documented('Current content fragment.', 'api.print(api.message.size)')
     metadata: ContentMetadata = documented('Metadata of the current content callback.', 'api.print(api.metadata.side)')
     http1: Http1 = documented('HTTP/1 head supplied by backend enrichment.', 'if api.http1.available:\n    api.print(api.http1.target)')
@@ -554,7 +598,7 @@ def make_views(event, payload, enrichments):
                     and item.get('metadata', {}).get('context') == 'complete'), None)
     head = message if isinstance(message, dict) else {}
     return InspectionViews(
-        Message(payload, len(payload)),
+        Message(payload, len(payload), info, enrichments),
         ContentMetadata(event.get('id', ''), info.get('side', ''), info.get('payload_layer')),
         Http1(bool(head), head.get('method'), head.get('target'), head.get('status'),
               tuple(Header(h['name'], h['value']) for h in head.get('headers', []))),
@@ -564,10 +608,21 @@ def make_views(event, payload, enrichments):
 def api_schema():
     """Generate reference directly from runtime dataclasses, types and field comments."""
     types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock,
-             InstanceContext, SharedStorage, StorageNamespace, MessageSnapshot, Http1Draft, CommitException]
-    return {'version': '0.4', 'root': 'InspectionViews', 'types': {
+             InstanceContext, SharedStorage, StorageNamespace, MessageSnapshot, Http1Draft, CommitException,
+             RewritePart, PartContent, H2Headers, HpackField, PartList, HeldCommit]
+    return {'version': '0.5', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),
              **dict(f.metadata)} for f in (fields(cls) if is_dataclass(cls) else ())],
              'methods': [method.__api_doc__ for method in vars(cls).values() if hasattr(method, '__api_doc__')]}
              for cls in types}}
+
+
+# The isolated worker embeds these sources before entering the sandbox. Standalone
+# schema generation and tests load the same trusted source into this namespace.
+if '__file__' in globals():
+    from pathlib import Path as _ApiPath
+    _h2_source = _ApiPath(__file__).with_name('inspection_h2.py')
+    exec(compile(_h2_source.read_text(), str(_h2_source), 'exec'), globals())
+    _hold_source = _ApiPath(__file__).with_name('inspection_hold.py')
+    exec(compile(_hold_source.read_text(), str(_hold_source), 'exec'), globals())

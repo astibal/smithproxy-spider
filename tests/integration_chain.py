@@ -394,7 +394,7 @@ def main():
                         assert error.code == 400
                     post_json(inspection_url + '/heavy-traffic', {'enabled': False}, 'frontend-key')
                     schema = get_json(inspection_url + '/schema', 'frontend-key')
-                    assert schema['version'] == '0.4'
+                    assert schema['version'] == '0.5'
                     assert 'Http2' in schema['types']
                     assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == ['message', 'metadata', 'http1', 'http2', 'state', 'storage', 'instance']
                     assert schema['types']['Message']['fields'][0]['type'] == 'bytes'
@@ -458,6 +458,32 @@ def main():
                     catch_script = 'draft = api.message.snapshot()\ndraft.http1.target = "bad target"\ntry:\n    return draft.commit()\nexcept CommitException:\n    return None'
                     _, caught = post_json(inspection_url + '/run', {'script': catch_script, 'event': write_event}, 'frontend-key')
                     assert caught['ok'] and caught['replacement'] is None
+                    # Real webhook -> input HPACK enrichment -> sandboxed worker
+                    # -> replacement, independently decoded by libnghttp2.
+                    from inspection_h2_test import frame, unpack, Oracle
+                    h2_wire = frame(bytes.fromhex('828684418cf1e3c2e5f23a6ba0ab90f4ff'), 1, 5)
+                    h2_event = json.loads(json.dumps(sample))
+                    h2_event['id'] = 'h2-live-rewrite'
+                    h2_event['details']['info'].update({
+                        'content': base64.b64encode(h2_wire).decode(),
+                        'content_annotations': [[0, 9, 'h2.frame.header'], [9, len(h2_wire), 'h2.headers']]})
+                    h2_script = ('for part in api.message.parts:\n'
+                        '    if part.headers is not None:\n'
+                        '        part.headers.set_header(b":authority", b"rewrite.example")\n'
+                        'return api.message.commit()')
+                    post_json(inspection_url, {'script': h2_script, 'enabled': True, 'scope': 'rules'}, 'frontend-key')
+                    _, rewritten = post_json(callback, h2_event)
+                    assert rewritten['action'] == 'replace', rewritten
+                    h2_fields = Oracle().decode(unpack(base64.b64decode(rewritten['content']))[0][3])
+                    assert (b':authority', b'rewrite.example') in h2_fields
+                    post_json(inspection_url, {'script': h2_script, 'enabled': False, 'scope': 'rules'}, 'frontend-key')
+                    assert post_json(callback, h2_event)[1]['action'] == 'unchanged'
+
+                    _, completion = post_json(inspection_url + '/language', {
+                        'script': 'part = api.message.parts[0]\npart.',
+                        'language_action': 'complete', 'line': 2, 'column': 5}, 'frontend-key')
+                    if completion['ok']:
+                        assert {'headers', 'commit', 'get_bytes'} <= {item['label'] for item in completion['items']}
                     replay_url = f"http://127.0.0.1:{spider_port}/api/enrichment/replay"
                     raw_head = b"GET /replay HTTP/1.1\r\nHost: example.test\r\n\r\n"
                     replay_event = {"action": "connection-content", "id": "offline-replay",
@@ -507,6 +533,35 @@ def main():
                         raise AssertionError('stale catalog edit accepted')
                     except urllib.error.HTTPError as error:
                         assert error.code == 400
+                    # HTTP transport proof: no held byte is included in need-more;
+                    # the final response contains one reassembled, resized message.
+                    hold_source = ('for part in api.message.parts:\n'
+                        '    if part.type == PartType.Http1.Body:\n'
+                        '        if not part.content.complete:\n'
+                        '            api.message.parts.hold_from(api.message.parts[0])\n'
+                        '            return api.message.commit()\n'
+                        '        part.set_bytes(b"rewritten body")\n'
+                        'return api.message.commit()')
+                    state = get_json(inspection_url, 'frontend-key')
+                    _, deployed = post_json(inspection_url, {'revision': state['revision'],
+                        'operation': 'deploy', 'name': 'hold HTTP proof', 'script': hold_source,
+                        'scope': 'all', 'instancing': 'flow'}, 'frontend-key')
+                    post_json(inspection_url, {'revision': deployed['revision'], 'operation': 'enable',
+                        'id': deployed['chain'][-1]['id'], 'enabled': True}, 'frontend-key')
+                    hold_head = b'POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 6\r\n\r\n'
+                    for index, fragment in enumerate((hold_head + b'a', b'bc', b'def')):
+                        hold_event = {'action': 'connection-content', 'id': 'hold-http',
+                            'details': {'info': {'side': 'L', 'content': base64.b64encode(fragment).decode()}}}
+                        if index == 0:
+                            hold_event['details']['info']['content_annotations'] = [
+                                [0, 17, 'http1.start_line'], [17, len(hold_head), 'http1.headers']]
+                        _, held_reply = post_json(callback, hold_event)
+                        if index < 2:
+                            assert held_reply == {'action': 'need-more'}, held_reply
+                        else:
+                            assert held_reply['action'] == 'replace', held_reply
+                            assert base64.b64decode(held_reply['content']) == hold_head.replace(
+                                b'Length: 6', b'Length: 14') + b'rewritten body'
                     return 0
             except OSError:
                 pass
