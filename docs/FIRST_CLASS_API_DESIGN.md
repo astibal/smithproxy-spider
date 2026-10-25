@@ -1,8 +1,9 @@
 # First Class API Design
 
 **Status: ZÁVAZNÝ NÁVRHOVÝ KONTRAKT**  
-Verze: 1.0  
-Datum: 2026-10-23  
+Verze: 1.1
+
+Datum: 2026-10-25
 Rozsah: skriptovací API Spideru, Parts, editace, commit, hold a jejich prezentace.
 
 Tento dokument určuje cílovou architekturu First Class API. Implementace,
@@ -245,7 +246,7 @@ obsah a identifikovat původní callbacky a zasahující skript. Přesné názvy
 a rozsah uchovávaného výstupního obsahu nejsou zatím stanovené. Pouhý příznak
 změny neopravňuje GUI zobrazovat rekonstruovaný výstup jako skutečně zachycený.
 
-## Otevřená rozhodnutí před implementací holdu
+## Otevřená rozhodnutí a vědomě odložená ochrana holdu
 
 - Atomická návaznost hold bufferů a výstupu v řetězci více skriptů.
 - Chyba, timeout nebo nedostupný worker po předchozím úspěšném holdu. Běžné
@@ -258,20 +259,74 @@ změny neopravňuje GUI zobrazovat rekonstruovaný výstup jako skutečně zachy
 - Přesná pravidla překryvů anotací, rozdělení parts a vazeb mezi nimi.
 - Chování `return None`, chyb a ad-hoc preview při práci s hold bufferem.
 
-Tyto situace musí být vyřešené a otestované před použitím holdu na živém provozu.
-Nesmějí implicitně vést ke ztrátě, duplicitní emisi nebo úniku zadrženého obsahu.
+Pro první živou implementaci bylo výslovně schváleno ponechat **fail-open** a
+výpadkovou ochranu odložit do `docs/TODO.md`. Výpadek po need-more může porušit
+úplnost/pořadí přenosu; současný hold tento problém neřeší. Normální úspěšná cesta
+musí nadále zabránit předčasné nebo dvojité emisi. Nejde o režim TRANSLATE.
+
+Živý hold je nyní dostupný v posledním zapnutém deploymentu s instanciací `flow`.
+Checkpointy jsou oddělené podle deploymentu/generace, spojení a L/R směru;
+nejsou uživatelským `api.state` ani stavem procesu Pythonu. Jsou to verzovaná,
+typovaná JSON data bez pickle. Limit je 1 MiB serializovaného checkpointu,
+celkově 4 MiB na deployment včetně instance state. Převzetí nastává jen úspěšným
+vrácením výsledku `message.commit()`: prázdný prefix vrací `need-more`, neprázdný
+prefix `replace`. Další callback obnoví původní Parts a jejich drafty.
+
+`return None` po obnovení holdu je chyba: skript musí explicitně vrátit výsledek
+nebo znovu podržet části. Preview a message/endpoint instanciace hold odmítnou.
+Při chybě vykonaného skriptu se dřívější hold daného směru opustí s metadaty
+`hold.state=abandoned`; aktuální fragment se podle dnešní politiky pustí beze změny.
+Checkpoint se odstraní také s instancí při stop/expiry/redeploy; není persistentní
+přes restart backendu. Tato omezení musí být viditelná v dokumentaci.
 
 ## Vztah k současné implementaci
 
-K datu této verze existuje první write API přes `api.message.snapshot()` a
-monolitický `draft.http1`, s privátním commitem a přepočtem Content-Length pro
-omezenou množinu kompletních HTTP/1 zpráv. Parts, významový hold buffer a uvedené
-typované konstruktory představují cílový návrh, nikoli hotové runtime API.
+Existuje write API přes `api.message.snapshot()` a monolitický `draft.http1`,
+s privátním commitem a přepočtem Content-Length pro omezenou množinu kompletních
+HTTP/1 zpráv. Živý H1 Parts/hold nyní podporuje anotovanou úplnou hlavičku s jedním
+Content-Length a tělem doplňovaným dalšími callbacky, bez komprese. H1 Header
+vystavuje `part.http1`, Body `get_bytes/set_bytes`; commit přepočítá Content-Length.
+
+První živá H2 implementace používá `api.message.parts` v režimu REWRITE:
+anotované framy, celé lokální HEADERS/PUSH_PROMISE + CONTINUATION bloky a Opaque
+mezery. Neúplné části lze zachovat, nikoli přestavět. HPACK pole, explicitní
+indexy, table-size updates, DATA a vlastní framy jsou zapisovatelné. Celý lokálně
+známý content umožňuje přepočet Content-Length. `commit(False)` tento přepočet
+explicitně vypíná pro assemblerové/research úpravy.
+
+`part.complete` značí úplný frame/header blok, `part.content.complete` úplný
+lokálně známý content (`True`), rozpracovaný (`False`), nebo neznámý (`None`).
+U DATA bez lokální počáteční hlavičky není END_STREAM samo důkazem celého contentu.
+Komprese contentu, obecné překryvy anotací a TRANSLATE zatím nejsou implementované.
+H2 hold uchovává i neúplné framy s dostupnou devítibajtovou hlavičkou a neúplné
+HEADERS/CONTINUATION bloky; jejich obsah se doplňuje bez opakovaného průchodu
+živým HPACK dekodérem. Strukturální H2 části se sestavují při vytvoření callbackového
+API. DATA a Opaque drží view původních bajtů; `get_bytes()` je materializuje až
+při čtení. Nezměněný commit je nekopíruje do jednotlivých reprezentací znovu.
 
 Současné rozpoznání HTTP/1 snapshotu přímo z bajtů musí být při přechodu na Parts
 nahrazeno interpretací opřenou o anotace. Monolitický snapshot není vzor pro
 další růst veřejného API; jeho validační a serializační logika může sloužit
 jako stavební dílek jednotlivých parts a jejich společného commitu.
+
+## REWRITE a TRANSLATE
+
+Výchozí **REWRITE** sestaví výhradně explicitně upravený aktuální obsah. Nikdy
+neaktivuje skryté přepisy dalších callbacků. Engine zajistí serializaci délek
+framů, rozdělení DATA/header bloků a podporované lokální závislosti. Nezajišťuje
+smysluplnost hodnot, kompenzaci flow-control oken ani budoucí shodu HPACK tabulek
+obou protějšků. Explicitní
+index může odkazovat na neexistující položku; validní HPACK instrukce neznamená,
+že ji protějšek ve svém stavu přijme. To je vědomá odpovědnost autora skriptu.
+Nezměněné HPACK instrukce i celé nezměněné framy zachovají originální bajty.
+
+Budoucí **TRANSLATE** musí uživatel explicitně aktivovat. Vyžaduje dostupnost
+celého dalšího contentu spojení a alespoň flow instanciaci. Každá výstupní
+modifikace musí projít explicitním voláním skriptu; žádné magické opravy mimo
+uživatelský běh. Chyba nebo chybějící nutný překlad znamenají ukončení spojení,
+nikoli pokračování s nekonzistentním stavem. REWRITE může mít odlišnou politiku
+chyb (dnes živá exekuce fail-open). Protokolové řízení/strict a potvrzení jeho
+aktivace jsou odložené; tento kontrakt netvrdí, že už existují.
 
 ## Ověřovací kritéria
 
@@ -283,3 +338,56 @@ opakovaný pokus po CommitException a prokázat zachování významu parts přes
 Transportní testy musí ověřit, že podržený obsah neodejde předčasně, po uvolnění
 neodejde dvakrát, nesmíchá se mezi spojeními a znovu nevstoupí do živého dekodéru.
 GUI testy musí odlišovat původní vstup od změněného nebo podrženého výstupu.
+
+### Ověření první H2 REWRITE implementace — 2026-10-25
+
+- `ctest --test-dir build --output-on-failure -j 2`: **17/17 prošlo**.
+- `tests/inspection_h2_test.py`: **17 testů**, včetně 200 deterministických
+  náhodných no-op/partial vstupů a 100 sad binárních HPACK literálů. Výstup
+  ověřuje nezávislý dekodér libnghttp2, nikoli vlastní encoder/parser.
+- Pokryté jsou Huffman/indexované vstupy, explicitní table/index editace,
+  padding/priority, PUSH_PROMISE, CONTINUATION, hranice velikostí, END_STREAM,
+  Content-Length, přidání/odebrání DATA, Opaque mezery, lazy materializace,
+  atomické selhání/retry a explicitní publikace výsledku workerem.
+- `spider_chain_test`: skutečný lokální webhook s backendovým HPACK enrichmentem,
+  sandboxovaným rewritem a nezávislým dekódováním náhrady; vypnutí skriptu znovu
+  ponechá callback beze změny. Žádný překlad nepokračuje skrytě.
+- Jazykové testy ověřují typy parts, hlaviček, položek HPACK i konstruktorů.
+- `tests/browser_smoke.py --repeat 1`: **prošlo**, izolovaná regrese editoru
+  a oddělení library/deploy/draft. Netestuje živý H2 provoz v browseru; ten
+  pokrývá výše uvedená backendová integrace.
+
+### Živý hold — ověření 2026-10-25
+
+- Celá sada rozšířena na **19 testovacích sad**, všechny prošly také v UBSan.
+- `inspection_hold_test.py`: **11 testů**; všechny řezy H1 body a H2 DATA,
+  opakované checkpointy přes skutečně nové workery, zachování rozpracovaných
+  hlaviček a délkových závislostí po odstranění DATA, prefix emit, limity, chybné
+  anotace a odmítnutí nepodporovaných režimů.
+- `inspection_hold_live_tests`: skutečný backendový handler + pool; prokládaná
+  spojení a oba směry, souběžné callbacky, postup po jednom bajtu, jeden výsledný
+  replace, stop/redeploy bez přenosu starého holdu do nové generace a dnešní
+  fail-open při chybě. H2 HEADERS/CONTINUATION používá skutečné HPACK enrichmenty.
+- `spider_chain_test`: HTTP callbacky vrátí dvakrát čisté `need-more`, poté jediný
+  `replace` s přepsaným body a novým Content-Length. Nevyžaduje běžící lab1.
+- Výsledky testů negarantují zotavení při výpadku backendu/proxy; to zůstává
+  výslovně odloženou položkou TODO, nikoli implicitně vyřešenou vlastností.
+
+### Rozšířené deterministické korpusy — 2026-10-25
+
+- Ověření: standardní build a **21/21 CTest sad prošlo**, celkem 26,17 s.
+  Tento běh není novým UBSan během; výsledek UBSan výše patří předchozí sadě.
+- `inspection_h1_corpus_tests`: request i response, prázdné body, všechny hodnoty
+  bajtu, UTF-8, JSON, nulové bajty, HTTP-like obsah uvnitř body, náhodná data
+  a 64 KiB+1 body. Matice 54 přepisů s různými fragmentacemi a délkami náhrady;
+  dalších 69 řezů ověřuje přesné zachování body i navazujícího Opaque obsahu.
+  Samostatně 24 prokládaných checkpointů a oprava draftu po neúspěšném commitu.
+- `inspection_h2_corpus_tests`: 40 kombinací délky DATA a stream ID včetně hranic
+  16383/16384/16385, rozdělení rámců a END_STREAM; 27 kombinací HPACK délky
+  a indexing režimu, HEADERS/CONTINUATION ověřené přes libnghttp2; 16 prokládaných
+  streamů s nezávislým Content-Length; 128 řezů DATA s opakovanými checkpointy;
+  100 náhodných neznámých rámců zachovaných byte-for-byte.
+- Generátory používají pevné seedy, chyby jsou reprodukovatelné. Obě sady jsou
+  součástí CTest s timeoutem 30 sekund. Jde o transakční/serializační testy,
+  nikoli náhradu existujících živých webhook a worker-pool integrací ani důkaz
+  stoprocentního pokrytí všech vstupů.

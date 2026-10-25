@@ -537,9 +537,93 @@ a complete body; only the first decoded head is exposed in this initial slice.
 Header order and duplicate names are preserved. Views are read-only snapshots.
 
 Definitions, types, descriptions, availability and examples live together in
-`src/inspection_api.py`. CMake embeds those definitions into the Python worker and
+`src/inspection_api.py` and `src/inspection_h2.py`. CMake embeds those definitions into the Python worker and
 generates its schema with `tools/generate-inspection-schema.py`. Editing this file
 triggers regeneration on the next build. No separate browser field list is needed.
+
+### HTTP/2 REWRITE (API 0.5)
+
+`api.message.parts` contains annotated H2 frames, complete header blocks (including
+local CONTINUATION frames), and Opaque gaps, in source order. Original read-only
+`api.http2.frames/header_blocks` remain available. Edits are drafts: only returning
+the committed bytes publishes a replacement.
+
+```python
+for part in api.message.parts:
+    if part.is_a(PartType.Http2.Header) and part.headers is not None:
+        part.headers.set_header(b"x-spider", b"rewrite")
+    elif part.type == PartType.Http2.Data:
+        if part.content.complete is True:
+            part.set_bytes(b"new body")
+return api.message.commit()
+```
+
+Names and values are **bytes**, not escaped display strings. `headers.entries`
+preserves duplicates and exposes `indexing` (`without`, `incremental`, `never`,
+`indexed`, `table-size`), `index`, and `name_index`. Constructors include
+`api.http2.Header(...)`, `HeaderIndex(62)`, `TableSize(4096)`, `Frame(...)` and
+`Ping()`; append new frames to `api.message.parts`. Indexed/Huffman values need
+backend decode metadata to expose logical bytes; unresolved values are `None`,
+but their original instructions remain preserved and explicit index edits work.
+
+`get_bytes()` reads the representation: unpadded DATA, HPACK bytes for a header
+block, or control/Opaque bytes. DATA is **not inflated**. Do not mix raw HPACK
+replacement with logical header edits. `part.commit()` previews a frame/block;
+`message.commit()` also recalculates existing Content-Length for changed, fully
+known local content. `complete` means frame/block completeness;
+`content.complete` is True/False/None for whole locally bounded content. Incomplete
+parts cannot be rebuilt until continued through a hold. Gzip rewriting remains
+deferred. `commit(False)` explicitly disables Content-Length repair.
+
+Default output frame limit is 16384; `part.max_frame_size` can use a known peer
+limit. This mode does not discover or maintain output peer settings/HPACK state.
+It also does not compensate connection/stream flow-control windows after DATA
+size changes. It permits explicit index/table changes and nonsensical semantic values: a valid
+HPACK encoding can still fail against the receiver's dynamic table. **No later
+messages are silently translated.** TRANSLATE and strict control policy are future
+work. Failed assembly raises `CommitException`, leaves original bytes untouched,
+and allows fixing the draft and retrying. The script must return the result.
+
+### Live Parts hold / need-more
+
+Deploy with **flow** instancing, as the **last enabled script** in the chain.
+Hold is not supported in preview or message/endpoint instances yet.
+
+```python
+for part in api.message.parts:
+    if part.type == PartType.Http1.Body:
+        if not part.content.complete:
+            api.message.parts.hold_from(api.message.parts[0])
+            return api.message.commit()
+        part.set_bytes(b"a different body")
+return api.message.commit()
+```
+
+This first H1 slice requires a complete annotated header with one Content-Length,
+without compression/chunked framing. Subsequent body bytes need no new header
+annotations. Header edits use `part.http1.set_header(...)`; retain the header too
+if a later body edit will change Content-Length. Trailing unrecognized data stays
+Opaque, not silently interpreted as another request.
+
+`hold_from(part)` retains that part and the entire following suffix, including
+meaning, lazy data and pending edits. Returning `message.commit()` emits only the
+prefix: empty prefix becomes webhook `need-more`, otherwise `replace`. The next
+callback receives held Parts before new Parts. H2 frames with a complete nine-byte
+header and partial payload/header blocks can be continued; the live enrichment
+engine sees each incoming byte only once. `api.bytes` and `message.bytes/size`
+still describe the current callback, while `message.parts` includes resumed data.
+
+Hold checkpoints live in the backend, isolated by deployment/version, connection
+and direction; they survive Python worker replacement, not backend restart. They
+are separate from `api.state`, with a 1 MiB serialized checkpoint limit and a
+4 MiB deployment state+hold quota. Return an explicit result after resuming:
+`None` is an error. Event inspection metadata reports `holding`, `released` or
+`abandoned`; checkpoint contents are not copied into status/event output.
+
+**Known limitation, deliberately deferred:** failure handling remains fail-open.
+A failed webhook, script error, stop/expiry, disable/redeploy or backend restart
+can lose held data while later bytes continue. Strict ordering/failure protection
+is tracked in `docs/TODO.md`, for HOLD/REWRITE as well as future TRANSLATE.
 
 Live edit is opt-in. When enabled, each new content callback waits up to ten
 seconds for `accept`, `accept-session`, `replace`, or `discard`. Accept-session
