@@ -89,6 +89,12 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_test.py)
     add_test(NAME inspection_hold_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_hold_test.py)
+    add_test(NAME inspection_h1_corpus_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h1_corpus_test.py)
+    add_test(NAME inspection_h2_corpus_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_corpus_test.py)
+    set_tests_properties(inspection_h1_corpus_tests inspection_h2_corpus_tests
+                        PROPERTIES TIMEOUT 30)
     add_executable(inspection_hold_live_tests tests/inspection_hold_live_test.cpp)
     target_link_libraries(inspection_hold_live_tests PRIVATE spider_core)
     target_compile_options(inspection_hold_live_tests PRIVATE -UNDEBUG)
