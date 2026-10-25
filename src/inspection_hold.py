@@ -21,7 +21,7 @@ class PartList(list):
         self._held_from = None
 
     @api_method('part: RewritePart', 'None',
-                'Hold this part and everything after it. Return message.commit() to publish the prefix and retain the suffix for the next callback.',
+                'Hold this part and everything after it. Return message.commit() in rewrite or message.translate() in translate to publish the prefix and retain the suffix for the next callback.',
                 'if api.message.parts:\n    api.message.parts.hold_from(api.message.parts[0])\n    return api.message.commit()',
                 availability='Live flow deployment at the end of the enabled chain.', access='mutable hold boundary')
     def hold_from(self, part):

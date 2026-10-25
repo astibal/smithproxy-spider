@@ -24,7 +24,7 @@ class TranslateWorkerTests(unittest.TestCase):
             documentation, re.S,
         ))
         self.assertEqual(set(examples), {
-            'replace-header', 'unchanged', 'indexed-once', 'missing-translate',
+            'replace-header', 'unchanged', 'indexed-once', 'missing-translate', 'hold-incomplete',
         })
 
         for name in ('replace-header', 'unchanged', 'indexed-once'):

@@ -160,11 +160,11 @@ return api.message.commit()
 
 ### Message.translate
 
-Explicitly translate every callback of a pinned H2 flow. Header edits only; requires a capable strict-control proxy, python-hpack and complete blocks. No silent background runs.
+Explicitly translate every callback of a pinned H2 flow. Header edits only; requires a capable strict-control proxy and python-hpack. Hold incomplete Parts with parts.hold_from(part); only the emitted prefix advances HPACK state. No silent background runs.
 
 Dostupnost: First observed content of a new flow, sole enabled deployment; every callback thereafter.
 
-Přístup: assemble translated output; typ/výsledek: `bytes`.
+Přístup: assemble translated output; typ/výsledek: `bytes | HeldCommit`.
 
 ```python
 if api.instance.mode == "flow":
@@ -1178,7 +1178,7 @@ Ordered mutable parts with an explicit suffix hold boundary.
 
 ### PartList.hold_from
 
-Hold this part and everything after it. Return message.commit() to publish the prefix and retain the suffix for the next callback.
+Hold this part and everything after it. Return message.commit() in rewrite or message.translate() in translate to publish the prefix and retain the suffix for the next callback.
 
 Dostupnost: Live flow deployment at the end of the enabled chain.
 

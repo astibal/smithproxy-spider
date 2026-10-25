@@ -24,6 +24,10 @@ int main() {
         "api.state['runs'] = api.state.get('runs', 0) + 1\n"
         "api.print('ran', api.state['runs'], api.side)\n"
         "if api.info.get('skip'): return None\n"
+        "for part in api.message.parts:\n"
+        "    if not part.complete:\n"
+        "        api.message.parts.hold_from(part)\n"
+        "        break\n"
         "if api.state['runs'] == 1:\n"
         "    for part in api.message.parts:\n"
         "        if part.headers is not None: part.headers.set_header(b'x-lab', b'changed')\n"
@@ -77,5 +81,20 @@ int main() {
     assert(!old_proxy.body.contains("control"));
     assert(send("gap", 1, first).body["action"] == "replace");
     assert(send("gap", 3, indexed).status == 503);
+
+    // Initial need-more must activate strict even without an emitted byte.
+    const std::string preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    auto held = send("fragmented", 1, preface.substr(0, 1));
+    assert(held.status == 200 && held.body["action"] == "need-more");
+    assert(held.body["control"]["mode"] == "strict");
+    assert(!held.body.contains("content"));
+
+    // The opposite direction has independent hold and table checkpoints.
+    assert(send("fragmented", 2, first, false, true, "R").body["action"] == "replace");
+    auto prefix = send("fragmented", 3, preface.substr(1) + first.substr(0, 8));
+    assert(prefix.status == 200 && prefix.body["action"] == "replace");
+    assert(prefix.body["content"] == spider::base64_encode(preface));
+    auto completed = send("fragmented", 4, first.substr(8));
+    assert(completed.status == 200 && completed.body["action"] == "replace");
     std::cout << "Live translate routing, control and failure tests passed\n";
 }

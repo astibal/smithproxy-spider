@@ -31,6 +31,9 @@ assert control['version'] == 1
 assert control['sequence'] == api.state['callbacks']
 assert control['mode'] == ('regular' if control['sequence'] == 1 else 'strict')
 for part in api.message.parts:
+    if not part.complete:
+        api.message.parts.hold_from(part)
+        break
     if part.type != PartType.Http2.Header:
         continue
     if any(field.name == b'x-fail' for field in part.headers.entries):
@@ -59,6 +62,18 @@ def receive(sock, count):
 def receive_frame(sock):
     head = receive(sock, 9)
     return head, receive(sock, int.from_bytes(head[:3], 'big'))
+
+
+def receive_headers(sock):
+    head, data = receive_frame(sock)
+    last = head
+
+    while not last[4] & 4:
+        last, tail = receive_frame(sock)
+        assert last[3] == 9 and last[5:] == head[5:]
+        data += tail
+
+    return head, data
 
 
 def wait_until(check, processes):
@@ -90,6 +105,7 @@ def main():
     parser.add_argument('--smithproxy', type=Path, required=True)
     parser.add_argument('--spider', type=Path, required=True)
     parser.add_argument('--failure', choices=('exception', 'missing-translate'), default='exception')
+    parser.add_argument('--fragmented', action='store_true', help='Split HEADERS/CONTINUATION into single-byte callbacks')
     args = parser.parse_args()
     source = args.smithproxy_source.resolve()
     sys.path.insert(0, str(source / 'tests/tls'))
@@ -170,6 +186,44 @@ def main():
 
                         encoders = [hpack.Encoder(), hpack.Encoder()]
                         decoders = [Oracle(), Oracle()]
+                        header_callbacks = 0
+
+                        def send_headers(sender, receiver, block, stream):
+                            nonlocal header_callbacks
+                            if not args.fragmented:
+                                header_callbacks += 1
+                                sender.sendall(frame(block, 1, 5, stream))
+                                return
+
+                            # Emit a complete prefix while retaining a partial frame.
+                            split = max(1, len(block) // 2)
+                            wire = frame(block[:split], 1, 1, stream) + frame(block[split:], 9, 4, stream)
+                            header_callbacks += len(wire) + 1  # First byte, remainder, opposite ACK.
+                            prefix = frame(b'12345678', 6, 0, 0)
+                            sender.sendall(prefix + wire[:1])
+                            assert b''.join(receive_frame(receiver)) == prefix
+
+                            # The other direction still runs while this one holds.
+                            reply = frame(b'12345678', 6, 1, 0)
+                            receiver.sendall(reply)
+                            assert b''.join(receive_frame(sender)) == reply
+
+                            # Wait for each callback before the next byte so TCP
+                            # coalescing cannot turn this into a whole-frame test.
+                            for index in range(1, len(wire)):
+                                before = get_json(inspection, 'frontend-key')['chain'][0]['runs']
+                                sender.sendall(wire[index:index + 1])
+                                wait_until(lambda: get_json(inspection, 'frontend-key')['chain'][0]['runs'] > before,
+                                           processes)
+
+                                if index < len(wire) - 1:
+                                    receiver.settimeout(.01)
+                                    try:
+                                        leaked = receiver.recv(1)
+                                    except socket.timeout:
+                                        continue
+                                    raise AssertionError(f'Incomplete header block leaked {leaked!r}')
+
                         for turn in range(1, 5):
                             stream = 2 * turn - 1
                             for side, sender, receiver, encoder, decoder in zip(
@@ -181,9 +235,9 @@ def main():
                                 block = encoder.encode(fields, huffman=False)
                                 if turn > 1:
                                     assert block[-1:] == b'\xbe', 'Expected indexed x-lab'
-                                sender.sendall(frame(block, 1, 5, stream))
-                                head, body = receive_frame(receiver)
-                                assert head[3:5] == b'\x01\x05'
+                                send_headers(sender, receiver, block, stream)
+                                head, body = receive_headers(receiver)
+                                assert head[3] == 1 and head[4] & 1
                                 assert int.from_bytes(head[5:], 'big') == stream
                                 expected = fields[:-1] + [(b'x-lab', b'changed-' + side.encode()
                                                            if turn == 2 else b'original')]
@@ -197,9 +251,10 @@ def main():
                         origin.sendall(pong)
                         assert b''.join(receive_frame(client)) == pong
                         state = get_json(inspection, 'frontend-key')['chain'][0]
-                        assert state['runs'] == 14, state
+                        expected_runs = 4 + header_callbacks + 2  # SETTINGS/ACK, headers, final PING/ACK.
+                        assert state['runs'] == expected_runs, state
                         assert state['errors'] == 0, state
-                        assert state['last_result']['logs'] == ['R 14'], state
+                        assert state['last_result']['logs'] == [f'R {expected_runs}'], state
 
                         # Failure must be observed at the peer socket, not just in logs.
                         fields = [(b':method', b'GET'), (b':scheme', b'http'),
@@ -213,8 +268,8 @@ def main():
                         assert leaked == b'', f'Failed callback leaked {leaked!r}'
                         state = get_json(inspection, 'frontend-key')
                         assert state['chain'][0]['errors'] == 1
-                        assert state['chain'][0]['runs'] == 15
-                        print(f'PASS: bidirectional indices, 14 explicit callbacks, strict {args.failure} with no leak')
+                        assert state['chain'][0]['runs'] == expected_runs + 1
+                        print(f'PASS: bidirectional indices, {expected_runs} explicit callbacks, strict {args.failure} with no leak')
         except BaseException:
             for name, log in logs:
                 log.flush()

@@ -138,9 +138,13 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!script_result.is_null()) {
         if (script_result.value("translate_failed", false))
             return {503, {{"error", "Translate callback failed; strict connection must close"}}};
-        if (script_result.value("translated", false) && script_result.value("ok", false))
+        if (script_result.value("translated", false) && script_result.value("ok", false)) {
+            if (script_result.value("need_more", false))
+                return {200, {{"action", "need-more"}, {"control", {{"mode", "strict"}}}}};
+
             return {200, {{"action", "replace"}, {"content", script_result["replacement"]},
                           {"control", {{"mode", "strict"}}}}};
+        }
         if (script_result.value("ok", false) && script_result.value("need_more", false))
             return {200, {{"action", "need-more"}}};
         if (script_result.value("ok", false) && !script_result.value("replacement", nlohmann::json(nullptr)).is_null())

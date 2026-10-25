@@ -47,7 +47,7 @@ class Api:
             item['bytes'] = base64.b64decode(item.get('content', ''), validate=True)
         views = make_views(event, self.bytes, self.enrichments)
         self.message = views.message
-        if request.get('held_parts'):
+        if request.get('held_parts') and not request.get('translate_active'):
             resume_message(self.message, request['held_parts'], info, self.enrichments)
         _prepare_translation(self.message, request)
         self.metadata = views.metadata

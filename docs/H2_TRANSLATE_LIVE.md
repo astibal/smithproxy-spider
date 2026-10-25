@@ -78,6 +78,43 @@ Worker odmítne výsledek: chybí explicitní `api.message.translate()`. Backend
 vrátí 503 a strict proxy spojení zavře. Ani `return api.message.commit()` tuto
 povinnost nenahrazuje; to je lokální rewrite, ne pokračování HPACK překladu.
 
+### Neúplný rámec nebo HEADERS/CONTINUATION přes více callbacků
+
+<!-- translate-example: hold-incomplete -->
+```python
+for part in api.message.parts:
+    if not part.complete:
+        api.message.parts.hold_from(part)
+        break
+
+    if part.type == PartType.Http2.Header:
+        part.headers.set_header(b"x-lab", b"changed")
+
+return api.message.translate()
+```
+
+Skript sám určuje hranici holdu. Kompletní prefix se přeloží a odešle, suffix
+zůstane jako typované Parts. Prázdný prefix vrací `need-more` a současně zapíná
+nebo zachovává strict policy. Další callback ve stejném směru doplní neúplný
+rámec/blok; protisměr má vlastní hold i HPACK tabulky a dál spouští svůj callback.
+
+HPACK checkpoint reprezentuje jen **odeslaný prefix**. Hlavičky v holdu sice
+mohou mít dekódovaný pohled pro skript, ale neposouvají trvale tabulky. U kompletní
+podržené hlavičky přežijí logické změny; neúplnou část nejprve dosbírej, před
+holdu ji neupravuj. Opětovné spuštění tvého skriptu může tvoje změny zopakovat:
+u ne-idempotentních úprav si to ohlídej pomocí vlastního stavu.
+
+Dokud není celá devítibajtová hlavička rámce, je fragment reprezentovaný jako
+`PartType.Opaque` s `complete == False`; není ještě známý ani jeho stream ID.
+Podobně lze podržet prefix H2 preface. Toto rámování platí pro aktivní H2 translate,
+není to obecné odhadování protokolu u libovolných opaque dat. První aktivace stále
+vyžaduje H2 preface (případně její prefix) nebo H2 anotaci od proxy.
+
+`api.message.bytes` dál obsahuje aktuální callback; celé obnovené zobrazení je
+v `api.message.parts`. Hold je omezený existujícím 1 MiB limitem serializovaného
+checkpointu a 4 MiB deployment kvótou; obnova nad 1 MiB vstupních bajtů se odmítá.
+Překročení limitu v aktivním translate je chyba a spojení se zavře, nikoliv bypass.
+
 Tyto označené příklady test čte přímo z dokumentace a spouští v sandboxovaných
 workerech. U indexovaného scénáře ověřuje skutečné `be` na vstupu a výsledné
 hodnoty nezávislým libnghttp2 dekodérem, nikoli jen návratový status.
@@ -109,7 +146,7 @@ nesmějí tiše vynechat. Skript lze vevnitř větvit, ale musí vrátit transla
 
 ## Co tento první krok ještě neumí
 
-- hold/reassembly v translate, neúplné frame/header bloky a PUSH_PROMISE;
+- PUSH_PROMISE;
 - změny DATA nebo control rámců, vložení/mazání/přeskládání Parts;
 - raw HPACK a explicitní manipulace s indexy (to zůstává rewrite);
 - SETTINGS měnící kapacitu HPACK tabulky z 4096 nebo max frame size z 16384;
@@ -166,8 +203,13 @@ Každý scénář ověřuje:
 - patnáctý callback s výjimkou nebo chybějícím translate: EOF/reset na origin
   socketu, žádný propuštěný bajt a jedna zaznamenaná chyba deploymentu.
 
-Test používá plaintext H2 na loopbacku, kompletní malé rámce a výchozí SETTINGS.
-Není to test TLS, fragmentace, dlouhodobé zátěže nebo všech H2 stavových přechodů.
+Test používá plaintext H2 na loopbacku, malé rámce a výchozí SETTINGS.
+Varianta `--fragmented` navíc dělí HEADERS/CONTINUATION po jednotlivých bajtech,
+čeká na každý callback, kontroluje ticho do dokončení bloku a testuje hotový
+PING prefix i odpověď v protisměru během holdu. Jednotková sada
+`inspection_translate_hold_tests` prochází všechny hranice dělení zprávy,
+částečnou preface, přenos mezi čerstvými workery a zachování kompletních drafts.
+Není to test TLS, dlouhodobé zátěže nebo všech H2 stavových přechodů.
 Porty, konfigurace i úložiště jsou dočasné; skutečné lab instance se nemění.
 
 ```sh
@@ -177,7 +219,8 @@ python3 tests/translate_e2e.py \
   --spider build/smithproxy-spider --failure exception
 ```
 
-Pro druhý scénář použij `--failure missing-translate`. CTest registraci obou
+Pro druhý scénář použij `--failure missing-translate`, pro fragmentaci `--fragmented`.
+CTest registraci všech variant
 zapneš spolu s `SPIDER_TEST_TRANSLATE_POC=ON` nastavením absolutních cest
 `SPIDER_E2E_SMITHPROXY_SOURCE` a `SPIDER_E2E_SMITHPROXY_BINARY` při konfiguraci
 CMake. Testy vyžadují loopback sockety, sandbox worker a `python-hpack`.
@@ -190,3 +233,9 @@ Po přidání skutečného E2E: všech 27 sad Spideru prošlo (41,09 s), včetn�
 variant selhání. Samostatně každá E2E varianta prošla třikrát za sebou (celkem
 6/6 běhů, 23,43 s). Proxy control/need-more regrese opět 5/5 (28,47 s).
 Testovaná proxy obsahuje commit `ddb5ce1` nad `412680e`.
+
+Po doplnění translate hold/reassembly: všech 29 sad prošlo (58,99 s).
+Nová hold sada obsahuje devět testů včetně všech hranic dělení testovací zprávy,
+jednotlivých bajtů a atomických chyb. Fragmentovaný E2E potvrdil přesně 225
+úspěšných explicitních callbacků v obou směrech a zavření bez úniku při následné
+výjimce. Samostatně prošel i live test prvního `need-more` s aktivací strict.

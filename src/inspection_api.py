@@ -170,8 +170,8 @@ class Message:
         except (ValueError, TypeError, AttributeError, OverflowError) as error:
             raise CommitException(str(error)) from error
 
-    @api_method('', 'bytes',
-                'Explicitly translate every callback of a pinned H2 flow. Header edits only; requires a capable strict-control proxy, python-hpack and complete blocks. No silent background runs.',
+    @api_method('', 'bytes | HeldCommit',
+                'Explicitly translate every callback of a pinned H2 flow. Header edits only; requires a capable strict-control proxy and python-hpack. Hold incomplete Parts with parts.hold_from(part); only the emitted prefix advances HPACK state. No silent background runs.',
                 'if api.instance.mode == "flow":\n    return api.message.translate()',
                 availability='First observed content of a new flow, sole enabled deployment; every callback thereafter.',
                 access='assemble translated output')
