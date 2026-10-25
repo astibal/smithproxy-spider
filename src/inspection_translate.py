@@ -588,9 +588,11 @@ class _Translation:
             if not part.complete:
                 raise CommitException('Incomplete H2 part: hold_from(part) before translate')
 
-            if part.frame_type != 1:
+            if part._initial[0] == 0:
+                output.extend(self._translate_data(part, original))
+            elif part.frame_type != 1:
                 if part.commit() != original:
-                    raise CommitException('Translate currently supports header edits only')
+                    raise CommitException('Translate supports header edits and same-length DATA only')
 
                 if part.frame_type == 4:
                     _translate_encoder_settings(encoder, settings.process(part))
@@ -688,6 +690,28 @@ class _Translation:
         self.checkpoint = checkpoint
         self.control_checkpoint = settings.state
         return self.result
+
+    @staticmethod
+    def _translate_data(part, original):
+        """Replace only application bytes; preserve flow-control accounting exactly.
+
+        Keep the frame header, pad-length byte and padding verbatim. Reusing the
+        generic assembler could split a frame or change its END_STREAM flag.
+        """
+        if (part.frame_type, part.flags, part.stream_id) != part._initial:
+            raise CommitException('Translate DATA must preserve frame type, flags and stream id')
+
+        if part._pending is None:
+            return original  # Untouched DATA does not need materialization.
+
+        data = _h2_bytes(part.get_bytes())
+
+        if len(data) != len(part._data):
+            raise CommitException('Translate DATA requires the same length; flow-control translation is not supported yet')
+
+        start = 9 + len(part._prefix)
+        end = start + len(data)
+        return original[:start] + data + original[end:]
 
 
 def _prepare_translation(message, request):

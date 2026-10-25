@@ -108,6 +108,7 @@ def main():
     parser.add_argument('--fragmented', action='store_true', help='Split HEADERS/CONTINUATION into single-byte callbacks')
     parser.add_argument('--settings', action='store_true', help='Exercise acknowledged table eviction and growth in both directions')
     parser.add_argument('--policy', action='store_true', help='Enforce zero capacity after handshake, including synthetic ACK consumption')
+    parser.add_argument('--data', action='store_true', help='Rewrite padded same-length DATA in both directions')
     args = parser.parse_args()
     source = args.smithproxy_source.resolve()
     sys.path.insert(0, str(source / 'tests/tls'))
@@ -142,6 +143,11 @@ def main():
             inspection = base + '/api/inspection'
             state = get_json(inspection, 'frontend-key')
             script = SCRIPT
+            if args.data:
+                script = script.replace('    if part.type != PartType.Http2.Header:',
+                    '    if part.type == PartType.Http2.Data:\n'
+                    '        part.set_bytes(part.get_bytes().replace(b"secret", b"******"))\n'
+                    '    if part.type != PartType.Http2.Header:')
             if args.policy:
                 script = script.replace("control = api.info", "api.connection.set_mode(Mode.Translate)\n"
                     "if api.state['callbacks'] >= 5:\n"
@@ -213,14 +219,15 @@ def main():
 
                         def send_headers(sender, receiver, block, stream):
                             nonlocal header_callbacks
+                            end_stream = 0 if args.data else 1
                             if not args.fragmented:
                                 header_callbacks += 1
-                                sender.sendall(frame(block, 1, 5, stream))
+                                sender.sendall(frame(block, 1, 4 | end_stream, stream))
                                 return
 
                             # Emit a complete prefix while retaining a partial frame.
                             split = max(1, len(block) // 2)
-                            wire = frame(block[:split], 1, 1, stream) + frame(block[split:], 9, 4, stream)
+                            wire = frame(block[:split], 1, end_stream, stream) + frame(block[split:], 9, 4, stream)
                             header_callbacks += len(wire) + 1  # First byte, remainder, opposite ACK.
                             prefix = frame(b'12345678', 6, 0, 0)
                             sender.sendall(prefix + wire[:1])
@@ -268,17 +275,22 @@ def main():
                                 fields = ([(b':method', b'GET'), (b':scheme', b'http'),
                                            (b':authority', b'lab.test'), (b':path', b'/')]
                                           if side == 'L' else [(b':status', b'200')])
+                                if args.data:
+                                    fields += [(b'content-length', b'6')]
                                 fields += [(b'x-lab', b'original')]
                                 block = encoder.encode(fields, huffman=False)
                                 if turn > 1 and not args.settings and not args.policy:
                                     assert block[-1:] == b'\xbe', 'Expected indexed x-lab'
                                 send_headers(sender, receiver, block, stream)
                                 head, body = receive_headers(receiver)
-                                assert head[3] == 1 and head[4] & 1
+                                assert head[3] == 1 and bool(head[4] & 1) == (not args.data)
                                 assert int.from_bytes(head[5:], 'big') == stream
                                 expected = fields[:-1] + [(b'x-lab', b'changed-' + side.encode()
                                                            if turn == 2 else b'original')]
                                 assert decoder.decode(body) == expected
+                                if args.data:
+                                    sender.sendall(frame(b'\x02secretpp', 0, 9, stream))
+                                    assert b''.join(receive_frame(receiver)) == frame(b'\x02******pp', 0, 9, stream)
 
                         # Control-only callbacks must execute too, not just HEADERS.
                         ping = frame(b'12345678', 6, 0, 0)
@@ -288,7 +300,7 @@ def main():
                         origin.sendall(pong)
                         assert b''.join(receive_frame(client)) == pong
                         state = get_json(inspection, 'frontend-key')['chain'][0]
-                        expected_runs = 4 + header_callbacks + settings_callbacks + 2
+                        expected_runs = 4 + header_callbacks + settings_callbacks + 2 + (8 if args.data else 0)
                         assert state['runs'] == expected_runs, state
                         assert state['errors'] == 0, state
                         assert state['last_result']['logs'] == [f'R {expected_runs}'], state

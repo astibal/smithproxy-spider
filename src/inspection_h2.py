@@ -276,7 +276,7 @@ class RewritePart:
             self._data = self._data.tobytes()
         return self._data
 
-    @api_method('value: bytes', 'None', 'Replace the representation, not the nine-byte frame header. Unknown frame types are supported.',
+    @api_method('value: bytes', 'None', 'Replace the representation, not the nine-byte frame header. Rewrite supports unknown frame types; translate permits same-length DATA edits while preserving stream ID, flags and padding.',
                 'part.set_bytes(b"changed")', availability='Complete parts only for a changed commit.', access='mutable rewrite draft')
     def set_bytes(self, value):
         self._pending = _h2_bytes(value)

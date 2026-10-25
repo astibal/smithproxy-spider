@@ -112,6 +112,9 @@ if(BUILD_TESTING)
         add_test(NAME inspection_translate_settings_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_settings_test.py)
         set_tests_properties(inspection_translate_settings_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_translate_data_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_data_test.py)
+        set_tests_properties(inspection_translate_data_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
         set(SPIDER_E2E_SMITHPROXY_SOURCE "" CACHE PATH "Smithproxy source for optional real translate E2E")
         set(SPIDER_E2E_SMITHPROXY_BINARY "" CACHE FILEPATH "Built Smithproxy with webhook control/sequence support")
         if(SPIDER_E2E_SMITHPROXY_SOURCE AND SPIDER_E2E_SMITHPROXY_BINARY)
@@ -144,6 +147,13 @@ if(BUILD_TESTING)
                     --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
                     --spider $<TARGET_FILE:smithproxy-spider> --fragmented --policy)
             set_tests_properties(inspection_translate_e2e_policy
+                PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+            add_test(NAME inspection_translate_e2e_data
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                    --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                    --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                    --spider $<TARGET_FILE:smithproxy-spider> --fragmented --data)
+            set_tests_properties(inspection_translate_e2e_data
                 PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
         endif()
     endif()

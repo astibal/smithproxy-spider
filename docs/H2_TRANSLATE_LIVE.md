@@ -147,6 +147,36 @@ nesmějí tiše vynechat. Skript lze vevnitř větvit, ale musí vrátit transla
 
 ## SETTINGS a potvrzení limitů
 
+### DATA stejné délky
+
+Translate dovoluje upravit reprezentaci kompletního DATA partu přes `set_bytes()`.
+Délka musí zůstat stejná. Frame header, stream ID, všechny flags včetně END_STREAM,
+pad-length byte a padding zůstanou přesně původní. Tím zůstává beze změny také
+počet bajtů účtovaných do flow-control oken; WINDOW_UPDATE se nepřekládá.
+
+Příklad pro známý nekomprimovaný obsah: maskování šestibajtového slova uvnitř
+jednoho DATA rámce. Nehledá přes hranice rámců a neprovádí dekompresi.
+
+<!-- translate-example: data-redaction -->
+```python
+api.connection.set_mode(Mode.Translate)
+for part in api.message.parts:
+    if not part.complete:
+        api.message.parts.hold_from(part)
+        break
+    if part.type == PartType.Http2.Data:
+        part.set_bytes(part.get_bytes().replace(b"secret", b"******"))
+return api.message.translate()
+```
+
+`part.set_bytes(b"short")` místo šestibajtového obsahu způsobí při translate
+`CommitException`: změny délky vyžadují další podporu flow control. Stejně tak
+se odmítne změna stream ID, typu nebo flags DATA. Neúspěšná transakce nepublikuje
+ani předchozí upravené části. Kompletní upravený part lze držet přes hold;
+neúplný part nejdřív zadrž a uprav až po dokončení. Hlavičky `content-length`
+není kvůli stejně dlouhé náhradě potřeba přepočítávat. Integritní metadata těla
+(například digest) tento režim automaticky neopravuje.
+
 ### Explicitní režim a trvalý limit
 
 ```python
@@ -201,7 +231,8 @@ a změny HPACK kapacity z [RFC 7541 §4.2](https://www.rfc-editor.org/rfc/rfc754
 ## Co tento první krok ještě neumí
 
 - PUSH_PROMISE;
-- uživatelské změny DATA nebo control rámců, vložení/mazání/přeskládání Parts
+- změny délky DATA, jejich stream ID nebo flags; uživatelské změny control rámců,
+  vložení/mazání/přeskládání Parts
   (výjimkou je explicitní SETTINGS politika výše);
 - raw HPACK a explicitní manipulace s indexy (to zůstává rewrite);
 - převzetí již rozběhlého spojení, více aktivních překladových deploymentů,
@@ -320,3 +351,17 @@ API sada poté prošla; chain při opakování jednou narazil na bootstrap asser
 `active_sessions == 0`, následující samostatný běh prošel (7,62 s).
 Všech 32 sad tedy má úspěšný běh; není to tvrzení o jednom čistém full-run.
 Build, generovaná reference a kontrola whitespace prošly.
+
+Po přidání DATA stejné délky: nová sada má sedm testů, včetně matice směrů,
+délek, paddingu a END_STREAM, všech hranic fragmentace s aktivním protisměrem,
+prokládaných streamů, holdu upraveného partu, atomického odmítnutí a příkladu
+spuštěného z této dokumentace. `--fragmented --data` ověřuje maskování padded
+DATA v requestech i responses přes skutečnou proxy, při zachování content-length
+a END_STREAM. E2E prošel dvakrát (18,48 s a po doplnění no-op fast-path 17,43 s).
+
+Full-run měl 33/34 úspěšných sad (139,10 s). Zbývající chain test odhalil chybu
+harnessu: HTTP timeout 2 s byl kratší než backend language budget 2,5 s a jeho
+OSError spouštěl celý stateful scénář znovu. Harness nyní opakuje jen discovery
+a pro language čeká 5 s; samostatný chain poté prošel (8,02 s). Produkční
+timeouty se neměnily. Všech 34 sad má úspěšný běh; build i generovaná reference
+jsou ověřené. Nezměněné DATA se vracejí bez materializace obsahu.

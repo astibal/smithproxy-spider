@@ -1048,7 +1048,7 @@ api.print(part.get_bytes()[:32].hex())
 
 ### RewritePart.set_bytes
 
-Replace the representation, not the nine-byte frame header. Unknown frame types are supported.
+Replace the representation, not the nine-byte frame header. Rewrite supports unknown frame types; translate permits same-length DATA edits while preserving stream ID, flags and padding.
 
 Dostupnost: Complete parts only for a changed commit.
 
