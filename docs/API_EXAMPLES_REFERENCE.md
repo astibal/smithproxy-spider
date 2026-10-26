@@ -223,6 +223,24 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
+### Message.bodies
+
+Return H1 Body parts and logical H2 body views in header order. H2 views reference existing DATA parts; never append them to message.parts. Reacquire views after changing the parts list.
+
+Availability: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
+
+Access: views of mutable drafts; type/result: `tuple[RewritePart | H2Body, ...]`.
+
+Easy: H2 whole-body edits require complete known content and unedited DATA drafts. Commit repairs known Content-Length.
+
+Expert: The same view rules apply. Rewrite permits resizing; Translate still requires same-length DATA in both safety modes.
+
+```python
+for body in api.message.bodies():
+    if body.complete:
+        api.print(body.stream_id, len(body.get_bytes()))
+```
+
 ### Message.commit
 
 Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; update_content_length=False disables H2 repair only (H1 typed assembly always recalculates it). Incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.
@@ -1406,6 +1424,123 @@ Expert: Allow H1 semantic inconsistencies and oversized H2 control frames; permi
 ```python
 wire = part.commit()
 api.print(len(wire))
+```
+
+## H2Body
+
+Logical view, not an additional wire part. DATA retain their physical order.
+
+### H2Body.type
+
+Always PartType.Http2.Body.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `str`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.type)
+```
+
+### H2Body.stream_id
+
+Stream owning these DATA parts.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.stream_id)
+```
+
+### H2Body.complete
+
+Whole content is known only after complete END_STREAM DATA or trailers; unknown after gaps/reset.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `bool`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.complete)
+```
+
+### H2Body.content
+
+Whole-content completeness; unlike a DATA part, Body itself spans the whole content.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `PartContent`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.content.complete)
+```
+
+### H2Body.chunks
+
+Existing DATA parts, including incomplete frames. Read or edit these instead of replacing the whole body; do not emit them again.
+
+Availability: Always available for a content callback.
+
+Access: tuple of mutable drafts; type/result: `tuple[RewritePart, ...]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+for chunk in body.chunks:
+    api.print(chunk.complete)
+```
+
+### H2Body.get_bytes
+
+Concatenate unpadded bytes of complete DATA frames. Incomplete frames cannot safely expose logical content; no decompression.
+
+Availability: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
+
+Access: read-only; type/result: `bytes`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.get_bytes().hex())
+```
+
+### H2Body.set_bytes
+
+Replace complete content through existing DATA drafts. Keep original capacities except the last DATA, which receives the remainder. Keep padding, flags and interleaved frame order; no new stream or implicit flow-control translation.
+
+Availability: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
+
+Access: mutable draft; type/result: `None`.
+
+Easy: Require complete content and no prior DATA edits; final message commit repairs known Content-Length. Translate allows only same-length DATA.
+
+Expert: Same view guards. Rewrite may resize DATA; connection-wide correctness remains the caller responsibility. Translate does not allow resizing.
+
+```python
+body.set_bytes(body.get_bytes())
 ```
 
 ## PartContent

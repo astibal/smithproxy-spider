@@ -530,6 +530,43 @@ enforce the 1 MiB wire limit, hold budget and 8192-data-chunk limit. Chunk tuple
 removal/reordering and Trailer-declaration edits are not supported in this phase.
 Snapshots remain Content-Length-only; use Parts for chunked content.
 
+## 21. H2 body views over interleaved DATA
+
+`message.parts` remains the physical sequence. `message.bodies()` returns H1
+Body parts and logical H2 Body views in header order. H2 views reference the
+existing DATA parts through `body.chunks`; they are not additional wire parts.
+Do not append a Body view to `message.parts`. Reacquire views after changing
+the parts list or frame flags; views describe the grouping at acquisition time.
+
+A complete DATA frame has `part.complete == True` even when the body continues.
+A logical Body is complete only after a complete END_STREAM DATA frame or
+trailing HEADERS block. An opaque gap or reset prevents proof of completeness.
+The initial request/response HEADERS must be available and understood; a bare
+DATA tail does not establish a whole-body boundary. Hold from the initial header
+to retain that context across callbacks. No decompression is performed.
+
+<!-- example: h2-logical-body fixture=h2 expect=replace -->
+```python
+for body in api.message.bodies():
+    if body.type == PartType.Http2.Body and body.complete:
+        body.set_bytes(b"changed")
+return api.message.commit()
+```
+
+This scatters replacement bytes through the original DATA slots, retaining each
+original capacity except the last slot, which receives the remainder. Empty
+slots remain valid empty DATA frames. Padding, END_STREAM and interleaved streams
+stay in place. Commit splits oversized DATA and repairs known Content-Length.
+`set_bytes()` rejects existing DATA edits; subsequent explicit DATA edits operate
+on the prepared draft. A body with no DATA slots accepts only an empty replacement.
+
+Easy and Expert both require complete content for this helper. Rewrite can
+resize it; Translate still allows only same-length DATA edits in either mode.
+The helper does not implement flow-control compensation or repair H2 content
+digests/trailers. Those remain the script's responsibility in the existing H2
+rewrite contract. An incomplete physical DATA frame is visible in `body.chunks`,
+but `body.get_bytes()` rejects it because padding cannot yet be safely stripped.
+
 ## Other important boundaries
 
 - H1 Parts do not yet parse compressed/pipelined messages. Without suitable

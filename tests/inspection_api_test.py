@@ -197,7 +197,9 @@ class Http2Tests(unittest.TestCase):
                         # Execute each independently, inside a real script function
                         # so explicit `return api.message.commit()` is exercised.
                         part = api.http2.Frame(1, 5, 1, b'\x00\x01x\x01v')
-                        scope = {'Mode': Mode}
+                        from inspection_h2_test import message, frame, literal
+                        body_message = message(frame(literal(b':status', b'200'), 1, 4), frame(b'abc'))
+                        scope = {'Mode': Mode, 'body': body_message.bodies()[0]}
                         source = 'def example(api, part, entry, PartType):\n' + indent(field['example'], '    ')
                         exec(compile(source, '<api-example>', 'exec'), scope)
                         if name == 'Connection' and field['name'] == 'request_rewrite':

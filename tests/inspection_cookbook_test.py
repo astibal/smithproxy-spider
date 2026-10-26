@@ -208,6 +208,10 @@ class CookbookTests(unittest.TestCase):
                     frames = unpack(wire)
                     self.assertIn((b'content-length', b'20000'), Oracle().decode(frames[0][3]))
                     self.assertEqual(b''.join(f[3] for f in frames if f[0] == 0), b'A' * 20000)
+                elif name == 'h2-logical-body':
+                    frames = unpack(wire)
+                    self.assertIn((b'content-length', b'7'), Oracle().decode(frames[0][3]))
+                    self.assertEqual(b''.join(f[3] for f in frames if f[0] == 0), b'changed')
                 elif name == 'h2-construct':
                     frames = unpack(wire)
                     self.assertEqual(Oracle().decode(frames[0][3]), [

@@ -191,6 +191,8 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_hold_test.py)
     add_test(NAME inspection_chunked_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_chunked_test.py)
+    add_test(NAME inspection_h2_body_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_body_test.py)
     add_test(NAME inspection_h1_corpus_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h1_corpus_test.py)
     add_test(NAME inspection_h2_corpus_tests

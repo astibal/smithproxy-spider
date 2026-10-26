@@ -41,6 +41,8 @@ class LanguageTests(unittest.TestCase):
         self.assertIn('Data', self.labels('PartType.Http2.'))
         self.assertIn('hold_from', self.labels('parts = api.message.parts\nparts.'))
         self.assertIn('Body', self.labels('PartType.Http1.'))
+        self.assertIn('Body', self.labels('PartType.Http2.'))
+        self.assertIn('complete', self.labels('for body in api.message.bodies():\n    body.'))
         self.assertIn('Chunk', self.labels('PartType.Http1.'))
         self.assertIn('set_bytes', self.labels('for part in api.message.parts:\n    for chunk in part.chunks:\n        chunk.'))
 

@@ -176,6 +176,19 @@ class Message:
                  for group in _h2_content_groups(parts)}
         object.__setattr__(self, '_body_sizes', sizes)
 
+    @api_method('', 'tuple[RewritePart | H2Body, ...]',
+                'Return H1 Body parts and logical H2 body views in header order. H2 views reference existing DATA parts; never append them to message.parts. Reacquire views after changing the parts list.',
+                'for body in api.message.bodies():\n    if body.complete:\n        api.print(body.stream_id, len(body.get_bytes()))', access='views of mutable drafts',
+                easy='H2 whole-body edits require complete known content and unedited DATA drafts. Commit repairs known Content-Length.',
+                expert='The same view rules apply. Rewrite permits resizing; Translate still requires same-length DATA in both safety modes.')
+    def bodies(self):
+        groups = {id(group[0]): group for group in _h2_content_groups(self.parts)}
+        return tuple(
+            H2Body(groups[id(part)]) if id(part) in groups else part
+            for part in self.parts
+            if id(part) in groups or part.type == PartType.Http1.Body
+        )
+
     @api_method('update_content_length: bool = True, *, safety: str = Safety.Easy', 'bytes | HeldCommit',
                 'Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; update_content_length=False disables H2 repair only (H1 typed assembly always recalculates it). Incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.',
                 'return api.message.commit()', access='assemble private draft',
@@ -718,7 +731,7 @@ def api_schema():
     """Generate reference directly from runtime dataclasses, types and field comments."""
     types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock,
              InstanceContext, SharedStorage, StorageNamespace, MessageSnapshot, Http1Draft, CommitException,
-             RewritePart, PartContent, H2Headers, HpackField, PartList, HeldCommit, Connection, ConnectionHttp2]
+             RewritePart, H2Body, PartContent, H2Headers, HpackField, PartList, HeldCommit, Connection, ConnectionHttp2]
     return {'version': '0.6', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),

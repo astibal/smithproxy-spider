@@ -17,6 +17,7 @@ class PartType:
 
     class Http2:
         Part = 'http2'
+        Body = 'http2.body'
         Header = 'http2.header'
         Data = 'http2.data'
         Frame = 'http2.frame'
@@ -473,8 +474,15 @@ def _h2_content_groups(parts):
         elif part.frame_type == 3:
             active.pop(part.stream_id, None)
 
-        if part.frame_type == 1 and part.headers is not None:
-            if any(e.name in (b':method', b':status') for e in part.headers.entries):
+        if part.frame_type == 1:
+            if part.headers is None:
+                # END_STREAM on HEADERS does not complete content until the
+                # entire header block (including CONTINUATION) is available.
+                if part.stream_id in active and not part.complete:
+                    active[part.stream_id].append(part)
+                else:
+                    active.pop(part.stream_id, None)
+            elif any(e.name in (b':method', b':status') for e in part.headers.entries):
                 active[part.stream_id] = [part]
                 groups.append(active[part.stream_id])
             elif part.stream_id in active:
@@ -490,6 +498,60 @@ def _h2_content_groups(parts):
         for part in group:
             part.content = PartContent(False)
     return groups
+
+
+@dataclass(init=False)
+class H2Body:
+    """Logical view, not an additional wire part. DATA retain their physical order."""
+    type: str = documented('Always PartType.Http2.Body.', 'api.print(body.type)')
+    stream_id: int = documented('Stream owning these DATA parts.', 'api.print(body.stream_id)')
+    complete: bool = documented('Whole content is known only after complete END_STREAM DATA or trailers; unknown after gaps/reset.', 'api.print(body.complete)')
+    content: PartContent = documented('Whole-content completeness; unlike a DATA part, Body itself spans the whole content.', 'api.print(body.content.complete)')
+    chunks: tuple[RewritePart, ...] = documented('Existing DATA parts, including incomplete frames. Read or edit these instead of replacing the whole body; do not emit them again.', 'for chunk in body.chunks:\n    api.print(chunk.complete)', access='tuple of mutable drafts')
+
+    def __init__(self, group):
+        self.type = PartType.Http2.Body
+        self.stream_id = group[0].stream_id
+        self.content = group[0].content
+        self.complete = self.content.complete is True
+        self.chunks = tuple(part for part in group if part.frame_type == 0)
+
+    @api_method('', 'bytes', 'Concatenate unpadded bytes of complete DATA frames. Incomplete frames cannot safely expose logical content; no decompression.',
+                'api.print(body.get_bytes().hex())', access='read-only')
+    def get_bytes(self):
+        if any(not part.complete for part in self.chunks):
+            raise CommitException('Incomplete DATA frame: hold and await its remaining bytes')
+
+        return b''.join(part.get_bytes() for part in self.chunks)
+
+    @api_method('value: bytes', 'None', 'Replace complete content through existing DATA drafts. Keep original capacities except the last DATA, which receives the remainder. Keep padding, flags and interleaved frame order; no new stream or implicit flow-control translation.',
+                'body.set_bytes(body.get_bytes())', access='mutable draft',
+                easy='Require complete content and no prior DATA edits; final message commit repairs known Content-Length. Translate allows only same-length DATA.',
+                expert='Same view guards. Rewrite may resize DATA; connection-wide correctness remains the caller responsibility. Translate does not allow resizing.')
+    def set_bytes(self, value):
+        value = _h2_bytes(value)
+
+        if not self.complete or any(not part.complete for part in self.chunks):
+            raise CommitException('Incomplete H2 body: hold from its header and await END_STREAM')
+
+        if any(part._pending is not None for part in self.chunks):
+            raise CommitException('Cannot combine whole-body replacement with existing DATA edits')
+
+        if not self.chunks:
+            if value:
+                raise CommitException('Body has no DATA slots; construct explicit frames to add content')
+            return
+
+        # Prepare all slices before touching the drafts. Empty DATA stay in place
+        # so END_STREAM and trailer ordering cannot move to another stream.
+        replacements, offset = [], 0
+        for index, part in enumerate(self.chunks):
+            end = len(value) if index == len(self.chunks) - 1 else min(len(value), offset + len(part._data))
+            replacements.append(value[offset:end])
+            offset = end
+
+        for part, data in zip(self.chunks, replacements):
+            part.set_bytes(data)
 
 
 def _h2_length_overrides(message):
