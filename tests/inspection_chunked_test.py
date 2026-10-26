@@ -92,7 +92,7 @@ class ChunkedTests(unittest.TestCase):
 
     def test_ambiguous_or_unsupported_heads_are_opaque(self):
         for extra in (b'Content-Length: 5\r\n', b'Transfer-Encoding: chunked\r\n',
-                      b'Content-Encoding: gzip\r\n', b'Trailer: bad name\r\n'):
+                      b'Trailer: bad name\r\n'):
             msg = message(head=HEAD[:-2] + extra + b'\r\n')
             self.assertEqual(msg.parts[0].type, PartType.Opaque)
 

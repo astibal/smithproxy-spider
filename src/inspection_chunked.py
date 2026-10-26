@@ -37,7 +37,15 @@ class _ChunkedBody(_H1Part):
         if self._pending is not None:
             return self._pending
 
-        return b''.join(chunk.get_bytes() for chunk in self.chunks)
+        wire = b''.join(chunk.get_bytes() for chunk in self.chunks)
+        return _decode_body(self, wire, self._encoding, self.complete)
+
+    def _encoded_bytes(self):
+        current = _body_encoding(_header_values(self.group.draft.headers, 'content-encoding'))
+        if current != self._encoding:
+            raise CommitException('Changing Content-Encoding on a logical Body is not supported')
+        wire = b''.join(chunk.get_bytes() for chunk in self.chunks)
+        return _encode_body(self, wire, self._pending, self._encoding, self.complete)
 
 
 class _ChunkedGroup:
@@ -81,9 +89,6 @@ class _ChunkedGroup:
 
         if probe._error:
             raise CommitException(probe._error)
-
-        if _header_values(probe.http1.headers, 'content-encoding'):
-            raise CommitException('Compressed H1 Parts are not supported yet')
 
         self.head, self.body = head, b''
         self.draft = probe.http1
@@ -195,7 +200,7 @@ class _ChunkedGroup:
         if body._pending is not None and chunk_changes:
             raise CommitException('Cannot combine whole-body replacement with chunk edits')
 
-        data = body.get_bytes()
+        data = body._encoded_bytes()
         original = b''.join(chunk._data for chunk in body.chunks)
         unchanged = (data == original and not chunk_changes and tuple(self.draft.headers) == self.initial_headers
                      and self.draft.target == self.initial_target and not self.draft.body)
@@ -225,6 +230,7 @@ class _ChunkedGroup:
                                  if h.name.lower() not in ('transfer-encoding', 'trailer')]
         snapshot.http1.target = self.draft.target
         snapshot.http1.body = data
+        snapshot._managed_body_encoding = True
         wire = snapshot.commit(safety=safety)
         head = wire.split(b'\r\n\r\n', 1)[0].split(b'\r\n')
         head = [line for line in head if not line.lower().startswith(b'content-length:')]

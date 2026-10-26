@@ -610,13 +610,14 @@ class _Translation:
         settings = _TranslationSettings(self.control_before, self.settings.side)
 
         emitted = message.parts[:cut]
+        body_overrides = _encoded_h2_bodies(emitted)
 
         for part, original in zip(emitted, self.originals):
             if not part.complete:
                 raise CommitException('Incomplete H2 part: hold_from(part) before translate')
 
             if part._initial[0] == 0:
-                output.extend(self._translate_data(part, original))
+                output.extend(self._translate_data(body_overrides.get(id(part), part), original))
             elif part._initial[0] not in (1, 5):
                 if part.commit() != original:
                     raise CommitException('Translate supports header edits and same-length DATA only')

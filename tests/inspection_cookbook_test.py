@@ -31,10 +31,17 @@ def fixture(name):
     elif name == 'opaque':
         data = b'\x01\x02custom'
     else:
-        body = gzip.compress(b'abc', mtime=0) if name == 'gzip' else b'abc'
+        import zlib
+        body = b'abc'
+        if name == 'gzip':
+            body = gzip.compress(body, mtime=0)
+        elif name == 'deflate':
+            body = zlib.compress(body)
         head = b'POST / HTTP/1.1\r\nHost: lab.test\r\nX-Old: yes\r\n'
         if name == 'gzip':
             head += b'Content-Encoding: gzip\r\n'
+        if name == 'deflate':
+            head += b'Content-Encoding: deflate\r\n'
         if name == 'h1-chunked':
             head += b'Transfer-Encoding: chunked\r\n\r\n'
             body = b'3\r\nabc\r\n0\r\n\r\n'
@@ -196,6 +203,12 @@ class CookbookTests(unittest.TestCase):
                 elif name == 'h1-body':
                     self.assertTrue(wire.endswith(b'{"lab":true}'))
                     self.assertIn(b'Content-Length: 12\r\n', wire)
+                elif name in ('body-gzip', 'body-deflate'):
+                    import zlib
+                    encoded = wire.split(b'\r\n\r\n', 1)[1]
+                    plain = gzip.decompress(encoded) if name == 'body-gzip' else zlib.decompress(encoded)
+                    self.assertEqual(plain, b'abc-checked')
+                    self.assertIn(f'Content-Length: {len(encoded)}\r\n'.encode(), wire)
                 elif name in ('h1-chunked-body', 'h1-chunked-chunk'):
                     self.assertNotIn(b'Content-Length:', wire)
                     self.assertTrue(wire.endswith(b'7\r\nchanged\r\n0\r\n\r\n'))

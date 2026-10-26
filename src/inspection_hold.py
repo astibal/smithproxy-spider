@@ -31,6 +31,57 @@ class PartList(list):
         self._held_from = part
 
 
+def _body_encoding(values):
+    """Keep unsupported/stacked codings opaque until logical access is requested."""
+    return ','.join(values).strip().lower()
+
+
+def _decode_body(owner, wire, encoding, complete):
+    if not encoding or encoding == 'identity':
+        return wire
+
+    if not complete:
+        raise CommitException('Compressed body is incomplete: hold and await complete content')
+
+    cached = getattr(owner, '_decoded_body', None)
+    if cached is not None and cached[:2] == (encoding, wire):
+        return cached[2]
+
+    if encoding not in ('gzip', 'deflate'):
+        raise CommitException('Logical Body supports only one gzip or zlib-wrapped deflate coding')
+
+    import zlib
+    try:
+        decoder = zlib.decompressobj(31 if encoding == 'gzip' else 15)
+        plain = decoder.decompress(wire, 1024 * 1024 + 1)
+    except zlib.error as error:
+        raise CommitException('Invalid compressed body: ' + str(error)) from error
+
+    if len(plain) > 1024 * 1024 or decoder.unconsumed_tail:
+        raise CommitException('Decoded body exceeds 1 MiB')
+    if not decoder.eof or decoder.unused_data:
+        raise CommitException('Truncated compressed body, trailing bytes or multiple gzip members')
+
+    owner._decoded_body = (encoding, wire, plain)
+    return plain
+
+
+def _encode_body(owner, original, plain, encoding, complete):
+    """No edit means no decode, no allocation of a decoder, and exact wire reuse."""
+    if plain is None:
+        return original
+
+    if not encoding or encoding == 'identity':
+        return plain
+
+    if plain == _decode_body(owner, original, encoding, complete):
+        return original
+
+    import zlib
+    encoder = zlib.compressobj(wbits=31 if encoding == 'gzip' else 15)
+    return encoder.compress(plain) + encoder.flush()
+
+
 class _H1Group:
     """One annotated Content-Length message, retaining head/body meaning."""
 
@@ -54,9 +105,6 @@ class _H1Group:
 
         if probe._error:
             raise CommitException(probe._error)
-
-        if any(h.name.lower() == 'content-encoding' for h in probe.http1.headers):
-            raise CommitException('Compressed H1 Parts are not supported yet')
 
         self.head, self.body = head, body[:self.expected]
         self.draft = probe.http1
@@ -84,7 +132,8 @@ class _H1Group:
         snapshot = MessageSnapshot(self.head + self.body)
         snapshot.http1.headers = list(self.draft.headers)
         snapshot.http1.target = self.draft.target
-        snapshot.http1.body = self.content_part.get_bytes()
+        snapshot.http1.body = self.content_part._encoded_bytes()
+        snapshot._managed_body_encoding = True
         wire = snapshot.commit(safety=safety)
         boundary = wire.index(b'\r\n\r\n') + 4
         return wire[:boundary], wire[boundary:]
@@ -97,6 +146,18 @@ class _H1Part(RewritePart):
         self.group, self.is_header = group, header
         self.type = PartType.Http1.Header if header else PartType.Http1.Body
         self.http1 = group.draft if header else None
+        self._encoding = _body_encoding(_header_values(group.draft.headers, 'content-encoding'))
+
+    def get_bytes(self):
+        if self.is_header or self._pending is not None:
+            return super().get_bytes()
+        return _decode_body(self, self._data, self._encoding, self.complete)
+
+    def _encoded_bytes(self):
+        current = _body_encoding(_header_values(self.group.draft.headers, 'content-encoding'))
+        if current != self._encoding:
+            raise CommitException('Changing Content-Encoding on a logical Body is not supported')
+        return _encode_body(self, self._data, self._pending, self._encoding, self.complete)
 
     def _assemble(self, header_override=None, *, safety=Safety.Easy):
         if self.is_header and self._pending is not None:
@@ -188,7 +249,8 @@ def _checkpoint(parts, body_sizes):
             index = len(objects)
             seen[identity] = index
             objects.append(None)
-            objects[index] = {'type': name, 'fields': {k: encode(v) for k, v in vars(value).items()}}
+            objects[index] = {'type': name, 'fields': {
+                k: encode(v) for k, v in vars(value).items() if k != '_decoded_body'}}
         return {'ref': seen[identity]}
 
     root = encode(list(parts))

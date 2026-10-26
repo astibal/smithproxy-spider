@@ -251,7 +251,7 @@ Access: assemble private draft; type/result: `bytes | HeldCommit`.
 
 Easy: Default. Repair supported H1 Content-Digest (sha-256/sha-512 without parameters) and apply remaining H1 metadata guards and H2 frame-size guards. This is not full protocol validation.
 
-Expert: Allow H1 encoding/integrity/range/signature inconsistency and representable oversized H2 control frames. Supported unencoded H1 Content-Digest and Content-Length are still repaired; unsupported digests remain unchanged. Keep quotas, atomicity and unambiguous framing.
+Expert: Allow H1 integrity/range/signature inconsistency and representable oversized H2 control frames. Supported H1 Content-Digest and Content-Length are still repaired, including managed Body coding; unsupported digests remain unchanged. Keep coding guards, quotas, atomicity and unambiguous framing.
 
 ```python
 return api.message.commit()
@@ -1379,7 +1379,7 @@ if part.is_a(PartType.Http2.Part):
 
 ### RewritePart.get_bytes
 
-Materialize representation: unpadded DATA, HPACK block, raw control-frame payload, or Opaque bytes. No gzip inflation.
+Materialize representation: unpadded DATA, HPACK block, raw control-frame payload, or Opaque bytes. H1 Body lazily decodes a complete gzip/zlib-deflate content; physical chunks and DATA remain encoded. Decoded limit is 1 MiB.
 
 Availability: All rewrite parts.
 
@@ -1395,7 +1395,7 @@ api.print(part.get_bytes()[:32].hex())
 
 ### RewritePart.set_bytes
 
-Replace the representation, not the nine-byte frame header. Rewrite supports unknown frame types; translate permits same-length DATA edits while preserving stream ID, flags and padding.
+Replace the representation, not the nine-byte frame header. H1 Body accepts plaintext and encodes gzip/deflate during commit; its physical chunks remain encoded. Rewrite supports unknown frame types; translate permits same-length DATA edits while preserving stream ID, flags and padding.
 
 Availability: Complete parts only for a changed commit.
 
@@ -1513,7 +1513,7 @@ for chunk in body.chunks:
 
 ### H2Body.get_bytes
 
-Concatenate unpadded bytes of complete DATA frames. Incomplete frames cannot safely expose logical content; no decompression.
+Concatenate unpadded DATA and lazily decode complete gzip/zlib-deflate content. Cache successful reads without dirtying wire bytes. Incomplete frames/content, corrupt coding, stacked codings and decoded content above 1 MiB raise CommitException. Physical DATA remain encoded.
 
 Availability: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
 
@@ -1529,7 +1529,7 @@ api.print(body.get_bytes().hex())
 
 ### H2Body.set_bytes
 
-Replace complete content through existing DATA drafts. Keep original capacities except the last DATA, which receives the remainder. Keep padding, flags and interleaved frame order; no new stream or implicit flow-control translation.
+Replace complete logical content. Compressed content is encoded only during commit/translate. Keep original DATA capacities except the last DATA, which receives the remainder. Keep padding, flags and interleaved frame order; no new stream or implicit flow-control translation.
 
 Availability: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
 

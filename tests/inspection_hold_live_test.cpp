@@ -85,6 +85,26 @@ int main() {
     assert(chunk_reply["content"] == spider::base64_encode(
         chunk_head + "c\r\nchanged body\r\n0\r\n\r\n"));
 
+    // The same deployed script sees plaintext only after the entire gzip body
+    // arrives. The final webhook carries recompressed bytes and their wire size.
+    const std::string gzip_input(
+        "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\x4b\x4c\x4a\x4e\x49\x4d"
+        "\x03\x00\xef\x39\x8e\x4b\x06\x00\x00\x00", 26);
+    const std::string gzip_output(
+        "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\x4b\xce\x48\xcc\x4b\x4f"
+        "\x4d\x51\x48\xca\x4f\xa9\x04\x00\x94\x46\x62\xcf\x0c\x00\x00\x00", 32);
+    const std::string gzip_head = "POST / HTTP/1.1\r\nHost: test\r\nContent-Encoding: gzip\r\n";
+    const auto gzip_request_head = gzip_head + "Content-Length: 26\r\n\r\n";
+    auto gzip_event = event("gzip", "L", gzip_request_head + gzip_input.substr(0, 10), false);
+    gzip_event["details"]["info"]["content_annotations"] = {
+        {0, 17, "http1.start_line"}, {17, gzip_request_head.size(), "http1.headers"}};
+    expect_hold(spider::process_webhook(store, decisions, gzip_event,
+        std::nullopt, &enrichment, &engine).body);
+    const auto gzip_reply = send("gzip", "L", gzip_input.substr(10));
+    assert(gzip_reply["action"] == "replace");
+    assert(gzip_reply["content"] == spider::base64_encode(
+        gzip_head + "Content-Length: 32\r\n\r\n" + gzip_output));
+
     // The complete Content-Length body can arrive one byte at a time.
     expect_hold(send("tiny", "L", head, true));
     for (char ch : std::string("abcde")) expect_hold(send("tiny", "L", std::string(1, ch)));

@@ -153,8 +153,10 @@ whole dictionary unchanged (no partial repair). A complete no-op preserves
 original bytes; unchanged digests are not verified. Reading a snapshot is not an
 integrity check. Removing Content-Digest explicitly removes that integrity claim.
 
-Repr-Digest, ETag, signatures, Content-Range, chunked/trailers and compression are
-outside this step. Easy still rejects body edits with such unresolved dependencies.
+Repr-Digest, ETag, signatures and Content-Range remain unresolved dependencies;
+Easy rejects affected edits. Snapshot compression is outside this step. Parts
+can repair Content-Digest over their managed encoded content (see section 22).
+Digest trailers are not repaired.
 A digest header cannot be sent before the digest is calculated: for incomplete
 Parts, hold the entire H1 message from its Header part until the body is complete.
 Recalculation does not mutate the draft, and failed commit publishes nothing.
@@ -520,7 +522,8 @@ return api.message.commit()
 
 Hold from the Header until `body.content.complete`, exactly as in the H1 hold
 example. Chunk size lines, data, CRLF and trailers can span callbacks. The initial
-HTTP head still needs complete supplied annotations. No compression is performed.
+HTTP head still needs complete supplied annotations. Content coding is handled
+by the lazy Body layer described in section 22, above chunk framing.
 
 Easy rejects body changes when trailers exist: their integrity dependencies are
 not repaired yet. Expert preserves trailers unchanged and leaves their meaning
@@ -543,7 +546,7 @@ A logical Body is complete only after a complete END_STREAM DATA frame or
 trailing HEADERS block. An opaque gap or reset prevents proof of completeness.
 The initial request/response HEADERS must be available and understood; a bare
 DATA tail does not establish a whole-body boundary. Hold from the initial header
-to retain that context across callbacks. No decompression is performed.
+to retain that context across callbacks. See section 22 for lazy content coding.
 
 <!-- example: h2-logical-body fixture=h2 expect=replace -->
 ```python
@@ -567,9 +570,59 @@ digests/trailers. Those remain the script's responsibility in the existing H2
 rewrite contract. An incomplete physical DATA frame is visible in `body.chunks`,
 but `body.get_bytes()` rejects it because padding cannot yet be safely stripped.
 
+## 22. Lazy gzip and deflate Body content
+
+H1 Content-Length, H1 chunked and H2 Body views decode `Content-Encoding: gzip`
+or `deflate` only when `get_bytes()` is requested. Deflate means the zlib-wrapped
+format, not guessed raw DEFLATE. `body.chunks` remain physical, encoded views;
+one compressor can span many chunks or DATA frames.
+
+Reading caches plaintext but never marks the body dirty. A no-op commit does
+not decode at all and preserves original wire bytes, even for an unsupported
+or corrupt coding. Setting the same decoded bytes preserves the original gzip
+header, timestamp, compressed bytes and framing. Cache data is omitted from hold
+checkpoints; logical edits are retained.
+
+<!-- example: body-gzip fixture=gzip expect=replace -->
+```python
+body = api.message.bodies()[0]
+body.set_bytes(body.get_bytes() + b"-checked")
+return api.message.commit()
+```
+
+Exactly the same code works for zlib-wrapped deflate:
+
+<!-- example: body-deflate fixture=deflate expect=replace -->
+```python
+body = api.message.bodies()[0]
+body.set_bytes(body.get_bytes() + b"-checked")
+return api.message.commit()
+```
+
+`set_bytes()` stages plaintext. Commit encodes changed content first, then repairs
+Content-Length/chunk lengths/DATA framing. H2 uses private DATA copies, so failed
+assembly or Translate does not overwrite physical drafts. H1 Parts repair supported
+Content-Digest over the encoded message content, not the plaintext or chunk syntax
+([RFC 9530, section 2](https://www.rfc-editor.org/rfc/rfc9530.html#section-2)).
+H2 digest/trailer repair is still outside this helper's contract.
+
+Easy and Expert both enforce complete compressed content, a 1 MiB decoded/plaintext
+limit, the existing wire/checkpoint budgets, valid coding and unchanged Content-Encoding
+for a staged logical rewrite. Unsupported coding stacks, raw deflate, multiple gzip
+members, trailing junk, truncated streams and checksum errors raise CommitException
+on logical access or changed commit. No read verifies Content-Digest automatically.
+H1 Easy retains its signature/range/integrity guards and trailer restrictions;
+Expert preserves unsupported metadata at the script's responsibility.
+
+In Translate, the **encoded** DATA lengths must remain unchanged. Even equal-size
+plaintext edits can change compressed length and therefore fail; Expert does not
+bypass this restriction. Hold incomplete content from its initial Header and wait
+for completion before reading or replacing compressed Body content. Snapshot APIs
+remain wire-level drafts; automatic coding belongs to Parts/Body only.
+
 ## Other important boundaries
 
-- H1 Parts do not yet parse compressed/pipelined messages. Without suitable
+- H1 Parts do not yet split pipelined messages into separate typed messages. Without suitable
   annotations, the result is Opaque, not automatically recognized HTTP.
 - An incomplete H2 frame can be preserved unchanged but not arbitrarily rewritten;
   rewrite hold currently needs the complete nine-byte frame header.

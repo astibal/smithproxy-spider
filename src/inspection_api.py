@@ -193,7 +193,7 @@ class Message:
                 'Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; update_content_length=False disables H2 repair only (H1 typed assembly always recalculates it). Incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.',
                 'return api.message.commit()', access='assemble private draft',
                 easy='Default. Repair supported H1 Content-Digest (sha-256/sha-512 without parameters) and apply remaining H1 metadata guards and H2 frame-size guards. This is not full protocol validation.',
-                expert='Allow H1 encoding/integrity/range/signature inconsistency and representable oversized H2 control frames. Supported unencoded H1 Content-Digest and Content-Length are still repaired; unsupported digests remain unchanged. Keep quotas, atomicity and unambiguous framing.')
+                expert='Allow H1 integrity/range/signature inconsistency and representable oversized H2 control frames. Supported H1 Content-Digest and Content-Length are still repaired, including managed Body coding; unsupported digests remain unchanged. Keep coding guards, quotas, atomicity and unambiguous framing.')
     def commit(self, update_content_length=True, *, safety=Safety.Easy):
         try:
             _validate_safety(safety)
@@ -439,7 +439,11 @@ class MessageSnapshot:
         if encodings != original_encodings:
             raise CommitException('Content-Encoding changes require an encoder')
 
-        if self.http1.body != original_body and all_names & (_BODY_METADATA - {'content-digest'}):
+        repaired = {'content-digest'}
+        if getattr(self, '_managed_body_encoding', False):
+            repaired.add('content-encoding')
+
+        if self.http1.body != original_body and all_names & (_BODY_METADATA - repaired):
             raise CommitException(
                 'Body has encoding, integrity or range metadata '
                 'that cannot be recalculated yet'
@@ -531,7 +535,8 @@ class MessageSnapshot:
         try:
             all_headers = list(original_headers) + headers
 
-            if _header_values(all_headers, 'content-encoding'):
+            if (_header_values(all_headers, 'content-encoding')
+                    and not getattr(self, '_managed_body_encoding', False)):
                 raise CommitException('Content-Digest repair requires unencoded H1 content')
 
             algorithms = []
