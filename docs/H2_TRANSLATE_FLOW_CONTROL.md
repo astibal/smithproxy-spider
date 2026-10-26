@@ -323,8 +323,9 @@ retained input within the shared directional capacity.
 The encoded-body limit is 256 KiB. Backend admission reserves both 1 MiB hold
 slots plus the 1 MiB shared control slot for the connection's lifetime, charging
 actual additional state against the 4 MiB deployment quota. This is deliberately
-conservative. Cancellation of a collecting/output-pending reserved body and cap
-exhaustion cause strict teardown. See the linked reservation document for the
+conservative. Cancellation while original body Parts remain held and cap exhaustion
+cause strict teardown. Fully released bodies can cancel pending output without
+closing the connection. See the linked reservation document for the
 complete contract and a runnable deployment pattern.
 
 Validation on 2026-10-27:
@@ -341,3 +342,27 @@ Validation on 2026-10-27:
   reservation ownership and capacity reclamation at connection stop.
 - Generated API examples passed all **12 tests**. Native production code and live
   SASlik configuration were unchanged; no new native full P3 was run.
+
+### Cancellation after reserved input release: 2026-10-27
+
+A reservation now records acceptance of original END_STREAM DATA. Once this source
+prefix has left hold and its early stream credit has settled, RST_STREAM or GOAWAY
+exclusion can discard pending output using the existing connection-credit ledger.
+No held draft in the other direction needs to be rewritten. The connection and
+unrelated streams remain usable; the deployment's capacity reservation persists.
+
+A reset retained by the script changes input policing but does not prematurely
+dispose of output or release the body reservation. Repeated terminal controls do
+not refund twice. The release marker survives fresh workers. Merely completing
+content or emitting its headers does not qualify if original DATA is still held.
+Bodies ending in trailers conservatively retain the previous cancellation policy.
+
+Regression cases cover both DATA directions, reset and GOAWAY, retained reset,
+repeated cancellation, reuse by a subsequent body and worker rotation. The four
+reserved JSON/SXBN Easy/Expert socket fixtures additionally cancel an expanded
+160000-byte output and complete a new request/response on the same connection.
+
+Validation: final build and **54/54 CTest suites** passed in **215.25 s**, including
+15 integration suites and all **88 production window tests**. The standalone window
+run also passed in **12.787 s**. Generated API reference and whitespace checks passed.
+Tests ran in an isolated network namespace; native code and SASlik were unchanged.

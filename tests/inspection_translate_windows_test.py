@@ -276,6 +276,77 @@ class WindowsTests(unittest.TestCase):
                     self.assertNotIn('body', direction)
                     self.assertTrue(peers.bridge.reserved)
 
+    def pending_reserved_bridge(self, side):
+        bridge = self.input_bridge()
+        def retain(message):
+            header = message.parts[0]
+            message.parts.hold_from(header)
+            Connection(message).http2.reserve_body(header, 128 * 1024)
+        fields = [(b':method', b'POST')] if side == 'L' else [(b':status', b'200')]
+        bridge.feed(side, frame(hpack.Encoder().encode(fields), 1, 4, 1), retain)
+        for _ in range(6):
+            bridge.feed(side, frame(b'x' * 16000, 0, 0, 1), retain)
+        bridge.feed(side, frame(b'x' * 4000, 0, 1, 1))
+        direction = bridge.control['flow'][side]
+        self.assertTrue(direction['queue'])
+        self.assertTrue(direction['body']['released'])
+        self.assertEqual(direction['body']['stream_due'], 0)
+        self.assertEqual(direction['input']['owned'], 100000)
+        return bridge
+
+    def test_cancel_reserved_pending_output_preserves_connection_and_credit(self):
+        for side in ('L', 'R'):
+            peer = 'R' if side == 'L' else 'L'
+            for terminal in ('reset', 'goaway'):
+                # GOAWAY sent by the server excludes client-initiated streams
+                # in either DATA direction.
+                source = peer if terminal == 'reset' else 'R'
+                bridge = self.pending_reserved_bridge(side)
+                cancel = (frame(b'\0\0\0\x08', 3, 0, 1) if terminal == 'reset'
+                          else frame(b'\0' * 8, 7, 0, 0))
+                forward, reverse = bridge.feed(source, cancel)
+                self.assertFalse(any(kind == 0 for kind, _, _, _ in unpack(forward + reverse)))
+                direction = bridge.control['flow'][side]
+                self.assertEqual(direction['queue'], [])
+                self.assertEqual(direction['input']['owned'], 0)
+                self.assertEqual(direction['input']['window'], 65535)
+                self.assertEqual(direction['advance_due'], 0)
+                self.assertNotIn('body', direction)
+                self.assertTrue(bridge.reserved)
+                # Repeated cancellation must not refund bytes twice.
+                forward, reverse = bridge.feed(source, cancel)
+                self.assertFalse(any(kind == 8 for kind, _, _, _ in unpack(forward + reverse)))
+                ping = frame(b'abcdefgh', 6, 0, 0)
+                self.assertEqual(bridge.feed(side, ping), (ping, b''))
+                if terminal == 'reset':
+                    header = frame(hpack.Encoder().encode([(b':method', b'POST')]), 1, 4, 3)
+                    def retain(message):
+                        message.parts.hold_from(message.parts[0])
+                        Connection(message).http2.reserve_body(message.parts[0], 128 * 1024)
+                    bridge.feed('L', header, retain)
+                    bridge.feed('L', frame(b'new body', 0, 1, 3),
+                                lambda m: m.bodies()[0].set_bytes(b''))
+                    self.assertNotIn('body', bridge.control['flow']['L'])
+
+    def test_held_reset_keeps_pending_reservation_until_forwarded(self):
+        bridge = self.pending_reserved_bridge('L')
+        cancel = frame(b'\0\0\0\x08', 3, 0, 1)
+        self.assertEqual(bridge.feed('R', cancel, lambda m: m.parts.hold_from(m.parts[0])), (b'', b''))
+        self.assertTrue(bridge.control['flow']['L']['queue'])
+        self.assertIn('body', bridge.control['flow']['L'])
+        bridge.feed('R', b'')
+        self.assertNotIn('body', bridge.control['flow']['L'])
+        self.assertEqual(bridge.control['flow']['L']['input']['owned'], 0)
+
+    def test_complete_reserved_body_with_retained_data_still_fails_cancellation(self):
+        bridge, _ = self.reserved_bridge()
+        bridge.feed('L', frame(b'abc', 0, 1, 1), lambda m: m.parts.hold_from(m.parts[1]))
+        self.assertFalse(bridge.control['flow']['L']['body'].get('released'))
+        before = json.dumps(bridge.control)
+        with self.assertRaisesRegex(CommitException, 'body cancelled'):
+            bridge.feed('R', frame(b'\0\0\0\x08', 3, 0, 1))
+        self.assertEqual(json.dumps(bridge.control), before)
+
     def test_reservation_admission_retry_limits_and_lost_owner(self):
         bridge = self.input_bridge()
         header = frame(hpack.Encoder().encode([(b':method', b'POST'), (b'content-length', b'100000')]), 1, 4, 1)
@@ -458,6 +529,16 @@ class WindowsTests(unittest.TestCase):
         self.assertTrue(control['flow']['hold_reserved'])
         self.assertLess(refunded, 100000)
         self.assertIsNone(held)
+        request = event(frame(b'\0\0\0\x08', 3, 0, 1), 'R')
+        request['details']['info']['webhook_control'] = {'content-reverse': True}
+        result = run(script, request, translate_active=True, translate_control=control,
+                     hold_allowed=True, hold_credit_available=True, hold_credit_reserved=True,
+                     instance={'mode': 'flow'})
+        self.assertTrue(result['ok'], result)
+        direction = result['translate_control']['flow']['L']
+        self.assertEqual(direction['input']['owned'], 0)
+        self.assertEqual(direction['input']['window'], 65535)
+        self.assertNotIn('body', direction)
 
     def test_retained_content_length_and_lazy_gzip_body(self):
         for compressed in (False, True):

@@ -226,6 +226,15 @@ class _TranslationHoldCredit:
                 continue
             stream = reservation['stream']
             if self.incoming.cancelled(side, stream):
+                # Only a fully accepted original body has no retained Parts to
+                # dispose of in another callback direction. Output cancellation
+                # has already discarded its DATA and settled ownership in finish().
+                if reservation.get('released') and not reservation['stream_due']:
+                    if self.flow.cancelled(side, stream):
+                        del direction['body']
+                    # A retained reset affects input policing before forwarding.
+                    # Keep the reservation until that reset is actually accepted.
+                    continue
                 raise CommitException('Reserved H2 body cancelled; strict teardown releases reservation')
             if self.flow.retired(side, stream):
                 if reservation['stream_due']:
@@ -458,6 +467,8 @@ class _TranslationFlow:
             if reservation and reservation['stream'] == part.stream_id:
                 advanced_stream = min(amount, reservation['stream_due'])
                 reservation['stream_due'] -= advanced_stream
+                if part.flags & 1:
+                    reservation['released'] = True
             # Per-stream refund debt can differ from connection debt when
             # several streams contribute bytes to the same retained prefix.
             stream['connection_credit'] = stream.get('connection_credit', 0) + amount - advanced
@@ -590,7 +601,7 @@ class ConnectionHttp2:
     @api_method('header: RewritePart, max_bytes: int', 'None',
                 'Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available. The limit counts original encoded DATA including padding, up to 256 KiB; it is immutable. One collecting body per direction. Backend checkpoint capacity remains reserved until connection end.',
                 'api.connection.set_mode(Mode.Translate)\nfor part in api.message.parts:\n    if part.type == PartType.Http2.Header and part.complete and part.content.complete is False:\n        api.message.parts.hold_from(part)\n        api.connection.http2.reserve_body(part, 128 * 1024)\n        break\nreturn api.message.translate()',
-                availability='Live sole flow deployment with backend reservation support and content-reverse. Cancellation or exhausted capacity tears down strict translation.',
+                availability='Live sole flow deployment with backend reservation support and content-reverse. Cancellation while original body Parts remain held, or exhausted capacity, tears down strict translation. Fully released bodies may cancel pending output without closing the connection.',
                 access='staged body reservation')
     def reserve_body(self, header, max_bytes):
         if type(max_bytes) is not int or not 0 < max_bytes <= _TranslationHoldCredit.MAX_BODY:

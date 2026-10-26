@@ -1783,7 +1783,7 @@ Persistent HTTP/2 policy, applied only by an explicitly returned translate resul
 
 Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available. The limit counts original encoded DATA including padding, up to 256 KiB; it is immutable. One collecting body per direction. Backend checkpoint capacity remains reserved until connection end.
 
-Availability: Live sole flow deployment with backend reservation support and content-reverse. Cancellation or exhausted capacity tears down strict translation.
+Availability: Live sole flow deployment with backend reservation support and content-reverse. Cancellation while original body Parts remain held, or exhausted capacity, tears down strict translation. Fully released bodies may cancel pending output without closing the connection.
 
 Access: staged body reservation; type/result: `None`.
 

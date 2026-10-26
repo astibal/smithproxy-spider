@@ -178,8 +178,29 @@ def windows_exchange(client, origin, reserved=False):
             assert bytes(received[target].get(stream, b'')) == expected
 
     if reserved:
+        request = [(b':method', b'POST'), (b':scheme', b'http'),
+                   (b':authority', b'lab.test'), (b':path', b'/'),
+                   (b'content-length', b'100000')]
+        peers['L'].send_headers(7, request)
+        send('L')
+        sent = 0
+        while sent < 100000:
+            progress(lambda: peers['L'].local_flow_control_window(7) > 0)
+            count = min(16000, 100000 - sent, peers['L'].local_flow_control_window(7))
+            sent += count
+            peers['L'].send_data(7, b'x' * count, end_stream=sent == 100000)
+            send('L')
+        progress(lambda: ('L', 7) in reset)
+        assert len(received['R'][7]) < 160000, 'Reset did not cancel reserved pending DATA'
+        peers['L'].send_headers(9, request[:-1], end_stream=True)
+        send('L')
+        progress(lambda: ('R', 9) in ended)
+        peers['R'].send_headers(9, [(b':status', b'204')], end_stream=True)
+        send('R')
+        progress(lambda: ('L', 9) in ended)
         print('PASS: 100 KiB-class reserved bodies across windows in both directions, '
-              'zero/unchanged/expanded output and Content-Length repair')
+              'zero/unchanged/expanded output, Content-Length repair, pending DATA reset '
+              'and a subsequent stream on the same connection')
         return
 
     request = [(b':method', b'POST'), (b':scheme', b'http'),
@@ -411,7 +432,7 @@ def main():
                           "    if not part.complete:\n        api.message.parts.hold_from(part)\n        break\n"
                           "for body in api.message.bodies():\n"
                           "    if body.complete:\n"
-                          "        if body.stream_id == 1: body.set_bytes(b'z' * 160000)\n"
+                          "        if body.stream_id in (1, 7): body.set_bytes(b'z' * 160000)\n"
                           "        elif body.stream_id == 3: body.set_bytes(b'')\n"
                           "api.print(api.state['binary'])\n"
                           f"return api.message.translate(safety=Safety.{args.safety.title()})\n")

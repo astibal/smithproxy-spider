@@ -118,9 +118,18 @@ effective input window that consumed-byte advancement can reopen fails explicitl
 There is no silent wait at the cap or automatic streaming fallback. Lost ownership
 or an older input ownership checkpoint requires reconnection.
 
-RST_STREAM or GOAWAY exclusion of a collecting or output-pending reserved body
-currently causes **strict connection teardown**. Cross-direction disposal of held
-drafts is not implemented. Existing unreserved terminal handling is unchanged.
+RST_STREAM or GOAWAY exclusion of a fully released reserved body discards pending
+DATA and settles remaining connection credit without closing the connection.
+Release is checkpointed only when original END_STREAM DATA is accepted, not merely
+when content is complete or its header is emitted. This marker survives worker
+rotation. A retained reset does not release the reservation until it is forwarded.
+Repeated cancellation cannot refund input twice; a subsequent body can reserve
+the same direction. Backend slot charges still last until connection end.
+
+Cancellation while original body Parts remain held still causes **strict connection
+teardown**. Cross-direction disposal of held drafts is not implemented. Bodies
+ending in trailers and older checkpoints without the release marker conservatively
+retain this strict behavior while pending. Existing unreserved handling is unchanged.
 Easy and Expert share these limits; arbitrary-size bodies and full lifecycle
 repair are not promised.
 
@@ -135,5 +144,5 @@ race connections for admission, retain charges after release and recover capacit
 on stop. Real JSON/SXBN socket fixtures exercise both Easy and Expert.
 
 Future refinements include earlier reservation reclamation with a proof of remaining
-liability, finer deployment admission, graceful reserved-body cancellation and
+liability, finer deployment admission, graceful cancellation of retained body Parts and
 explicit streaming fallback. These are not enabled by the current API.
