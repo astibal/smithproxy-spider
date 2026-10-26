@@ -14,6 +14,21 @@ def setup_event():
 
 
 class SetupTests(unittest.TestCase):
+    def test_legacy_missing_permission_is_not_explicit_denial(self):
+        for control, allowed in (({}, True), ({'version': 1, 'sequence': 1}, True),
+                                 ({'rewrite': True}, True), ({'rewrite': False}, False)):
+            with self.subTest(control=control):
+                event = fixture('h1')
+                event['details']['info']['webhook_control'] = control
+                result = run("return api.bytes + b'x'", event)
+                self.assertEqual(result['ok'], allowed, result)
+                if allowed:
+                    original = base64.b64decode(event['details']['info']['content'])
+                    self.assertEqual(base64.b64decode(result['replacement']), original + b'x')
+                else:
+                    self.assertIsNone(result['replacement'])
+                    self.assertIn('not reserved at connection-start', result['error'])
+
     def test_explicit_opt_in_without_fake_payload(self):
         result = run("assert api.phase == 'setup'\nassert api.message is None\n"
                      "assert not api.bytes\napi.connection.request_rewrite()\n"

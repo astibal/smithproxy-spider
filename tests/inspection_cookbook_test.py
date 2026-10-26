@@ -58,6 +58,66 @@ def run(script, event, **extra):
 
 
 class CookbookTests(unittest.TestCase):
+    def test_readme_live_examples_setup_content_and_hold(self):
+        """README snippets must work as deployments, not only offline fragments."""
+        document = (ROOT / 'README.md').read_text()
+        blocks = re.findall(
+            r'<!-- live-example: (\S+) -->\s*```python\n(.*?)```',
+            document, re.S,
+        )
+        examples = dict(blocks)
+        self.assertEqual(len(blocks), len(examples))
+        self.assertEqual(set(examples), {'h1-snapshot', 'h2-rewrite', 'h1-hold'})
+
+        for name, script in examples.items():
+            with self.subTest(example=name):
+                options = {'instance': {'mode': 'flow'}, 'hold_allowed': True}
+                setup = run(script, fixture('setup'), **options)
+                self.assertTrue(setup['ok'], setup)
+                self.assertTrue(setup['rewrite_requested'])
+                self.assertIsNone(setup['replacement'])
+                self.assertIsNone(setup['held_parts'])
+
+                kind = {'h1-snapshot': 'h1', 'h2-rewrite': 'h2',
+                        'h1-hold': 'h1-partial'}[name]
+                event = fixture(kind)
+                event['action'] = 'connection-content'
+                event['details']['info']['webhook_control'] = {
+                    'version': 1, 'sequence': 1, 'rewrite': setup['rewrite_requested'],
+                }
+                result = run(script, event, instance_state=setup['instance_state'], **options)
+                self.assertTrue(result['ok'], result)
+
+                if name == 'h1-hold':
+                    self.assertTrue(result['need_more'])
+                    self.assertEqual(base64.b64decode(result['replacement']), b'')
+                    self.assertIsNotNone(result['held_parts'])
+                    # Only fresh tail bytes arrive; the backend returns the saved Parts.
+                    tail = {'action': 'connection-content', 'id': event['id'],
+                            'details': {'info': {'side': 'L', 'content': 'YmM=',
+                                'webhook_control': {'version': 1, 'sequence': 2, 'rewrite': True}}}}
+                    result = run(script, tail, held_parts=result['held_parts'],
+                                 instance_state=result['instance_state'], **options)
+                    self.assertTrue(result['ok'], result)
+                    self.assertIsNone(result['held_parts'])
+                    self.assertEqual(result['hold']['state'], 'released')
+
+                wire = base64.b64decode(result['replacement'])
+                if name == 'h1-snapshot':
+                    self.assertTrue(wire.startswith(b'POST /new/path HTTP/1.1\r\n'))
+                    self.assertIn(b'X-Inspected-By: Spider\r\n', wire)
+                    self.assertTrue(wire.endswith(b'\r\n\r\nabc'))
+                elif name == 'h2-rewrite':
+                    frames = unpack(wire)
+                    headers = Oracle().decode(frames[0][3])
+                    self.assertIn((b'x-spider', b'rewrite'), headers)
+                    self.assertIn((b'content-length', b'8'), headers)
+                    self.assertEqual(b''.join(f[3] for f in frames if f[0] == 0), b'new body')
+                else:
+                    head, body = wire.split(b'\r\n\r\n', 1)
+                    self.assertEqual(body, b'a different body')
+                    self.assertIn(b'Content-Length: 16', head)
+
     def test_flat_helpers_are_documented_too(self):
         tree = ast.parse((ROOT / 'src/inspection_worker.py').read_text())
         api_class = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'Api')
