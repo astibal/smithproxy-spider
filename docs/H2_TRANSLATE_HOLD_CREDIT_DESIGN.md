@@ -1,133 +1,139 @@
 # Bounded credit advancement for retained H2 Parts
 
-Status: reservation/early-credit design proposal, not a public API. The separate
-sender input-window ledger and partial-frame accounting prerequisite are implemented.
-Date: 2026-10-26.
+Status: implemented bounded first version. Date: 2026-10-27.
 
-The current `hold_from()` retains semantic Parts and grants no early DATA credit.
-That remains the default. A whole body larger than the sender's window can stall
-before END_STREAM, even if its eventual serialized checkpoint would fit in memory.
-This proposal enables an explicit, bounded reservation to make such bodies possible.
-It does not promise arbitrary-size bodies or change Rewrite behavior.
+Ordinary `hold_from()` grants no early DATA credit and may stall on a whole body
+larger than the sender's window. Explicit reservation enables larger bodies within
+the limits below. Every callback must still explicitly return Translate.
 
-## Ownership and admission
+## API
 
-Reserve capacity for one deployment/generation, connection, direction and stream.
-The backend owns reservations across worker rotation, alongside held Parts and
-translation state. User `api.state` is not an accounting authority. Admission must
-include reservations in the existing deployment quota before returning any credit.
-Both directions compete for the same deployment budget; two workers cannot each
-promise the same free capacity. Activation still requires content-reverse and every
-later callback must explicitly return `message.translate()`.
+`api.connection.http2.reserve_body(header, max_bytes)` stages intent for a complete
+initial HEADERS Part in the held suffix. Its original header must never have been
+emitted. The immutable integer limit, in 1..262144, counts original encoded DATA
+including padding, not decompressed bytes. Original Content-Length is checked even
+if the script edited its draft. There may be one collecting or output-pending
+reservation per direction; both directions can reserve together. Releasing the
+reserved header requires complete content.
 
-An eventual explicit API should specify a maximum encoded body size and request
-reservation before the first early refund. A complete retained initial header must
-identify the content. The operation must reject an already emitted header when
-Content-Length repair would be required. No API spelling is committed here.
+```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
 
-Known Content-Length permits an up-front size check; unknown-length input needs a
-script-selected maximum and an explicit overflow failure. Gzip's decoded size is a
-separate limit: reserve and account encoded DATA, including padding, and keep the
-existing decoded-body bound. Decompression must not be needed for admission.
+for part in api.message.parts:
+    if not part.complete:
+        api.message.parts.hold_from(part)
+        break
+    if part.type == PartType.Http2.Header and part.content.complete is False:
+        api.message.parts.hold_from(part)
+        api.connection.http2.reserve_body(part, 128 * 1024)
+        break
 
-## Credit invariants
+for body in api.message.bodies():
+    if body.complete and body.get_bytes() == b'secret':
+        body.set_bytes(b'redacted content')
 
-First track the sender-facing receive window at connection and stream levels.
-This is additional state: today's consumed-byte refund ledger alone is insufficient.
-Start from the handshake, apply actual forwarded SETTINGS and every generated
-WINDOW_UPDATE, and debit newly received physical DATA once. Restored held Parts
-are not new input. A partial DATA frame must also reserve its advertised payload
-before any credit can be advanced; otherwise fragmentation hides in-flight memory.
+return api.message.translate()
+```
 
-For each direction define:
+A reservation alone does not change application content. Gzip/deflate remain lazy;
+accounting never requires decompression. Complete retained content can be resized,
+repairing Content-Length from encoded output.
+
+## Backend ownership and admission
+
+The backend admits intent under the existing deployment serial transaction,
+before returning directional output. Ownership belongs to the deployment
+generation and connection across workers. User `api.state` is not an admission
+authority. Preview requests cannot claim backend reservation support.
+
+Admission charges the full existing serialized checkpoint slots:
+
+| Slot | Reserved capacity |
+| --- | ---: |
+| L held Parts | 1 MiB |
+| R held Parts | 1 MiB |
+| Shared translation control / output queues | 1 MiB |
+
+Actual script state, HPACK checkpoints and structural overhead are added.
+`state_bytes` includes these slots. With a 4 MiB deployment limit, two independent
+connections cannot each promise roughly 3 MiB. Both directions share one connection's
+reservation. Slots stay charged until the instance ends, even after Parts and output
+drain. This conservative model is not exact process-RSS accounting.
+
+Serialization and worker-envelope limits remain independent. Very fragmented or
+metadata-heavy traffic can reach a checkpoint limit before the encoded-body cap.
+Admission failure publishes neither state nor credit. Connection stop releases
+the instance. Generation retirement, idle state loss or backend restart trigger
+the existing strict failure policy on subsequent callbacks.
+
+## Encoded input and credit invariants
+
+For each DATA direction:
 
 ```text
-H = encoded bytes retained (including incomplete DATA already received)
-W = connection credit already granted but not yet consumed by the sender
-B = admitted encoded-input capacity for this direction
+H = owned original DATA (held + declared partial payload + pending output source)
+W = sender-facing connection window
+B = 262144 + 65535 bytes of admitted encoded-input capacity
 
 H + W <= B
 new connection grant <= B - H - W
 ```
 
-Already advertised baseline credit is an existing liability, not free capacity.
-It cannot be revoked by withholding later grants. At admission, account for all
-remaining connection credit, even when other streams could consume it. Stream
-grants are limited by their own admitted remainder; connection grants are limited
-by the aggregate reservation. Neither grant may exceed the H2 maximum window.
+Baseline credit is an existing liability, including other streams. DATA is charged
+once from original callback bytes when its nine-byte header arrives. Reserving the
+entire declared payload covers fragmentation; restored Parts are never debited again.
+Only actually emitted SETTINGS/WINDOW_UPDATE change input allowances; ACK boundaries
+cover initial-window changes and in-flight data.
 
-Example with a 128 KiB admitted input budget and a 65,535-byte initial window:
+Early connection grants are also bounded by retained source input not already
+credited. Connection debt follows the ordered retained prefix across streams.
+Stream debt is separate and grants respect the body's remaining limit. Accepting
+original DATA settles these debts before ordinary refunds are recorded. This
+physical-input provenance, including padding, survives JSON checkpoints and worker
+rotation independently of mutable output bodies.
 
-| Step | H | W | Maximum new connection grant |
-| --- | ---: | ---: | ---: |
-| Reservation accepted | 0 | 65,535 | 65,537 |
-| First window retained, no earlier grant | 65,535 | 0 | 65,537 |
-| Second grant consumed in full | 131,072 | 0 | 0 |
+Input transferred into blocked output stays owned until that output drains or is
+discarded. Releasing Parts does not free capacity backing queued output or promised
+credit. Serialized slots remain reserved for the whole connection as well.
+Receiver WINDOW_UPDATEs still feed output windows rather than passing through.
 
-An actual encoded body must leave room for framing and metadata reservations.
-The example is the credit ledger only, not a claim that a 128 KiB body fits every
-current checkpoint. Serializing `_wire`, `_data`, header drafts and relationships
-can duplicate data; measure/reserve their worst-case representation separately.
-The 1 MiB hold checkpoint, 1 MiB control checkpoint, 4 MiB deployment state and
-worker response envelope remain independent hard limits.
+## Transaction and failures
 
-Per retained DATA part, checkpoint how many input bytes were already refunded.
-When released, normal flow accounting refunds only uncredited bytes. Otherwise
-early hold credit followed by ordinary release would grant the same bytes twice.
-Credit tokens follow physical input provenance, not mutable output-body size.
-Padding is credited once even if the eventual output omits it.
+1. Restore backend ownership, windows, held Parts and early-credit debts.
+2. Debit new DATA, including declared incomplete payload.
+3. Validate intent, original Content-Length and retained headers.
+4. Stage edits/output and settle input credit once.
+5. Stage capacity-backed grants; validate all checkpoints and output budgets.
+6. Backend admission atomically publishes state and both directional outputs.
 
-## Transaction boundaries
+Empty forward output plus reverse WINDOW_UPDATE uses `replace` with
+`content-reverse`. The worker owns held Parts; native need-more does not retain
+a second copy. Real proxy fixtures cover JSON and negotiated SXBN.
 
-1. Restore reservations, Parts, input windows and already-refunded provenance.
-2. Debit only newly received DATA, including incomplete payload bytes.
-3. Stage draft edits, reservation changes and prospective grants privately.
-4. Serialize both checkpoints and directional output; validate all quotas.
-5. Atomically publish reservation ownership, checkpoints and grants on successful
-   worker return. Failed commit/retry publishes nothing and grants nothing twice.
+Unknown-size input must complete before exhausting its cap, with END_STREAM on
+the DATA reaching it. Exceeding the limit, exhausting capacity, or having no
+effective input window that consumed-byte advancement can reopen fails explicitly.
+There is no silent wait at the cap or automatic streaming fallback. Lost ownership
+or an older input ownership checkpoint requires reconnection.
 
-Reverse credit with an empty forward prefix uses `replace` plus content-reverse,
-while the worker retains the held Parts. It must not rely on native `need-more`
-also retaining a second copy of those bytes. Verify this through JSON and SXBN.
+RST_STREAM or GOAWAY exclusion of a collecting or output-pending reserved body
+currently causes **strict connection teardown**. Cross-direction disposal of held
+drafts is not implemented. Existing unreserved terminal handling is unchanged.
+Easy and Expert share these limits; arbitrary-size bodies and full lifecycle
+repair are not promised.
 
-Reservation capacity is transferred, not freed, when retained content becomes
-pending translated output. Expansion must fit the output budget before transfer.
-An output queue can remain blocked after the script releases its hold. Credit
-already promised to the sender is still a liability until consumed or the
-connection terminates; freeing Parts alone cannot release that reservation.
+## Validation and future work
 
-On RST_STREAM or GOAWAY exclusion, discard application drafts but retain enough
-source compression/framing state to consume in-flight frames. Unused stream credit
-cannot be revoked. Keep the connection's input liability and suppress further
-stream grants. The current terminal-output handling is not a held-input reservation
-implementation. A backend restart or lost reservation follows strict teardown.
+Production tests cover both directions, 100000-byte and 256 KiB boundary bodies,
+zero/unchanged/expanded output, gzip, padding, partial DATA, competing streams,
+simultaneous directional holds, exhaustion, source Content-Length despite edits,
+immutable limits, failed commit/retry, cancellation, fresh workers and lost ownership.
+Independent hyper-h2 endpoints validate windows and Content-Length. Backend tests
+race connections for admission, retain charges after release and recover capacity
+on stop. Real JSON/SXBN socket fixtures exercise both Easy and Expert.
 
-## Exhaustion policy
-
-Do not silently stop granting credit at an incomplete body cap: that can deadlock
-both peers indefinitely. Reject a known oversized body before early grants. If an
-unknown body exhausts its reservation without completion, fail explicitly under
-Translate's strict policy. A later implementation may support an explicit streaming
-fallback selected by the script, but cannot retroactively emit retained drafts or
-repair headers that were already sent.
-
-## Implementation order and acceptance
-
-1. Sender input-window and partial-frame accounting is implemented. Add explicit
-   already-refunded provenance when early grants become possible.
-2. Add backend admission/ownership for reservations within deployment quotas.
-3. Expose explicit opt-in reservation intent; keep ordinary hold unchanged.
-4. Connect early refunds, release, cancellation and pending-output ownership.
-5. Validate real JSON/SXBN proxy paths and independent H2 endpoints.
-
-Required cases: 100 KiB and boundary-size bodies across several windows in both
-directions; retained Content-Length; gzip; bytewise DATA fragmentation; padding;
-multiple competing streams; both directions reserving together; unknown-length
-overflow; zero-sized edits; expansion on release; reset/GOAWAY during hold; fresh
-workers; failure/retry before publication; no duplicate grants after release;
-deployment admission races; strict teardown after state loss. Peer window checks
-and actual serialized-memory limits are separate assertions.
-
-Early grants require both reservation ownership and partial-input accounting.
-The latter can be validated independently without granting extra credit. Adding
-early WINDOW_UPDATE to the existing hold loop alone would not satisfy these invariants.
+Future refinements include earlier reservation reclamation with a proof of remaining
+liability, finer deployment admission, graceful reserved-body cancellation and
+explicit streaming fallback. These are not enabled by the current API.

@@ -33,7 +33,10 @@ private:
         std::size_t bytes{2};
         nlohmann::json holds = nlohmann::json::object(); // L/R typed Parts checkpoints
         nlohmann::json translations = nlohmann::json::object(); // L/R HPACK tables
+        bool hold_credit_reserved = false; // backend-owned until this instance ends
     };
+    static std::size_t state_charge(const nlohmann::json& state, const nlohmann::json& holds,
+                                   const nlohmann::json& translations, bool reserved);
     struct Runtime {
         std::shared_ptr<InspectionPool> pool;
         std::timed_mutex serial;

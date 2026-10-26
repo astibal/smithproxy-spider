@@ -7,6 +7,7 @@ No live configuration, external endpoints or lab instance are used.
 """
 import argparse
 import contextlib
+import json
 import os
 from pathlib import Path
 import socket
@@ -16,7 +17,9 @@ import sys
 import tempfile
 import threading
 import time
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import urllib.request
+import urllib.error
 
 import hpack
 
@@ -100,7 +103,7 @@ def stop(process):
             process.wait()
 
 
-def windows_exchange(client, origin):
+def windows_exchange(client, origin, reserved=False):
     """Real peers enforce flow control; only their WINDOW_UPDATEs release queues."""
     from h2.config import H2Configuration
     from h2.connection import H2Connection
@@ -147,18 +150,37 @@ def windows_exchange(client, origin):
         peer.initiate_connection()
         send(side)
 
-    for stream, value, expected in ((1, b'secret', b'z' * 160000), (3, b'delete', b''),
-                                     (5, b'unchanged', b'unchanged')):
+    cases = ((1, b'x' * 100000, b'z' * 160000), (3, b'x' * 100000, b''),
+             (5, b'x' * 100000, b'x' * 100000)) if reserved else (
+             (1, b'secret', b'z' * 160000), (3, b'delete', b''), (5, b'unchanged', b'unchanged'))
+    for stream, value, expected in cases:
         for side, target in (('L', 'R'), ('R', 'L')):
             fields = ([(b':method', b'POST'), (b':scheme', b'http'),
                        (b':authority', b'lab.test'), (b':path', b'/')]
                       if side == 'L' else [(b':status', b'200')])
             fields.append((b'content-length', str(len(value)).encode()))
             peers[side].send_headers(stream, fields)
-            peers[side].send_data(stream, value, end_stream=True)
-            send(side)
+            if reserved:
+                send(side)
+                sent = 0
+                while sent < len(value):
+                    progress(lambda: peers[side].local_flow_control_window(stream) > 0)
+                    count = min(16000, len(value) - sent, peers[side].local_flow_control_window(stream))
+                    peers[side].send_data(stream, value[sent:sent + count], end_stream=sent + count == len(value))
+                    sent += count
+                    send(side)
+                    if sent < len(value):
+                        assert not received[target].get(stream), 'Retained body leaked before completion'
+            else:
+                peers[side].send_data(stream, value, end_stream=True)
+                send(side)
             progress(lambda: (target, stream) in ended)
             assert bytes(received[target].get(stream, b'')) == expected
+
+    if reserved:
+        print('PASS: 100 KiB-class reserved bodies across windows in both directions, '
+              'zero/unchanged/expanded output and Content-Length repair')
+        return
 
     request = [(b':method', b'POST'), (b':scheme', b'http'),
                (b':authority', b'lab.test'), (b':path', b'/')]
@@ -282,6 +304,8 @@ def main():
     parser.add_argument('--data', action='store_true', help='Rewrite padded same-length DATA in both directions')
     parser.add_argument('--windows', action='store_true', help='Real H2 peers with length-changing bodies and reverse credit')
     parser.add_argument('--goaway', action='store_true', help='Graceful GOAWAY with queued DATA and HPACK on real sockets')
+    parser.add_argument('--reserved', action='store_true', help='Hold entire 100 kB bodies across H2 windows')
+    parser.add_argument('--json', action='store_true', help='Use a test relay to negotiate JSON content callbacks')
     parser.add_argument('--safety', choices=('easy', 'expert'), default='easy')
     args = parser.parse_args()
     source = args.smithproxy_source.resolve()
@@ -314,6 +338,45 @@ def main():
                    {**os.environ, 'SPIDER_TOKEN': 'frontend-key', 'SPIDER_SMITHPROXY_KEY': 'integration-key',
                     'SPIDER_COLLECTION_DIR': str(runtime / 'collections')}, runtime)
             wait_until(lambda: Handler.callback and get_json(base + '/api/health'), processes)
+            callback_url = Handler.callback
+            if args.json or args.reserved:
+                class TransportRelay(BaseHTTPRequestHandler):
+                    def do_POST(self):
+                        body = self.rfile.read(int(self.headers['Content-Length']))
+                        binary = body.startswith(b'SXBN001:')
+                        if args.json:
+                            assert not binary, 'JSON negotiation was ignored'
+                        if binary:
+                            self.server.binary_count += 1
+                        info = not binary and json.loads(body).get('action') == 'info'
+                        request = urllib.request.Request(Handler.callback, data=body,
+                            headers={'Content-Type': self.headers.get('Content-Type', 'application/json')})
+                        try:
+                            reply = urllib.request.urlopen(request, timeout=10)
+                        except urllib.error.HTTPError as error:
+                            reply = error
+                        with reply:
+                            payload = reply.read()
+                            if info and args.json:
+                                decoded = json.loads(payload)
+                                decoded['protocols'] = {'connection-content': ['json-base64']}
+                                payload = json.dumps(decoded).encode()
+                            self.send_response(reply.code)
+                            self.send_header('Content-Type', 'application/json')
+                            self.send_header('Content-Length', str(len(payload)))
+                            self.end_headers()
+                            self.wfile.write(payload)
+                            if info:
+                                self.server.info_seen.set()
+                    def log_message(self, *args):
+                        pass
+                relay = ThreadingHTTPServer(('127.0.0.1', 0), TransportRelay)
+                relay.info_seen = threading.Event()
+                relay.binary_count = 0
+                cleanup.callback(relay.server_close)
+                cleanup.callback(relay.shutdown)
+                threading.Thread(target=relay.serve_forever, daemon=True).start()
+                callback_url = f'http://127.0.0.1:{relay.server_port}/'
             inspection = base + '/api/inspection'
             state = get_json(inspection, 'frontend-key')
             script = ("if api.phase == 'setup':\n"
@@ -337,6 +400,21 @@ def main():
                     '    if part.type == PartType.Http2.Data:\n'
                     '        part.set_bytes(part.get_bytes().replace(b"secret", b"******"))\n'
                     '    if part.type != PartType.Http2.Header:')
+            if args.reserved:
+                script = ("if api.phase == 'setup':\n"
+                          "    api.connection.request_rewrite()\n    return\n"
+                          "api.state['binary'] = api.state.get('binary', 0) + (api.info.get('payload_encoding') == 'sxbn-001')\n"
+                          "for part in api.message.parts:\n"
+                          "    if part.type == PartType.Http2.Header and part.complete and part.content.complete is False:\n"
+                          "        api.message.parts.hold_from(part)\n"
+                          "        api.connection.http2.reserve_body(part, 128 * 1024)\n        break\n"
+                          "    if not part.complete:\n        api.message.parts.hold_from(part)\n        break\n"
+                          "for body in api.message.bodies():\n"
+                          "    if body.complete:\n"
+                          "        if body.stream_id == 1: body.set_bytes(b'z' * 160000)\n"
+                          "        elif body.stream_id == 3: body.set_bytes(b'')\n"
+                          "api.print(api.state['binary'])\n"
+                          f"return api.message.translate(safety=Safety.{args.safety.title()})\n")
             if args.policy:
                 script = script.replace("control = api.info", "api.connection.set_mode(Mode.Translate)\n"
                     "if api.state['callbacks'] >= 5:\n"
@@ -354,7 +432,8 @@ def main():
             make_config(source / 'etc/smithproxy.cfg', config, source, runtime, proxy_port, free_port())
             text = config.read_text().replace('settings = {',
                 'settings = {\n webhook = { enabled = true; tls_verify = false; '
-                f'url = "{Handler.callback}"; }};', 1)
+                + ('ping_interval = 1; ' if args.reserved else '') +
+                f'url = "{callback_url}"; }};', 1)
             text = text.replace('        write_payload = FALSE;',
                                 '        write_payload = FALSE; webhook_enable = TRUE; webhook_lock_traffic = FALSE;', 1)
             config.write_text(text)
@@ -366,6 +445,8 @@ def main():
                     return True
 
             wait_until(listening, processes)
+            if args.reserved:
+                assert relay.info_seen.wait(10), 'Native webhook protocol negotiation did not run'
             with socket.socket() as listener:
                 listener.bind(('127.0.0.1', 0))
                 listener.listen()
@@ -373,11 +454,18 @@ def main():
                 with socks_connect(proxy_port, listener.getsockname()[1], ADDRESSES['ipv4-ip']) as client:
                     origin, _ = listener.accept()
                     with origin:
-                        if args.windows or args.goaway:
-                            (goaway_exchange if args.goaway else windows_exchange)(client, origin)
+                        if args.windows or args.goaway or args.reserved:
+                            if args.reserved:
+                                windows_exchange(client, origin, reserved=True)
+                            else:
+                                (goaway_exchange if args.goaway else windows_exchange)(client, origin)
                             status = get_json(inspection, 'frontend-key')
                             state = status['chain'][0]
                             assert state['errors'] == 0, state
+                            if args.reserved:
+                                binary = int(state['last_result']['logs'][0])
+                                assert binary == 0 if args.json else binary > 0, state
+                                assert relay.binary_count == 0 if args.json else relay.binary_count > 0
                             assert state['last_result']['flow_control']['pending_bytes'] == 0, state
                             assert 'replacement_reverse' not in state['last_result']
                             assert all('replacement_reverse' not in item and 'translate_control' not in item

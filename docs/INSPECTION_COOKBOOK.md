@@ -614,10 +614,13 @@ on logical access or changed commit. No read verifies Content-Digest automatical
 H1 Easy retains its signature/range/integrity guards and trailer restrictions;
 Expert preserves unsupported metadata at the script's responsibility.
 
-In Translate, the **encoded** DATA lengths must remain unchanged. Even equal-size
-plaintext edits can change compressed length and therefore fail; Expert does not
-bypass this restriction. Hold incomplete content from its initial Header and wait
-for completion before reading or replacing compressed Body content. Snapshot APIs
+Translate with negotiated content-reverse supports bounded encoded DATA resizing;
+legacy peers still require the original encoded lengths. Hold incomplete content
+from its initial Header before reading or replacing compressed Body content.
+Bodies larger than the sender window additionally require explicit
+`api.connection.http2.reserve_body(header, max_bytes)`; the limit counts encoded
+input including padding. See [bounded hold credit](H2_TRANSLATE_HOLD_CREDIT_DESIGN.md)
+for the complete deployment pattern and admission/failure limits. Snapshot APIs
 remain wire-level drafts; automatic coding belongs to Parts/Body only.
 
 ## Other important boundaries

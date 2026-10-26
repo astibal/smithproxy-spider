@@ -341,6 +341,14 @@ successful activation may still fail open under regular policy. Ordinary REWRITE
 including hold, remains fail-open; state-loss protection is deliberately deferred.
 Implemented contract details: [Live H2 Translate](H2_TRANSLATE_LIVE.md).
 
+Explicit H2 whole-body retention across flow-control windows is available through
+`api.connection.http2.reserve_body(header, max_bytes)` before Translate. It requires
+an initial header still in the held suffix, backend reservation support and
+content-reverse from activation. Capacity, original-input credit provenance and
+strict cancellation/exhaustion behavior are specified in
+[bounded hold credit](H2_TRANSLATE_HOLD_CREDIT_DESIGN.md). Ordinary hold remains
+uncredited; this API does not enable background translation or arbitrary-size bodies.
+
 ## Verification criteria
 
 Implementation tests must cover original wire preservation after read-only access,

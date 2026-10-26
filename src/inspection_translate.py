@@ -22,7 +22,7 @@ class _TranslationInput:
     """
     @staticmethod
     def initial():
-        return {'window': 65535, 'initial': 65535, 'acknowledged': 65535,
+        return {'window': 65535, 'initial': 65535, 'acknowledged': 65535, 'owned': 0,
                 'pending': [], 'streams': {}, 'header': [], 'remaining': 0,
                 'preface': None}
 
@@ -31,6 +31,8 @@ class _TranslationInput:
         for side in ('L', 'R'):
             if 'input' not in flow.state[side]:
                 raise CommitException('Translate input-window checkpoint missing; reconnect')
+            if 'owned' not in flow.state[side]['input']:
+                raise CommitException('Translate input ownership checkpoint missing; reconnect')
 
     def direction(self, side):
         return self.flow.state[side]['input']
@@ -45,7 +47,7 @@ class _TranslationInput:
         if key not in state['streams']:
             if not stream or len(state['streams']) >= self.flow.MAX_STREAMS:
                 raise CommitException('Translate input stream quota exceeded or stream zero')
-            state['streams'][key] = {'window': state['initial'], 'ended': False}
+            state['streams'][key] = {'window': state['initial'], 'ended': False, 'received': 0}
         return state['streams'][key]
 
     def debit(self, side, stream, amount, end):
@@ -55,6 +57,7 @@ class _TranslationInput:
         if amount > state['window']:
             raise CommitException('Translate input connection window exceeded')
         state['window'] -= amount
+        state['owned'] += amount
         if self.cancelled(side, stream):
             return
         if self.flow.retired(side, stream):
@@ -68,7 +71,14 @@ class _TranslationInput:
         if amount and amount > entry['window'] + allowance:
             raise CommitException('Translate input stream window exceeded')
         entry['window'] -= amount
+        entry['received'] += amount
         entry['ended'] = end
+        reservation = self.flow.state[side].get('body')
+        if reservation and reservation['stream'] == stream:
+            if entry['received'] > reservation['limit']:
+                raise CommitException('Reserved H2 body exceeds encoded byte limit')
+            if entry['received'] == reservation['limit'] and not end:
+                raise CommitException('Reserved H2 body limit exhausted before END_STREAM')
 
     def receive(self, side, data):
         state = self.direction(side)
@@ -167,6 +177,90 @@ class _TranslationInput:
             for key in list(streams):
                 if self.flow.retired(side, int(key)) or self.cancelled(side, int(key)):
                     del streams[key]
+
+
+class _TranslationHoldCredit:
+    MAX_BODY = 256 * 1024
+    INPUT_CAPACITY = MAX_BODY + 65535
+
+    def __init__(self, transaction, flow, incoming, cut):
+        self.flow, self.incoming = flow, incoming
+        side = flow.side
+        direction = flow.state[side]
+        for part, limit in transaction.body_reservations:
+            if not transaction.hold_credit_available:
+                raise CommitException('Body reservation requires backend admission support')
+            positions = [i for i, item in enumerate(transaction.message.parts) if item is part]
+            if not positions or positions[0] < cut or not part.complete or part.frame_type != 1:
+                raise CommitException('Reserve a complete initial HEADERS part in the held suffix')
+            fields = transaction._header_fields(part)
+            if not any(name in (b':method', b':status') for name, _, _ in fields):
+                raise CommitException('Body reservation requires initial request or response headers')
+            lengths = transaction.source_lengths[id(part)]
+            if any(not value.isdigit() or int(value) > limit for value in lengths):
+                raise CommitException('Content-Length exceeds reserved encoded body limit')
+            current = direction.get('body')
+            if current and (current['stream'] != part.stream_id or current['limit'] != limit):
+                raise CommitException('Only one body reservation per direction; its limit is immutable')
+            if not current:
+                if str(part.stream_id) in direction['streams'] or flow.retired(side, part.stream_id):
+                    raise CommitException('Body reservation requires headers retained before any output')
+                direction['body'] = {'stream': part.stream_id, 'limit': limit,
+                                     'stream_due': 0, 'advanced': 0}
+                flow.state['hold_reserved'] = True
+        if flow.state.get('hold_reserved') and not transaction.hold_credit_available:
+            raise CommitException('Body reservation backend capability lost')
+        # A reserved body is an all-or-nothing retained semantic message.
+        reservation = direction.get('body')
+        if reservation:
+            for part in transaction.message.parts[:cut]:
+                if part.frame_type == 1 and part.stream_id == reservation['stream']:
+                    if not part.content.complete:
+                        raise CommitException('Reserved body must remain held until complete')
+
+    def advance(self):
+        for side in ('L', 'R'):
+            direction = self.flow.state[side]
+            reservation = direction.get('body')
+            if not reservation:
+                continue
+            stream = reservation['stream']
+            if self.incoming.cancelled(side, stream):
+                raise CommitException('Reserved H2 body cancelled; strict teardown releases reservation')
+            if self.flow.retired(side, stream):
+                if reservation['stream_due']:
+                    raise CommitException('Reserved H2 body credit did not settle')
+                del direction['body']
+                continue
+            state = self.incoming.direction(side)
+            entry = state['streams'][str(stream)]
+            received, limit = entry['received'], reservation['limit']
+            if received > limit or (received == limit and not entry['ended']):
+                raise CommitException('Reserved H2 body limit exhausted before completion')
+            if entry['ended']:
+                continue
+            owned_output = sum(item.get('owned', 0) for item in direction['streams'].values())
+            held = state['owned'] - owned_output
+            room = self.INPUT_CAPACITY - state['owned'] - state['window']
+            if room < 0:
+                raise CommitException('H2 input exceeds admitted reservation capacity')
+            connection_grant = min(held - direction.get('advance_due', 0), room)
+            allowance = max([state['acknowledged'], state['initial']] + state['pending']) - state['initial']
+            stream_room = max(0, limit - received - max(0, entry['window'] + allowance))
+            stream_grant = min(received - reservation['advanced'], stream_room)
+            target = 'R' if side == 'L' else 'L'
+            for stream_id, amount in ((0, connection_grant), (stream, stream_grant)):
+                if amount < 0:
+                    raise CommitException('Reserved H2 credit provenance underflow')
+                if amount:
+                    self.flow.output[target].extend(self.flow.frame(8, 0, stream_id, amount.to_bytes(4, 'big')))
+            state['window'] += connection_grant
+            entry['window'] += stream_grant
+            direction['advance_due'] = direction.get('advance_due', 0) + connection_grant
+            reservation['stream_due'] += stream_grant
+            reservation['advanced'] += stream_grant
+            if state['window'] <= 0 or entry['window'] + allowance <= 0:
+                raise CommitException('Reserved H2 input capacity exhausted before completion')
 
 
 class _TranslationFlow:
@@ -343,17 +437,31 @@ class _TranslationFlow:
 
         if kind == 0:
             amount = int.from_bytes(bytes(part._wire)[:3], 'big')
+            direction = self.state[side]
+            # Early connection credit belongs to the retained input prefix,
+            # which is released in source order. Stream credit has its own debt.
+            advanced = min(amount, direction.get('advance_due', 0))
+            direction['advance_due'] = direction.get('advance_due', 0) - advanced
+            direction['credit'] += amount - advanced
             if self.cancelled(side, part.stream_id):
                 # In-flight DATA after reset still consumes connection credit.
-                self.state[side]['credit'] += amount
+                direction['cancelled_owned'] = direction.get('cancelled_owned', 0) + amount
                 return
             stream = self.stream(side, part.stream_id)
             if stream['closed'] or stream.get('ended'):
                 raise CommitException('DATA after translated stream termination')
             stream['ended'] = bool(part.flags & 1)
             # Include padding and its length byte, but not the frame header.
-            self.state[side]['credit'] += amount
-            stream['credit'] += amount
+            stream['owned'] = stream.get('owned', 0) + amount
+            reservation = direction.get('body')
+            advanced_stream = 0
+            if reservation and reservation['stream'] == part.stream_id:
+                advanced_stream = min(amount, reservation['stream_due'])
+                reservation['stream_due'] -= advanced_stream
+            # Per-stream refund debt can differ from connection debt when
+            # several streams contribute bytes to the same retained prefix.
+            stream['connection_credit'] = stream.get('connection_credit', 0) + amount - advanced
+            stream['credit'] += amount - advanced_stream
 
         if kind == 1 and part.flags & 1 and not self.cancelled(side, part.stream_id):
             if not self.retired(side, part.stream_id):
@@ -434,12 +542,15 @@ class _TranslationFlow:
             for key, entry in list(direction['streams'].items()):
                 stream_id = int(key)
                 if stream_id in blocked:
-                    retained += entry['credit']
+                    retained += entry.get('connection_credit', entry['credit'])
                     continue
                 amount = entry['credit']
                 if amount and not entry.get('closed'):
                     refunds.extend(self.frame(8, 0, stream_id, amount.to_bytes(4, 'big')))
                 entry['credit'] = 0
+                entry['connection_credit'] = 0
+                direction['input']['owned'] -= entry.get('owned', 0)
+                entry['owned'] = 0
                 if entry['closed']:
                     self._remember(side, 'retired', stream_id)
                     del direction['streams'][key]
@@ -448,6 +559,9 @@ class _TranslationFlow:
                 self.output[target].extend(self.frame(8, 0, 0, amount.to_bytes(4, 'big')))
             self.output[target].extend(refunds)
             direction['credit'] = retained
+            direction['input']['owned'] -= direction.pop('cancelled_owned', 0)
+            if direction['input']['owned'] < 0:
+                raise CommitException('Translate input ownership underflow; reconnect')
 
         pending = sum(len(wire) for queue in self.queues.values() for wire in queue)
         if pending > self.MAX_PENDING:
@@ -472,6 +586,20 @@ class ConnectionHttp2:
 
     def __init__(self, connection):
         self._connection = connection
+
+    @api_method('header: RewritePart, max_bytes: int', 'None',
+                'Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available. The limit counts original encoded DATA including padding, up to 256 KiB; it is immutable. One collecting body per direction. Backend checkpoint capacity remains reserved until connection end.',
+                'api.connection.set_mode(Mode.Translate)\nfor part in api.message.parts:\n    if part.type == PartType.Http2.Header and part.complete and part.content.complete is False:\n        api.message.parts.hold_from(part)\n        api.connection.http2.reserve_body(part, 128 * 1024)\n        break\nreturn api.message.translate()',
+                availability='Live sole flow deployment with backend reservation support and content-reverse. Cancellation or exhausted capacity tears down strict translation.',
+                access='staged body reservation')
+    def reserve_body(self, header, max_bytes):
+        if type(max_bytes) is not int or not 0 < max_bytes <= _TranslationHoldCredit.MAX_BODY:
+            raise CommitException('Body reservation limit must be an integer in 1..262144')
+        transaction = self._connection._transaction()
+        if 'flow' not in transaction.control_before:
+            raise CommitException('Body reservation requires content-reverse from activation')
+        transaction.body_reservations = [(part, limit) for part, limit in transaction.body_reservations
+                                         if part is not header] + [(header, max_bytes)]
 
     @api_method('limit: int', 'None',
                 'Enforce a maximum HPACK table capacity in both directions. Idempotent; never increases a peer-advertised limit. SETTINGS and synthetic ACK handling occur only through message.translate().',
@@ -902,6 +1030,8 @@ class _Translation:
         self.control_checkpoint = None
         self.reverse_output = b''
         self.flow_summary = None
+        self.body_reservations = []
+        self.hold_credit_available = False
         self.control_before = _TranslationSettings(control, side).state
         if control is None and reverse_capable:
             self.control_before['flow'] = _TranslationFlow.initial()
@@ -909,6 +1039,7 @@ class _Translation:
             raise CommitException('Translate lost content-reverse capability')
         self.settings = _TranslationSettings(control, side)
         self.decoded = {}
+        self.source_lengths = {}
         self.original_fields = {}
         self.originals = tuple(bytes(p._wire) for p in message.parts)
         self.identities = tuple(id(p) for p in message.parts)
@@ -964,6 +1095,8 @@ class _Translation:
             for field in fields
         ])
         self.decoded[id(part)] = headers
+        self.source_lengths[id(part)] = tuple(field.value for field in headers.entries
+                                             if field.name == b'content-length')
 
         if active and not getattr(part, '_translate_draft', False):
             part.headers = headers
@@ -1068,6 +1201,7 @@ class _Translation:
         incoming = _TranslationInput(flow) if flow is not None else None
         if incoming is not None:
             incoming.receive(settings.side, message.bytes)
+        hold_credit = _TranslationHoldCredit(self, flow, incoming, cut) if flow is not None else None
 
         emitted = message.parts[:cut]
         body_overrides = _encoded_h2_bodies(emitted)
@@ -1131,6 +1265,10 @@ class _Translation:
             flow.output[settings.side].extend(output)
             forward, reverse_output = flow.finish()
             incoming.finish()
+            hold_credit.advance()
+            if sum(map(len, flow.output.values())) > 1024 * 1024:
+                raise CommitException('Translated directional output exceeds 1 MiB')
+            forward, reverse_output = bytes(flow.output[flow.side]), bytes(flow.output[flow.peer])
             output = bytearray(forward)
 
         if len(output) > 1024 * 1024:
@@ -1289,6 +1427,9 @@ def _prepare_translation(message, request):
         info = request.get('event', {}).get('details', {}).get('info', {})
         reverse_capable = info.get('webhook_control', {}).get('content-reverse') is True
         transaction = _Translation(message, request.get('translate_state'), active, control, side, reverse_capable)
+        transaction.hold_credit_available = request.get('hold_credit_available') is True
+        if transaction.control_before.get('flow', {}).get('hold_reserved') and not request.get('hold_credit_reserved'):
+            raise CommitException('Body reservation owner lost; reconnect')
         object.__setattr__(message, '_translation', transaction)
     except Exception as error:
         if active:

@@ -90,10 +90,11 @@ Both Easy and Expert enforce the same transport invariants:
 - Resizing repairs Content-Length only when the relevant header and complete
   content are still retained. Already emitted Content-Length rejects resizing.
   H2 content digests/signatures are not repaired automatically.
-- Explicitly held input is not credited until released. Holding a body larger
-  than the sender's window is not supported by this bounded implementation.
-  [Bounded hold-credit design](H2_TRANSLATE_HOLD_CREDIT_DESIGN.md) specifies the
-  proposed reservation model and its implementation prerequisites; it is not an API.
+- Ordinary held input is not credited until released. Explicit
+  `connection.http2.reserve_body(header, max_bytes)` enables whole-body hold across
+  windows, up to 256 KiB encoded DATA, with backend capacity admission. See
+  [bounded hold credit](H2_TRANSLATE_HOLD_CREDIT_DESIGN.md) for persistent quota
+  ownership, input provenance, cancellation and exhaustion behavior.
 
 Once Translate is active, an uncaught failure follows its existing strict
 connection teardown policy. Before activation the existing failure policy is
@@ -281,15 +282,14 @@ Verification after the implementation changes:
 The full run used an isolated user/network namespace, not a live SASlik instance.
 No native production code changed; the earlier native P3 remains separate evidence.
 Fair scheduling and complete peer stream-lifecycle validation remain out of scope.
-Large retained bodies are addressed by the linked design proposal only; no early
-hold credit is enabled by this change.
+At that milestone, larger retained bodies were addressed by a design proposal;
+the subsequent reservation implementation is described below.
 
 ### Input-window accounting and socket GOAWAY
 
-The input ledger is the first prerequisite for bounded hold-credit advancement,
-not an early-credit API. Ordinary hold still cannot collect a body larger than
-its available sender window. Backend reservation admission, already-refunded
-provenance and early grants remain future work.
+The input-ledger milestone provided the first prerequisite for bounded hold-credit
+advancement. Ordinary hold still grants no early credit. Backend admission and
+early refunds were added in the subsequent reservation milestone below.
 
 Production regression cases exercise partial DATA headers and payloads, padded
 holds, release without duplicate debit/refund, connection oversend, stream-window
@@ -310,3 +310,34 @@ Validation on 2026-10-26:
   including the retained-reset regression and JSON state across fresh workers.
 - Generated API reference consistency and whitespace checks passed. Native code
   and live SASlik configuration were unchanged; no new native full P3 was run.
+
+### Reserved whole-body hold: 2026-10-27
+
+The explicit `reserve_body` API admits serialized checkpoint capacity in the
+backend before any early grant. An ordered connection-credit debt and separate
+stream debt prevent duplicate refunds when the original Parts are released.
+Owned input includes declared partial DATA and original input backing blocked
+output. Both directions may collect reserved bodies; other streams can contribute
+retained input within the shared directional capacity.
+
+The encoded-body limit is 256 KiB. Backend admission reserves both 1 MiB hold
+slots plus the 1 MiB shared control slot for the connection's lifetime, charging
+actual additional state against the 4 MiB deployment quota. This is deliberately
+conservative. Cancellation of a collecting/output-pending reserved body and cap
+exhaustion cause strict teardown. See the linked reservation document for the
+complete contract and a runnable deployment pattern.
+
+Validation on 2026-10-27:
+
+- Final build and full configured CTest passed: **54/54 suites**, zero failures,
+  **217.15 s**, including 15 integration suites.
+- Four reserved-body integration variants exercise real proxy/Spider processes:
+  Easy/Expert with JSON and negotiated SXBN. The relay verifies the actual wire
+  encoding; independent hyper-h2 endpoints enforce sender windows.
+- The final standalone production-window run passed **82 tests** in **12.724 s**.
+  This includes two additional atomic serialization-failure cases added after
+  the full run started; the full run exercised the preceding 80-case version.
+- Backend integration checks concurrent quota admission, reverse credit, retained
+  reservation ownership and capacity reclamation at connection stop.
+- Generated API examples passed all **12 tests**. Native production code and live
+  SASlik configuration were unchanged; no new native full P3 was run.

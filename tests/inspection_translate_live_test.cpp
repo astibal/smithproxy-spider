@@ -6,6 +6,7 @@
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <thread>
 #include <unistd.h>
 
 using nlohmann::json;
@@ -44,12 +45,14 @@ int main() {
     const auto first = frame(std::string("\x40\x05x-lab\x08original", 16));
     const auto indexed = frame(std::string("\xbe", 1));
     auto send = [&](std::string flow, std::uint64_t sequence, std::string payload,
-                    bool skip = false, bool match = true, std::string side = "L", bool capability = true) {
+                    bool skip = false, bool match = true, std::string side = "L", bool capability = true,
+                    bool reverse = false) {
         json info{{"side", side}, {"content", spider::base64_encode(payload)}, {"skip", skip},
             {"session", match ? "tcp_10.0.0.1:1234+tcp_10.0.0.2:80" : "tcp_10.0.0.9:1234+tcp_10.0.0.2:80"},
             {"content_annotations", {{0, 9, "h2.frame.header"}}}};
         if (capability) info["webhook_control"] = {{"version", 1}, {"sequence", sequence},
             {"mode", sequence == 1 ? "regular" : "strict"}};
+        if (reverse) info["webhook_control"]["content-reverse"] = true;
         auto result = spider::process_webhook(store, decisions,
             {{"action", "connection-content"}, {"id", flow}, {"details", {{"info", info}}}},
             std::nullopt, nullptr, &engine);
@@ -96,5 +99,44 @@ int main() {
     assert(prefix.body["content"] == spider::base64_encode(preface));
     auto completed = send("fragmented", 4, first.substr(8));
     assert(completed.status == 200 && completed.body["action"] == "replace");
-    std::cout << "Live translate routing, control and failure tests passed\n";
+    // Reservations are admitted by the backend under the deployment serial
+    // transaction. Two workers/connections cannot promise the same capacity.
+    configure({{"operation", "remove"}, {"id", id}});
+    const std::string reserve_script =
+        "for part in api.message.parts:\n"
+        "    if part.type == PartType.Http2.Header and part.content.complete is False:\n"
+        "        api.message.parts.hold_from(part)\n"
+        "        api.connection.http2.reserve_body(part, 128 * 1024)\n"
+        "        break\n"
+        "return api.message.translate()";
+    state = configure({{"operation", "deploy"}, {"name", "reserve"}, {"script", reserve_script},
+                       {"scope", "all"}, {"instancing", "flow"}});
+    id = state["chain"][0]["id"];
+    configure({{"operation", "enable"}, {"id", id}, {"enabled", true}});
+    auto reserve_send = [&](const std::string& flow, unsigned sequence, const std::string& wire) {
+        return send(flow, sequence, wire, false, true, "L", true, true);
+    };
+    const auto request_header = frame(std::string("\x83", 1)); // :method POST
+    assert(reserve_send("reserve-a", 1, preface).status == 200);
+    assert(reserve_send("reserve-b", 1, preface).status == 200);
+    unsigned status_a = 0, status_b = 0;
+    std::thread a([&] { status_a = reserve_send("reserve-a", 2, request_header).status; });
+    std::thread b([&] { status_b = reserve_send("reserve-b", 2, request_header).status; });
+    a.join(); b.join();
+    assert((status_a == 200 && status_b == 503) || (status_a == 503 && status_b == 200));
+    const auto winner = status_a == 200 ? "reserve-a" : "reserve-b";
+    auto charge = engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>();
+    assert(charge > 3 * 1024 * 1024 && charge < 4 * 1024 * 1024);
+    auto early = reserve_send(winner, 3, frame("abc", 0, 0));
+    assert(early.status == 200 && early.body["action"] == "replace");
+    assert(early.body["content"] == "" && early.body.contains("content-reverse"));
+    auto released = reserve_send(winner, 4, frame("def", 0, 1));
+    assert(released.status == 200 && released.body["action"] == "replace");
+    // Releasing Parts must not release capacity backing already granted credit.
+    assert(engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>() > 3 * 1024 * 1024);
+    engine.automatic({{"action", "connection-stop"}, {"id", winner}}, json::array());
+    assert(engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>() < 65536);
+    assert(reserve_send("reserve-c", 1, preface).status == 200);
+    assert(reserve_send("reserve-c", 2, request_header).status == 200);
+    std::cout << "Live translate routing, admission, control and failure tests passed\n";
 }

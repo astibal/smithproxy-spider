@@ -159,6 +159,20 @@ if(BUILD_TESTING)
                             --spider $<TARGET_FILE:smithproxy-spider> --goaway --safety ${safety})
                     set_tests_properties(inspection_translate_e2e_goaway_${safety}
                         PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+                    foreach(transport json sxbn)
+                        set(reserved_transport_args)
+                        if(transport STREQUAL "json")
+                            list(APPEND reserved_transport_args --json)
+                        endif()
+                        add_test(NAME inspection_translate_e2e_reserved_${transport}_${safety}
+                            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                                --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                                --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                                --spider $<TARGET_FILE:smithproxy-spider> --reserved --safety ${safety}
+                                ${reserved_transport_args})
+                        set_tests_properties(inspection_translate_e2e_reserved_${transport}_${safety}
+                            PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+                    endforeach()
                 endforeach()
             endif()
             foreach(failure exception missing-translate)

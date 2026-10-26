@@ -13,7 +13,7 @@ import h2.connection
 import h2.events
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from inspection_api import Message, HeldCommit, CommitException, _prepare_translation
+from inspection_api import Message, HeldCommit, CommitException, Connection, _prepare_translation
 from inspection_h2_test import frame, unpack
 
 
@@ -23,6 +23,7 @@ class Bridge:
         self.tables, self.held = {}, {}
         self.control = None
         self.reverse = b''
+        self.reserved = False
 
     def message(self, side, wire):
         message = Message(wire, len(wire), {})
@@ -32,6 +33,7 @@ class Bridge:
             'translate_active': self.control is not None,
             'translate_state': self.tables.get(side), 'translate_control': self.control,
             'held_parts': self.held.get(side),
+            'hold_credit_available': True, 'hold_credit_reserved': self.reserved,
         })
         return message
 
@@ -40,6 +42,7 @@ class Bridge:
         transaction = message._translation
         self.tables[side] = json.loads(json.dumps(transaction.checkpoint))
         self.control = json.loads(json.dumps(transaction.control_checkpoint))
+        self.reserved = bool(self.control.get('flow', {}).get('hold_reserved'))
         self.held[side] = result.checkpoint if isinstance(result, HeldCommit) else None
         self.reverse = transaction.reverse_output
         return result.prefix if isinstance(result, HeldCommit) else result
@@ -227,6 +230,234 @@ class WindowsTests(unittest.TestCase):
             control, table, held = result['translate_control'], result['translate_state'], result.get('held_parts')
         self.assertEqual(base64.b64decode(result['replacement']), wire)
         self.assertEqual(control['flow']['L']['input']['window'], 65535)
+
+    def test_reserved_body_crosses_windows_and_repays_credit(self):
+        for side in ('L', 'R'):
+            for body_size, output_size in ((100000, 0), (100000, 100000), (100000, 160000), (262144, 0)):
+                with self.subTest(side=side, body_size=body_size, output_size=output_size):
+                    peers = self.make_peers()
+                    if side == 'R':
+                        peers.open(reverse=True)
+                        # open() emitted response headers, so use a new stream
+                        # whose initial response header can still be retained.
+                        peers.peers['L'].send_headers(3, [(b':method', b'GET'), (b':scheme', b'https'),
+                                                       (b':authority', b'example.test'), (b':path', b'/')], end_stream=True)
+                        peers.pump('L', peers.peers['L'].data_to_send())
+                    stream = 3 if side == 'R' else 1
+                    fields = ([(b':status', b'200')] if side == 'R' else
+                              [(b':method', b'POST'), (b':scheme', b'https'),
+                               (b':authority', b'example.test'), (b':path', b'/')])
+                    fields.append((b'content-length', str(body_size).encode()))
+                    sender = peers.peers[side]
+                    sender.send_headers(stream, fields)
+
+                    def retain(message):
+                        header = next(part for part in message.parts if part.frame_type == 1)
+                        if not header.content.complete:
+                            message.parts.hold_from(header)
+                            Connection(message).http2.reserve_body(header, max(128 * 1024, body_size))
+                        else:
+                            message.bodies()[0].set_bytes(b'z' * output_size)
+
+                    peers.pump(side, sender.data_to_send(), retain)
+                    sent = 0
+                    while sent < body_size:
+                        count = min(16000, body_size - sent, sender.local_flow_control_window(stream))
+                        self.assertGreater(count, 0, 'Reserved hold stalled the peer')
+                        sent += count
+                        sender.send_data(stream, b'x' * count, end_stream=sent == body_size)
+                        peers.pump(side, sender.data_to_send(), retain)
+                    target = 'R' if side == 'L' else 'L'
+                    self.assertEqual(b''.join(peers.received[target]), b'z' * output_size)
+                    self.assertEqual(sender.outbound_flow_control_window, 65535)
+                    direction = peers.bridge.control['flow'][side]
+                    self.assertEqual(direction['input']['owned'], 0)
+                    self.assertEqual(direction['advance_due'], 0)
+                    self.assertNotIn('body', direction)
+                    self.assertTrue(peers.bridge.reserved)
+
+    def test_reservation_admission_retry_limits_and_lost_owner(self):
+        bridge = self.input_bridge()
+        header = frame(hpack.Encoder().encode([(b':method', b'POST'), (b'content-length', b'100000')]), 1, 4, 1)
+        message = bridge.message('L', header)
+        part = message.parts[0]
+        # A draft edit cannot hide an oversized original Content-Length.
+        part.headers.set_header(b'content-length', b'1')
+        message.parts.hold_from(part)
+        connection = Connection(message)
+        before = json.dumps(bridge.control)
+        connection.http2.reserve_body(part, 65535)
+        with self.assertRaisesRegex(CommitException, 'Content-Length exceeds'):
+            bridge.publish('L', message)
+        self.assertEqual(json.dumps(bridge.control), before)
+        self.assertIsNone(message._translation.result)
+        connection.http2.reserve_body(part, 128 * 1024)
+        bridge.publish('L', message)
+        bridge.reserved = False
+        with self.assertRaisesRegex(CommitException, 'owner lost'):
+            bridge.feed('L', frame(b'x', 0, 0, 1))
+
+    def reserved_bridge(self, limit=128 * 1024):
+        bridge = self.input_bridge()
+        header = frame(hpack.Encoder().encode([(b':method', b'POST')]), 1, 4, 1)
+        def retain(message):
+            part = message.parts[0]
+            message.parts.hold_from(part)
+            Connection(message).http2.reserve_body(part, limit)
+        bridge.feed('L', header, retain)
+        return bridge, retain
+
+    def test_reserved_unknown_length_partial_padding_and_cancellation(self):
+        for terminal in ('reset', 'goaway'):
+            bridge, retain = self.reserved_bridge()
+            wire = frame(b'\x03abc\0\0\0', 0, 8, 1)
+            bridge.feed('L', wire[:9], retain)
+            self.assertEqual(bridge.control['flow']['L']['input']['owned'], 7)
+            self.assertEqual([int.from_bytes(item[3], 'big') for item in unpack(bridge.reverse)], [7, 7])
+            for byte in wire[9:]:
+                bridge.feed('L', bytes([byte]), retain)
+                self.assertEqual(bridge.reverse, b'')
+            before = json.dumps(bridge.control)
+            cancel = frame(b'\0\0\0\x08', 3, 0, 1) if terminal == 'reset' else frame(b'\0' * 8, 7, 0, 0)
+            with self.assertRaisesRegex(CommitException, 'body cancelled'):
+                bridge.feed('R', cancel)
+            self.assertEqual(json.dumps(bridge.control), before)
+        for amount in (8, 9):
+            bridge, retain = self.reserved_bridge(limit=8)
+            with self.assertRaisesRegex(CommitException, 'body.*limit'):
+                bridge.feed('L', frame(b'x' * amount, 0, 0, 1)[:9], retain)
+
+    def test_failed_hold_serialization_does_not_publish_early_credit(self):
+        bridge, retain = self.reserved_bridge()
+        message = bridge.message('L', frame(b'abc', 0, 0, 1))
+        retain(message)
+        header = message.parts[0]
+        original = list(header.headers.entries)
+        header.headers.set_header(b'x-huge', b'x' * 900000)
+        before = json.dumps(bridge.control)
+        with self.assertRaisesRegex(CommitException, 'exceed'):
+            bridge.publish('L', message)
+        self.assertEqual(json.dumps(bridge.control), before)
+        self.assertIsNone(message._translation.result)
+        header.headers.entries = original
+        self.assertEqual(bridge.publish('L', message), b'')
+        self.assertEqual([int.from_bytes(item[3], 'big') for item in unpack(bridge.reverse)], [3, 3])
+        bridge.feed('L', frame(b'z', 0, 1, 1))
+        self.assertEqual(bridge.control['flow']['L']['input']['window'], 65535)
+        self.assertEqual(bridge.control['flow']['L']['advance_due'], 0)
+
+    def test_reservation_rejects_second_body_and_incomplete_release(self):
+        bridge, retain = self.reserved_bridge()
+        with self.assertRaisesRegex(CommitException, 'remain held'):
+            bridge.feed('L', b'')
+        message = bridge.message('L', frame(hpack.Encoder().encode([(b':method', b'POST')]), 1, 4, 3))
+        message.parts.hold_from(message.parts[0])
+        Connection(message).http2.reserve_body(message.parts[-1], 128 * 1024)
+        with self.assertRaisesRegex(CommitException, 'one body reservation'):
+            bridge.publish('L', message)
+
+    def test_reserved_holds_in_both_directions_release_without_double_grants(self):
+        bridge = self.input_bridge()
+        def retain(message):
+            message.parts.hold_from(message.parts[0])
+            Connection(message).http2.reserve_body(message.parts[0], 128 * 1024)
+        for side, fields in (('L', [(b':method', b'POST')]), ('R', [(b':status', b'200')])):
+            bridge.feed(side, frame(hpack.Encoder().encode(fields), 1, 4, 1), retain)
+        for _ in range(6):
+            for side in ('L', 'R'):
+                bridge.feed(side, frame(b'x' * 16000, 0, 0, 1), retain)
+        for side in ('L', 'R'):
+            def release(message):
+                message.bodies()[0].set_bytes(b'')
+            bridge.feed(side, frame(b'x' * 4000, 0, 1, 1), release)
+            state = bridge.control['flow'][side]
+            self.assertEqual(state['input']['owned'], 0)
+            self.assertEqual(state['input']['window'], 65535)
+            self.assertEqual(state['advance_due'], 0)
+            self.assertNotIn('body', state)
+
+    def test_reserved_gzip_uses_encoded_capacity_and_repairs_length(self):
+        import random
+        body = gzip.compress(random.Random(7).randbytes(100000), mtime=0)
+        bridge = self.input_bridge()
+        fields = [(b':method', b'POST'), (b'content-length', str(len(body)).encode()),
+                  (b'content-encoding', b'gzip')]
+        def edit(message):
+            header = message.parts[0]
+            if not header.content.complete:
+                message.parts.hold_from(header)
+                Connection(message).http2.reserve_body(header, 128 * 1024)
+            else:
+                self.assertEqual(len(message.bodies()[0].get_bytes()), 100000)
+                message.bodies()[0].set_bytes(b'z' * 200000)
+        bridge.feed('L', frame(hpack.Encoder().encode(fields), 1, 4, 1), edit)
+        for offset in range(0, len(body), 16000):
+            chunk = body[offset:offset + 16000]
+            output, _ = bridge.feed('L', frame(chunk, 0, int(offset + len(chunk) == len(body)), 1), edit)
+        frames = unpack(output)
+        encoded = b''.join(item[3] for item in frames if item[0] == 0)
+        self.assertEqual(gzip.decompress(encoded), b'z' * 200000)
+        self.assertIn((b'content-length', str(len(encoded)).encode()), hpack.Decoder().decode(frames[0][3], raw=True))
+        self.assertEqual(bridge.control['flow']['L']['input']['window'], 65535)
+
+    def test_reserved_body_shares_connection_credit_with_other_retained_stream(self):
+        peers = self.make_peers()
+        sender = peers.peers['L']
+        fields = [(b':method', b'POST'), (b':scheme', b'https'),
+                  (b':authority', b'example.test'), (b':path', b'/')]
+        for stream in (1, 3):
+            sender.send_headers(stream, fields)
+        def retain(message):
+            first = message.parts[0]
+            if first.content.complete is False:
+                message.parts.hold_from(first)
+                Connection(message).http2.reserve_body(first, 128 * 1024)
+        peers.pump('L', sender.data_to_send(), retain)
+        sender.send_data(3, b'y' * 10000, end_stream=True)
+        peers.pump('L', sender.data_to_send(), retain)
+        sent = 0
+        while sent < 100000:
+            count = min(16000, 100000 - sent, sender.local_flow_control_window(1))
+            self.assertGreater(count, 0)
+            sent += count
+            sender.send_data(1, b'x' * count, end_stream=sent == 100000)
+            peers.pump('L', sender.data_to_send(), retain)
+        received = b''.join(peers.received['R'])
+        self.assertEqual(received.count(b'x'), 100000)
+        self.assertEqual(received.count(b'y'), 10000)
+        self.assertEqual(sender.outbound_flow_control_window, 65535)
+        self.assertEqual(peers.bridge.control['flow']['L']['advance_due'], 0)
+
+    def test_reserved_credit_survives_fresh_workers(self):
+        from inspection_cookbook_test import run
+        from inspection_translate_worker_test import event
+        script = ('for part in api.message.parts:\n'
+                  '    if part.type == PartType.Http2.Header and part.content.complete is False:\n'
+                  '        api.message.parts.hold_from(part)\n'
+                  '        api.connection.http2.reserve_body(part, 128 * 1024)\n        break\n'
+                  f'return api.message.translate(safety=Safety.{self.safety.title()})')
+        control, table, held = None, None, None
+        header = frame(hpack.Encoder().encode([(b':method', b'POST')]), 1, 4, 1)
+        wires = [header] + [frame(b'x' * 16000, 0, 0, 1)] * 6 + [frame(b'x' * 4000, 0, 1, 1)]
+        refunded = 0
+        for wire in wires:
+            request = event(wire, 'L')
+            request['details']['info']['webhook_control'] = {'content-reverse': True}
+            result = run(script, request, translate_allowed=control is None, translate_active=control is not None,
+                         translate_state=table, translate_control=control, held_parts=held, hold_allowed=True,
+                         hold_credit_available=True, hold_credit_reserved=control is not None,
+                         instance={'mode': 'flow'})
+            self.assertTrue(result['ok'], result)
+            control, table, held = result['translate_control'], result['translate_state'], result.get('held_parts')
+            reverse = base64.b64decode(result.get('replacement_reverse', ''))
+            refunded += sum(int.from_bytes(payload, 'big') for kind, _, stream, payload in unpack(reverse)
+                            if kind == 8 and stream == 0)
+        # The original receiver has granted no more output credit: the retained
+        # body is now a pending output obligation, still backed by the reservation.
+        self.assertTrue(control['flow']['L']['queue'])
+        self.assertTrue(control['flow']['hold_reserved'])
+        self.assertLess(refunded, 100000)
+        self.assertIsNone(held)
 
     def test_retained_content_length_and_lazy_gzip_body(self):
         for compressed in (False, True):

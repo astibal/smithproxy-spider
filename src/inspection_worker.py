@@ -123,6 +123,8 @@ def invoke_script(current, compiled):
                 response['translate_state'] = translation.checkpoint
                 response['translate_control'] = translation.control_checkpoint
                 response['translated'] = True
+                if translation.control_checkpoint.get('flow', {}).get('hold_reserved'):
+                    response['hold_credit_reservation'] = True
                 if translation.flow_summary is not None:
                     response['flow_control'] = translation.flow_summary
                 if translation.reverse_output:

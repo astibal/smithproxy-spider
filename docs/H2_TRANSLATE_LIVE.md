@@ -205,6 +205,12 @@ output queues, retained Content-Length repair, examples and explicit limits.
 Easy and Expert enforce the same transport requirements. Padding may be removed
 when reframing resized or credit-blocked DATA.
 
+Whole-body hold across sender windows requires explicit
+`api.connection.http2.reserve_body(header, max_bytes)` while retaining the initial
+header. The backend admits checkpoint capacity before early credit can be returned.
+See [bounded hold credit](H2_TRANSLATE_HOLD_CREDIT_DESIGN.md) for the 256 KiB encoded
+limit, lifetime reservation charge and strict failure boundaries.
+
 For known uncompressed content, this example masks a six-byte word within one
 DATA frame. It does not search across frame boundaries or decompress.
 

@@ -272,6 +272,8 @@ nlohmann::json Inspection::run(nlohmann::json request) {
     request.erase("translate_active");
     request.erase("held_parts");
     request.erase("hold_allowed"); // Preview never creates a transport hold.
+    request.erase("hold_credit_available");
+    request.erase("hold_credit_reserved");
     auto result = run_request(std::move(request), nullptr);
     result.erase("held_parts");
     result.erase("translate_state");
@@ -300,10 +302,26 @@ nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared
     summary.erase("held_parts");
     summary.erase("translate_state");
     summary.erase("translate_control");
+    summary.erase("hold_credit_reservation");
     recent_.push_back(std::move(summary));
     if (recent_.size() > 20) recent_.erase(recent_.begin());
     return result;
 }
+std::size_t Inspection::state_charge(const nlohmann::json& state, const nlohmann::json& holds,
+                                     const nlohmann::json& translations, bool reserved) {
+    auto bytes = state.dump().size() + holds.dump().size() + translations.dump().size();
+    if (!reserved) return bytes;
+    // Reserve the full existing checkpoint limits, not an optimistic body-size
+    // multiplier. JSON framing/drafts can cost much more than encoded DATA.
+    for (const auto* side : {"L", "R"}) {
+        const auto used = holds.contains(side) ? holds.at(side).dump().size() : 0;
+        bytes += 1024 * 1024 - std::min<std::size_t>(used, 1024 * 1024);
+    }
+    const auto used = translations.contains("settings") ? translations.at("settings").dump().size() : 0;
+    bytes += 1024 * 1024 - std::min<std::size_t>(used, 1024 * 1024);
+    return bytes;
+}
+
 void Inspection::expire_instances(Runtime& runtime, int idle_seconds) const {
     const auto cutoff = std::chrono::steady_clock::now() - std::chrono::seconds(idle_seconds);
     for (auto it = runtime.states.begin(); it != runtime.states.end();) {
@@ -382,6 +400,8 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     auto translations = key.empty() || !runtime->states.contains(key)
         ? nlohmann::json::object() : runtime->states.at(key).translations;
     if (translate_active && translations.empty()) return failure("Translate state expired or was lost");
+    const bool previously_reserved = !key.empty() && runtime->states.contains(key) &&
+        runtime->states.at(key).hold_credit_reserved;
     const auto side = event.value("details", nlohmann::json::object())
         .value("info", nlohmann::json::object()).value("side", "");
     const auto budget = std::min(remaining, item.value("timeout_ms", 1000));
@@ -394,6 +414,8 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         {"script_id", id}, {"timeout_ms", budget}, {"instance_state", previous},
         {"held_parts", holds.value(side, nlohmann::json(nullptr))},
         {"hold_allowed", hold_allowed && mode == "flow"},
+        {"hold_credit_available", hold_allowed && mode == "flow"},
+        {"hold_credit_reserved", previously_reserved},
         {"translate_allowed", translate_allowed && mode == "flow" && holds.empty()},
         {"translate_active", translate_active},
         {"translate_state", translations.value(side, nlohmann::json(nullptr))},
@@ -417,7 +439,8 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
             translations["settings"] = settings;
         }
 
-        const auto bytes = state_size + holds.dump().size() + translations.dump().size();
+        const bool reserved = previously_reserved || result.value("hold_credit_reservation", false);
+        const auto bytes = state_charge(next, holds, translations, reserved);
         const auto previous_bytes = runtime->states.contains(key) ? runtime->states.at(key).bytes : 0;
         const bool invalid_state = !next.is_object() || state_size > 65536;
         const bool invalid_translation = !translated.is_null() && (
@@ -426,10 +449,12 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
             !settings.is_object() || settings.dump().size() > 1024 * 1024);
         const bool invalid_hold = !held.is_null() && (
             !hold_allowed || mode != "flow" || !held.is_object() || held.dump().size() > 1024 * 1024);
+        const bool invalid_reservation = reserved &&
+            (!hold_allowed || mode != "flow" || translated.is_null() || !settings.is_object());
         const bool deployment_full = !key.empty() &&
             runtime->state_bytes.load() - previous_bytes + bytes > 4 * 1024 * 1024;
 
-        if (invalid_state || invalid_translation || invalid_hold || deployment_full) {
+        if (invalid_state || invalid_translation || invalid_hold || invalid_reservation || deployment_full) {
             result = failure("Instance state / hold exceeds allowed mode or 64 KiB state / 1 MiB hold / 4 MiB deployment quota");
         } else if (!key.empty()) {
             std::scoped_lock lock(mutex_);
@@ -439,7 +464,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
             if ((translate_active || !translated.is_null()) && (runtime->retired || closed))
                 result = failure("Translate owner retired or connection closed during callback");
             else if (!runtime->retired && !closed)
-                runtime->states[key] = Instance{next, std::chrono::steady_clock::now(), bytes, holds, translations};
+                runtime->states[key] = Instance{next, std::chrono::steady_clock::now(), bytes, holds, translations, reserved};
         }
     }
     if (!result.value("ok", false) && runtime->states.contains(key)) {
@@ -448,13 +473,15 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
             // Current policy remains fail-open. Do not replay stale held bytes
             // after the failing callback has already been passed through.
             result["hold"] = {{"state", "abandoned"}, {"reason", "script failure; fail-open"}};
-            instance.bytes = instance.state.dump().size() + instance.holds.dump().size() + instance.translations.dump().size();
+            instance.bytes = state_charge(instance.state, instance.holds, instance.translations,
+                                          instance.hold_credit_reserved);
         }
     }
     result.erase("instance_state");
     result.erase("held_parts"); // Never publish checkpoint bytes into GUI/events.
     result.erase("translate_state");
     result.erase("translate_control");
+    result.erase("hold_credit_reservation");
     // Also discard a previous state if a stop arrived while the worker was executing.
     {
         std::scoped_lock lock(mutex_);

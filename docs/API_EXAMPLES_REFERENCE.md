@@ -1779,6 +1779,28 @@ return api.message.translate()
 
 Persistent HTTP/2 policy, applied only by an explicitly returned translate result.
 
+### ConnectionHttp2.reserve_body
+
+Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available. The limit counts original encoded DATA including padding, up to 256 KiB; it is immutable. One collecting body per direction. Backend checkpoint capacity remains reserved until connection end.
+
+Availability: Live sole flow deployment with backend reservation support and content-reverse. Cancellation or exhausted capacity tears down strict translation.
+
+Access: staged body reservation; type/result: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.connection.set_mode(Mode.Translate)
+for part in api.message.parts:
+    if part.type == PartType.Http2.Header and part.complete and part.content.complete is False:
+        api.message.parts.hold_from(part)
+        api.connection.http2.reserve_body(part, 128 * 1024)
+        break
+return api.message.translate()
+```
+
 ### ConnectionHttp2.enforce_header_table_limit
 
 Enforce a maximum HPACK table capacity in both directions. Idempotent; never increases a peer-advertised limit. SETTINGS and synthetic ACK handling occur only through message.translate().
