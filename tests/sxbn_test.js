@@ -44,3 +44,6 @@ assert.strictEqual(emptyPayload.length, 1);
 assert.strictEqual(emptyPayload[0].payload.length, 0);
 
 console.log('sxbn_test: chained binary envelopes decoded');
+const roundtrip = sxbn.decode(sxbn.encode({event: {id: 'replay-λ'}}, Uint8Array.of(0, 128, 255)));
+assert.deepStrictEqual(roundtrip[0].metadata, {event: {id: 'replay-λ'}});
+assert.deepStrictEqual(roundtrip[0].payload, Uint8Array.of(0, 128, 255));

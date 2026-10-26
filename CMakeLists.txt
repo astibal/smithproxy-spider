@@ -17,6 +17,28 @@ if(NOT nlohmann_json_FOUND)
     add_library(nlohmann_json::nlohmann_json ALIAS spider_nlohmann_json)
 endif()
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/pack-inspection-worker.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_h2.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_hold.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_translate.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_language.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_sandbox.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_worker.py"
+    OUTPUT_VARIABLE INSPECTION_WORKER_SOURCE RESULT_VARIABLE WORKER_PACK_RESULT)
+if(NOT WORKER_PACK_RESULT EQUAL 0)
+    message(FATAL_ERROR "Cannot package inspection worker")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tools/pack-inspection-worker.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_translate.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_hold.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_h2.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_worker.py src/inspection_api.py src/inspection_language.py src/inspection_sandbox.py tools/generate-inspection-schema.py)
+configure_file(src/inspection_worker.hpp.in generated/inspection_worker.hpp @ONLY)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate-inspection-schema.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py" "${CMAKE_CURRENT_BINARY_DIR}/generated/inspection_schema.hpp"
+    COMMAND_ERROR_IS_FATAL ANY)
 
 add_library(spider_protocol
     src/binary_envelope.cpp
@@ -26,6 +48,9 @@ target_link_libraries(spider_protocol PUBLIC nlohmann_json::nlohmann_json)
 target_compile_options(spider_protocol PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 
 add_library(spider_core
+    src/inspection.cpp
+    src/inspection_pool.cpp
+    src/collection.cpp
     src/decision_broker.cpp
     src/content_decoding_enrichment.cpp
     src/enrichment.cpp
@@ -37,6 +62,8 @@ add_library(spider_core
     src/webhook.cpp
 )
 target_include_directories(spider_core PUBLIC src)
+target_include_directories(spider_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(spider_core PRIVATE SPIDER_PYTHON="${Python3_EXECUTABLE}")
 target_link_libraries(spider_core PUBLIC spider_protocol nlohmann_json::nlohmann_json
     PkgConfig::CURL PkgConfig::NGHTTP2)
 target_link_libraries(spider_core PUBLIC ZLIB::ZLIB)
@@ -48,6 +75,7 @@ add_executable(smithproxy-spider
     src/websocket_hub.cpp
 )
 target_include_directories(smithproxy-spider PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
     src
     external/lmhpp/include
 )
@@ -56,6 +84,153 @@ target_compile_options(smithproxy-spider PRIVATE -Wall -Wextra -Wpedantic -Wconv
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(inspection_tests tests/inspection_test.cpp)
+    target_link_libraries(inspection_tests PRIVATE spider_core)
+    target_compile_options(inspection_tests PRIVATE -UNDEBUG)
+    add_test(NAME inspection_tests COMMAND inspection_tests)
+    add_test(NAME inspection_api_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_api_test.py)
+    add_test(NAME inspection_cookbook_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_cookbook_test.py)
+    set_tests_properties(inspection_cookbook_tests PROPERTIES TIMEOUT 45)
+    option(SPIDER_TEST_TRANSLATE_POC "Enable isolated python-hpack translate experiment" OFF)
+    if(SPIDER_TEST_TRANSLATE_POC)
+        execute_process(COMMAND ${Python3_EXECUTABLE} -c "import hpack"
+                        RESULT_VARIABLE HPACK_IMPORT_RESULT)
+        if(NOT HPACK_IMPORT_RESULT EQUAL 0)
+            message(FATAL_ERROR "Translate POC tests require python-hpack; production does not")
+        endif()
+        add_test(NAME inspection_translate_poc_tests
+                 COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_poc_test.py)
+        set_tests_properties(inspection_translate_poc_tests PROPERTIES TIMEOUT 30 LABELS "experimental")
+        add_executable(inspection_translate_live_tests tests/inspection_translate_live_test.cpp)
+        target_link_libraries(inspection_translate_live_tests PRIVATE spider_core)
+        target_compile_options(inspection_translate_live_tests PRIVATE -UNDEBUG)
+        add_test(NAME inspection_translate_live_tests COMMAND inspection_translate_live_tests)
+        set_tests_properties(inspection_translate_live_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_translate_worker_tests
+                 COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_worker_test.py)
+        set_tests_properties(inspection_translate_worker_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_translate_hold_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_hold_test.py)
+        set_tests_properties(inspection_translate_hold_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_translate_settings_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_settings_test.py)
+        set_tests_properties(inspection_translate_settings_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_translate_data_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_data_test.py)
+        set_tests_properties(inspection_translate_data_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_translate_push_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_push_test.py)
+        set_tests_properties(inspection_translate_push_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        set(SPIDER_E2E_SMITHPROXY_SOURCE "" CACHE PATH "Smithproxy source for optional real translate E2E")
+        set(SPIDER_E2E_SMITHPROXY_BINARY "" CACHE FILEPATH "Built Smithproxy with webhook control/sequence support")
+        if(SPIDER_E2E_SMITHPROXY_SOURCE AND SPIDER_E2E_SMITHPROXY_BINARY)
+            foreach(failure exception missing-translate)
+                add_test(NAME inspection_translate_e2e_${failure}
+                    COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                        --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                        --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                        --spider $<TARGET_FILE:smithproxy-spider> --failure ${failure})
+                set_tests_properties(inspection_translate_e2e_${failure}
+                    PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+            endforeach()
+            add_test(NAME inspection_translate_e2e_fragmented
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                    --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                    --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                    --spider $<TARGET_FILE:smithproxy-spider> --fragmented)
+            set_tests_properties(inspection_translate_e2e_fragmented
+                PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+            add_test(NAME inspection_translate_e2e_settings
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                    --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                    --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                    --spider $<TARGET_FILE:smithproxy-spider> --fragmented --settings)
+            set_tests_properties(inspection_translate_e2e_settings
+                PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+            add_test(NAME inspection_translate_e2e_policy
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                    --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                    --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                    --spider $<TARGET_FILE:smithproxy-spider> --fragmented --policy)
+            set_tests_properties(inspection_translate_e2e_policy
+                PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+            add_test(NAME inspection_translate_e2e_data
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                    --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                    --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                    --spider $<TARGET_FILE:smithproxy-spider> --fragmented --data)
+            set_tests_properties(inspection_translate_e2e_data
+                PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+            add_test(NAME inspection_translate_e2e_expert
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                    --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                    --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                    --spider $<TARGET_FILE:smithproxy-spider> --fragmented --data --settings --safety expert)
+            set_tests_properties(inspection_translate_e2e_expert
+                PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+        endif()
+    endif()
+    add_test(NAME inspection_parts_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_parts_test.py)
+    foreach(safety easy expert)
+        add_test(NAME inspection_safety_${safety}_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_safety_test.py ${safety})
+        set_tests_properties(inspection_safety_${safety}_tests PROPERTIES TIMEOUT 45)
+    endforeach()
+    add_test(NAME inspection_worker_bootstrap_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_bootstrap_test.py)
+    add_test(NAME inspection_digest_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_digest_test.py)
+    add_test(NAME inspection_h2_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_test.py)
+    add_test(NAME inspection_hold_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_hold_test.py)
+    add_test(NAME inspection_h1_corpus_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h1_corpus_test.py)
+    add_test(NAME inspection_h2_corpus_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_corpus_test.py)
+    set_tests_properties(inspection_h1_corpus_tests inspection_h2_corpus_tests
+                        PROPERTIES TIMEOUT 30)
+    add_executable(inspection_hold_live_tests tests/inspection_hold_live_test.cpp)
+    target_link_libraries(inspection_hold_live_tests PRIVATE spider_core)
+    target_compile_options(inspection_hold_live_tests PRIVATE -UNDEBUG)
+    add_test(NAME inspection_hold_live_tests COMMAND inspection_hold_live_tests)
+    set_tests_properties(inspection_hold_live_tests PROPERTIES TIMEOUT 30)
+    add_test(NAME inspection_language_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_language_test.py)
+    add_test(NAME inspection_setup_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_setup_test.py)
+    add_test(NAME inspection_storage_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_storage_test.py)
+    add_test(NAME inspection_sandbox_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_sandbox_test.py)
+    set_tests_properties(inspection_sandbox_tests PROPERTIES TIMEOUT 45)
+    add_test(NAME frontend_server_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/frontend_server_test.py)
+    add_test(NAME webhook_benchmark_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/webhook_benchmark_test.py)
+    set_tests_properties(webhook_benchmark_tests PROPERTIES TIMEOUT 15)
+    add_executable(inspection_instances_tests tests/inspection_instances_test.cpp)
+    target_link_libraries(inspection_instances_tests PRIVATE spider_core)
+    target_compile_options(inspection_instances_tests PRIVATE -UNDEBUG)
+    add_test(NAME inspection_instances_tests COMMAND inspection_instances_tests)
+    add_executable(inspection_pool_tests tests/inspection_pool_test.cpp)
+    target_link_libraries(inspection_pool_tests PRIVATE spider_core)
+    target_compile_options(inspection_pool_tests PRIVATE -UNDEBUG)
+    add_test(NAME inspection_pool_tests COMMAND inspection_pool_tests)
+    set_tests_properties(inspection_pool_tests PROPERTIES TIMEOUT 45)
+    add_executable(heavy_traffic_tests tests/heavy_traffic_test.cpp)
+    target_link_libraries(heavy_traffic_tests PRIVATE spider_core)
+    target_compile_options(heavy_traffic_tests PRIVATE -UNDEBUG)
+    add_test(NAME heavy_traffic_tests COMMAND heavy_traffic_tests)
+    add_executable(capture_library_tests tests/capture_library_test.cpp)
+    target_link_libraries(capture_library_tests PRIVATE spider_core)
+    target_compile_options(capture_library_tests PRIVATE -UNDEBUG)
+    add_test(NAME capture_library_tests COMMAND capture_library_tests)
+    set_tests_properties(inspection_instances_tests PROPERTIES TIMEOUT 45)
+    set_tests_properties(inspection_tests PROPERTIES TIMEOUT 15)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(spider_tests tests/session_store_test.cpp)
     target_link_libraries(spider_tests PRIVATE spider_core)

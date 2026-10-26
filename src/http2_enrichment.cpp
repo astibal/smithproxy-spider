@@ -154,6 +154,9 @@ struct Direction {
     Inflater inflater;
     std::array<std::uint8_t, frame_header_size> header{};
     std::size_t header_bytes{};
+    // Callback-local anchors, never reused across content envelopes.
+    std::optional<std::size_t> frame_offset;
+    std::optional<std::size_t> header_offset;
     std::uint32_t frame_remaining{};
     std::uint8_t frame_type{};
     std::uint8_t frame_flags{};
@@ -171,6 +174,7 @@ struct Direction {
     bool context_complete{true};
 
     void reset_frame() {
+        frame_offset.reset();
         header_bytes = 0;
         frame_remaining = 0;
         frame_type = 0;
@@ -182,6 +186,7 @@ struct Direction {
 
     void lose_context() {
         reset_frame();
+        header_offset.reset();
         header_block.clear();
         header_stream = 0;
         continuation_stream = 0;
@@ -259,6 +264,8 @@ public:
         auto& session = sessions_[key];
         const auto side = direction_index(event);
         auto& direction = session.directions[side];
+        direction.frame_offset.reset();
+        direction.header_offset.reset();
         if (!selected) {
             // We cannot reconstruct an HPACK dynamic table or peer SETTINGS
             // later.  Once an H2 callback is skipped, neither direction may
@@ -313,6 +320,8 @@ private:
                  std::string_view bytes, std::vector<SxbnEnvelope>& output) {
         auto& direction = session.directions[side];
         if (annotation.kind == "h2.frame.header") {
+            if (direction.header_bytes == 0)
+                direction.frame_offset = annotation.start;
             for (const auto character : bytes) {
                 if (direction.header_bytes == frame_header_size) {
                     direction.lose_context();
@@ -424,6 +433,7 @@ private:
             return;
         }
         direction.header_block.assign(*fragment);
+        direction.header_offset = direction.frame_offset;
         direction.header_stream = direction.stream_id;
         direction.continuation_stream = direction.stream_id;
         direction.parent_stream = 0;
@@ -449,6 +459,7 @@ private:
             return;
         }
         direction.header_block.assign(fragment->bytes);
+        direction.header_offset = direction.frame_offset;
         direction.header_stream = fragment->promised_stream;
         direction.continuation_stream = direction.stream_id;
         direction.parent_stream = direction.stream_id;
@@ -494,6 +505,8 @@ private:
         };
         if (direction.parent_stream != 0)
             source["parent_stream_id"] = direction.parent_stream;
+        if (direction.header_offset)
+            source["payload_offset"] = *direction.header_offset;
         output.push_back({{
             {"type", "enrichment"},
             {"source", std::move(source)},

@@ -18,6 +18,8 @@ public:
                                                     std::string_view payload);
     void observe(const nlohmann::json& event);
     [[nodiscard]] nlohmann::json diagnostics() const;
+    // Isolated replay: no live decoder, decisions, scripts or collection writes.
+    [[nodiscard]] static std::string replay(const std::vector<SxbnEnvelope>& records);
 
 private:
     mutable std::atomic_uint64_t content_seen_{};

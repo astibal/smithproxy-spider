@@ -52,5 +52,13 @@
     return envelopes;
   }
 
-  return {decode};
+  function encode(metadata, payload = new Uint8Array()) {
+    const encoder = new TextEncoder();
+    const json = encoder.encode(JSON.stringify(metadata));
+    const prefix = encoder.encode(`${magic}${json.length.toString(16).padStart(8, '0')}:${payload.length.toString(16).padStart(8, '0')}`);
+    const bytes = new Uint8Array(prefix.length + json.length + payload.length);
+    bytes.set(prefix); bytes.set(json, prefix.length); bytes.set(payload, prefix.length + json.length);
+    return bytes;
+  }
+  return {decode, encode};
 }));

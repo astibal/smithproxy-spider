@@ -28,6 +28,8 @@ struct Session {
     nlohmann::json last_event;
     std::deque<nlohmann::json> events;
     std::unordered_set<std::string> sift_classifications;
+    std::unordered_set<std::string> lored_classifications;
+    std::string lored_status;
 };
 
 class SessionStore {

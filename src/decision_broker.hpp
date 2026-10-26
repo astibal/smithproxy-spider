@@ -2,6 +2,7 @@
 
 #include "session_filter.hpp"
 #include "webhook.hpp"
+#include "heavy_traffic.hpp"
 
 #include <chrono>
 #include <condition_variable>
@@ -20,6 +21,7 @@ namespace spider {
 
 class DecisionBroker {
 public:
+    HeavyTraffic heavy_traffic;
     struct Ticket;
 
     explicit DecisionBroker(std::chrono::milliseconds timeout = std::chrono::seconds(10));
@@ -72,6 +74,7 @@ private:
     std::unordered_map<std::string, std::shared_ptr<Ticket>> pending_;
     std::unordered_set<std::string> accepted_sessions_;
     std::unordered_map<std::string, std::unordered_set<std::string>> session_classifications_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> hostnames_;
     std::vector<AutoAcceptRule> auto_accept_rules_;
     std::vector<TrafficRule> traffic_rules_;
 };

@@ -265,6 +265,7 @@ int main() {
     assert(split_output.size() == 1);
     assert(split_output[0].metadata["operation"] == "hpack.decode");
     assert(split_output[0].metadata["source"]["stream_id"] == 1);
+    assert(!split_output[0].metadata["source"].contains("payload_offset"));
     assert(split_output[0].metadata["headers"][0]["name"] == ":method");
     assert(split_output[0].metadata["headers"][1]["value"] == "/video");
     assert(split_output[0].metadata["headers"][2]["value"] == "dynamic-value");
@@ -323,7 +324,29 @@ int main() {
     assert(continuation_output.size() == 1);
     assert(continuation_output[0].metadata["source"]["stream_id"] == 3);
     assert(continuation_output[0].metadata["source"]["spans_previous_envelopes"] == true);
+    assert(!continuation_output[0].metadata["source"].contains("payload_offset"));
     assert(continuation_output[0].metadata["headers"][1]["value"] == "/again");
+    // Replay rebuilds HPACK history independently of the live engine and input rule mode.
+    auto replay_first = h2_event("replay", "L", complete_h2_annotations(first_headers.size(), "h2.headers"));
+    replay_first["traffic_rule"] = {{"mode", "pass"}};
+    std::vector<spider::SxbnEnvelope> replay_records{
+        {{{"event", replay_first}, {"context_complete", true}}, first_headers},
+        {{{"event", h2_event("replay", "L", complete_h2_annotations(headers_frame.size(), "h2.headers"))},
+          {"context_complete", true}}, headers_frame},
+        {{{"event", h2_event("replay", "L", complete_h2_annotations(continuation_frame.size(), "h2.continuation"))},
+          {"context_complete", true}}, continuation_frame}};
+    std::vector<spider::SxbnEnvelope> replay_output;
+    std::string replay_error;
+    assert(spider::decode_sxbn_chain(spider::EnrichmentEngine::replay(replay_records), replay_output, replay_error));
+    assert(replay_output.size() == 3);
+    assert(replay_output[1].metadata["headers"][1]["value"] == "/again");
+    assert(replay_output[1].metadata["replay_index"] == 2);
+    assert(replay_records[0].metadata["event"]["traffic_rule"]["mode"] == "pass");
+    replay_records[0].metadata["context_complete"] = false;
+    replay_output.clear();
+    assert(spider::decode_sxbn_chain(spider::EnrichmentEngine::replay(replay_records), replay_output, replay_error));
+    assert(replay_output.size() == 1 && replay_output[0].metadata["outputs"] == 0);
+    assert(replay_output[0].metadata["incomplete_sessions"].size() == 1);
 
     HpackEncoder padded_hpack;
     const auto padded_block = padded_hpack.encode({{":status", "200"},
@@ -336,8 +359,27 @@ int main() {
     const auto padded_output = enrichment.process(h2_event("h2-padded", "R",
         complete_h2_annotations(padded_frame.size(), "h2.headers")), padded_frame);
     assert(padded_output.size() == 1);
+    assert(padded_output[0].metadata["source"]["payload_offset"] == 0);
     assert(padded_output[0].metadata["headers"][0]["name"] == ":status");
     assert(padded_output[0].metadata["headers"][1]["value"] == "text/plain");
+
+    // Same-callback CONTINUATION keeps the first HEADERS anchor, not the last
+    // frame's offset. A second block on the same stream has its own anchor.
+    HpackEncoder local_encoder;
+    const auto local_block = local_encoder.encode({{":status", "200"}});
+    const auto local_first = h2_frame(1, 0, 9, local_block);
+    const auto local_last = h2_frame(9, 4, 9, "");
+    const auto local_next = h2_frame(1, 4, 9, local_encoder.encode({{"x-trailer", "yes"}}));
+    const auto local_payload = local_first + local_last + local_next;
+    auto local_annotations = complete_h2_annotations(local_first.size(), "h2.headers");
+    const auto next_offset = local_first.size() + local_last.size();
+    local_annotations.push_back({local_first.size(), next_offset, "h2.frame.header"});
+    local_annotations.push_back({next_offset, next_offset + 9, "h2.frame.header"});
+    local_annotations.push_back({next_offset + 9, local_payload.size(), "h2.headers"});
+    const auto local_output = enrichment.process(h2_event("h2-local", "R", local_annotations), local_payload);
+    assert(local_output.size() == 2);
+    assert(local_output[0].metadata["source"]["payload_offset"] == 0);
+    assert(local_output[1].metadata["source"]["payload_offset"] == next_offset);
 
     const std::string settings_payload{"\x00\x01\x00\x01\x00\x00", 6};
     const auto settings_frame = h2_frame(4, 0, 0, settings_payload);
@@ -467,6 +509,14 @@ int main() {
         });
     assert(recovered_gzip != hpack_gzip_output.end());
     assert(recovered_gzip->payload == hpack_gzip_plain);
+    std::vector<spider::SxbnEnvelope> replay_gzip;
+    assert(spider::decode_sxbn_chain(spider::EnrichmentEngine::replay({
+        {{{"event", hpack_gzip_event}, {"context_complete", true}}, response_wire}}),
+        replay_gzip, replay_error));
+    const auto replay_inflate = std::ranges::find_if(replay_gzip, [](const auto& item) {
+        return item.metadata.value("operation", "") == "gzip.inflate";
+    });
+    assert(replay_inflate != replay_gzip.end() && replay_inflate->payload == hpack_gzip_plain);
     assert(recovered_gzip->metadata["source"]["stream_id"] == 31);
     assert(recovered_gzip->metadata["provenance"]["encoding"] == "spider-hpack");
     assert(hpack_gzip_enrichment.diagnostics()["content_decoding"]
@@ -543,6 +593,11 @@ int main() {
     assert(inflated_chunked != chunked_output.end());
     assert(inflated_chunked->payload == plain_content);
     assert(inflated_chunked->metadata["finished"] == true);
+    const auto& decoded_ranges = inflated_chunked->metadata["source"]["decoded_ranges"];
+    assert(decoded_ranges.size() == 2);
+    assert(decoded_ranges[0][0] == 0);
+    assert(decoded_ranges[0][1] == decoded_ranges[1][0]);
+    assert(decoded_ranges[1][1] == plain_content.size());
 
     const auto h2_gzip_one = compress_payload("stream one", 16 + MAX_WBITS);
     const auto h2_gzip_two = compress_payload("stream two", 16 + MAX_WBITS);
@@ -691,9 +746,14 @@ int main() {
 
     assert(spider::process_webhook(store, decisions,
         {{"action", "connection-info"}, {"id", "42"},
-         {"details", {{"info", {{"classification", {{"sift", {
-             "protocol.http2", "protocol.http2.prior-knowledge"}}}}}}}}}).status == 200);
+         {"details", {{"info", {{"classification", {
+             {"sift", {"protocol.http2", "protocol.http2.prior-knowledge"}},
+             {"lored", {"service.youtube", "infra.google"}},
+             {"lored_status", "matched"}
+         }}}}}}}).status == 200);
     assert(store.snapshot()["sessions"][0]["classification"]["sift"].size() == 2);
+    assert(store.snapshot()["sessions"][0]["classification"]["lored"].size() == 2);
+    assert(store.snapshot()["sessions"][0]["classification"]["lored_status"] == "matched");
     assert(spider::process_webhook(store, decisions, {{"action", "connection-stop"}, {"id", "42"}}).status == 200);
     assert(store.snapshot()["sessions"].empty());
     assert(store.session_history()["sessions"].size() == 1);
@@ -702,6 +762,7 @@ int main() {
     assert(detail.has_value());
     assert((*detail)["events"].size() == 3);
     assert((*detail)["classification"]["sift"][0] == "protocol.http2");
+    assert((*detail)["classification"]["lored"][0] == "infra.google");
     assert((*detail)["ended_at_ms"].get<std::int64_t>() > 0);
     assert(store.events_after(0)["events"].size() == 2);
     assert(store.diagnostics()["event_history"]["evicted"] == 1);

@@ -101,6 +101,7 @@ cmake --build "$SIFT_BUILD_DIR" -j"$(nproc)" --target siftd
     >"$STATE_DIR/sift.log" 2>&1 &
 echo $! >"$STATE_DIR/sift.pid"
 
+SPIDER_COLLECTION_DIR="${SPIDER_COLLECTION_DIR:-$STATE_DIR/collections}" \
 SPIDER_SMITHPROXY_KEY="$SMITHPROXY_API_KEY" SPIDER_TOKEN="$SPIDER_TOKEN" \
     "$BUILD_DIR/smithproxy-spider" --bind 0.0.0.0 --port "$SPIDER_PORT" \
     --smithproxy-url "$SMITHPROXY_API_URL" --callback-url "$SMITHPROXY_CALLBACK_URL" \
@@ -110,7 +111,7 @@ echo $! >"$STATE_DIR/spider.pid"
 mkdir -p "$STATE_DIR/frontend"
 cp -a "$ROOT/frontend/." "$STATE_DIR/frontend/"
 cp "$SMITHPROXY_CA_CERT" "$STATE_DIR/frontend/test-ca.pem"
-python3 -m http.server "$UI_PORT" --bind 0.0.0.0 --directory "$STATE_DIR/frontend" \
+python3 "$ROOT/tools/serve-frontend.py" "$UI_PORT" --bind 0.0.0.0 --directory "$STATE_DIR/frontend" \
     >"$STATE_DIR/frontend.log" 2>&1 &
 echo $! >"$STATE_DIR/frontend.pid"
 

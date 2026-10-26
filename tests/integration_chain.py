@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import urllib.request
 import urllib.error
 from http.server import ThreadingHTTPServer
@@ -81,12 +82,12 @@ def get_json(url, token=None):
     with urllib.request.urlopen(request, timeout=1) as response:
         return json.load(response)
 
-def post_json(url, body, token=None):
+def post_json(url, body, token=None, *, timeout=2):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["X-Spider-Token"] = token
     request = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
-    with urllib.request.urlopen(request, timeout=2) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.status, json.load(response)
 
 def post_bytes(url, body):
@@ -113,6 +114,8 @@ def main():
     probe.server_close()
     env = os.environ.copy()
     env["SPIDER_TOKEN"] = "frontend-key"
+    collection_directory = tempfile.TemporaryDirectory(prefix="spider-chain-collections-")
+    env["SPIDER_COLLECTION_DIR"] = collection_directory.name
     process = subprocess.Popen([
         binary, "--port", str(spider_port),
         "--smithproxy-url", f"http://127.0.0.1:{api_port}",
@@ -120,6 +123,7 @@ def main():
     ], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         deadline = time.monotonic() + 10
+        scenario_started = False
         while time.monotonic() < deadline:
             try:
                 get_json(f"http://127.0.0.1:{spider_port}/api/health")
@@ -140,6 +144,7 @@ def main():
                 actions = [entry["event"].get("action") for entry in events]
                 states = [entry["event"].get("state") for entry in events]
                 if "ping" in actions and "connected" in states:
+                    scenario_started = True
                     status = get_json(f"http://127.0.0.1:{spider_port}/api/status", "frontend-key")
                     ready = get_json(f"http://127.0.0.1:{spider_port}/api/ready", "frontend-key")
                     assert status["callbacks_received"] >= 1
@@ -380,9 +385,194 @@ def main():
                         assert chain[1][0]["operation"] == "http1.parse-head"
                     finally:
                         websocket.close()
+                    inspection_url = f"http://127.0.0.1:{spider_port}/api/inspection"
+                    assert not get_json(inspection_url, 'frontend-key')['heavy_traffic']['enabled']
+                    _, heavy = post_json(inspection_url + '/heavy-traffic', {'enabled': True, 'grace_seconds': 10}, 'frontend-key')
+                    assert heavy['enabled'] and heavy['grace_seconds'] == 10
+                    try:
+                        post_json(inspection_url + '/heavy-traffic', {'grace_seconds': 4}, 'frontend-key')
+                        raise AssertionError('unsafe grace accepted')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 400
+                    post_json(inspection_url + '/heavy-traffic', {'enabled': False}, 'frontend-key')
+                    schema = get_json(inspection_url + '/schema', 'frontend-key')
+                    assert schema['version'] == '0.6'
+                    assert 'Http2' in schema['types']
+                    assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == [
+                'message', 'metadata', 'http1', 'http2', 'state', 'storage', 'instance', 'connection', 'phase']
+                    assert schema['types']['Message']['fields'][0]['type'] == 'bytes'
+                    language_request = {'script': 'h2 = api.http2\nh2.',
+                                        'language_action': 'complete', 'line': 2, 'column': 3}
+                    try:
+                        post_json(inspection_url + '/language', language_request)
+                        raise AssertionError('unauthenticated language service allowed')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 401
+                    before_analysis = get_json(inspection_url, 'frontend-key')['runs']
+                    # Backend language work has a 2.5 s budget; let it reply before
+                    # the HTTP client deadline, including scheduling overhead.
+                    _, analysis = post_json(inspection_url + '/language', language_request, 'frontend-key', timeout=5)
+                    if analysis['ok']:
+                        assert 'frames' in [item['label'] for item in analysis['items']]
+                    else:
+                        assert 'requires Jedi' in analysis['error']
+                    assert get_json(inspection_url, 'frontend-key')['runs'] == before_analysis
+                    try:
+                        post_json(inspection_url + '/run', {'script': 'return None'})
+                        raise AssertionError('unauthenticated script execution allowed')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 401
+                    sample = {'action': 'connection-content', 'id': 'headless-api',
+                              'details': {'info': {'content': 'YWJj', 'side': 'L',
+                              'session': 'tcp_10.0.0.1:10+tcp_10.0.0.2:20'}}}
+                    _, result = post_json(inspection_url + '/run',
+                        {'script': 'api.print(len(api.bytes))\nreturn api.bytes.upper()',
+                         'event': sample}, 'frontend-key')
+                    assert result['replacement'] == 'QUJD' and result['logs'] == ['3']
+                    assert get_json(inspection_url, 'frontend-key')['sandbox']['required'] is True
+                    # Exercise containment through the real authenticated HTTP API.
+                    # A request must not be able to opt out of the kernel policy.
+                    _, blocked = post_json(inspection_url + '/run', {
+                        'script': 'import socket\nsocket.socket()', 'event': sample,
+                        'sandbox': False, 'storage_directory': '/'}, 'frontend-key')
+                    assert blocked['ok'] is False and blocked['replacement'] is None
+                    assert 'PermissionError' in blocked['error']
+                    # A denied invocation must not damage the next worker.
+                    _, recovered = post_json(inspection_url + '/run', {
+                        'script': 'return api.bytes', 'event': sample}, 'frontend-key')
+                    assert recovered['ok'] is True and recovered['replacement'] == 'YWJj'
+                    before_live = get_json(inspection_url, 'frontend-key')['runs']
+                    assert before_live == before_analysis + 3
+                    post_json(inspection_url + '/rules', {'rules': [
+                        {'address': '10.0.0.1', 'mode': 'inspect'}]}, 'frontend-key')
+                    post_json(inspection_url, {'script': 'return api.bytes.upper()',
+                        'enabled': True, 'scope': 'rules'}, 'frontend-key')
+                    _, result = post_json(callback, sample)
+                    assert result['action'] == 'replace' and result['content'] == 'QUJD'
+                    state = get_json(inspection_url, 'frontend-key')
+                    assert state['enabled'] and state['runs'] == before_live + 1
+                    post_json(inspection_url, {'script': 'return api.bytes.upper()',
+                        'enabled': False, 'scope': 'rules'}, 'frontend-key')
+                    assert post_json(callback, sample)[1]['action'] == 'unchanged'
+                    write_wire = b'POST /old HTTP/1.1\r\nHost: example.test\r\nContent-Length: 3\r\n\r\nabc'
+                    write_event = {'action': 'connection-content', 'id': 'write-api', 'details': {'info': {
+                        'content': base64.b64encode(write_wire).decode(), 'side': 'L'}}}
+                    write_script = 'draft = api.message.snapshot()\ndraft.http1.body = b"longer"\nreturn draft.commit()'
+                    _, written = post_json(inspection_url + '/run', {'script': write_script, 'event': write_event}, 'frontend-key')
+                    assert written['ok'] and base64.b64decode(written['replacement']) == write_wire.replace(b'Length: 3', b'Length: 6')[:-3] + b'longer'
+                    catch_script = 'draft = api.message.snapshot()\ndraft.http1.target = "bad target"\ntry:\n    return draft.commit()\nexcept CommitException:\n    return None'
+                    _, caught = post_json(inspection_url + '/run', {'script': catch_script, 'event': write_event}, 'frontend-key')
+                    assert caught['ok'] and caught['replacement'] is None
+                    # Real webhook -> input HPACK enrichment -> sandboxed worker
+                    # -> replacement, independently decoded by libnghttp2.
+                    from inspection_h2_test import frame, unpack, Oracle
+                    h2_wire = frame(bytes.fromhex('828684418cf1e3c2e5f23a6ba0ab90f4ff'), 1, 5)
+                    h2_event = json.loads(json.dumps(sample))
+                    h2_event['id'] = 'h2-live-rewrite'
+                    h2_event['details']['info'].update({
+                        'content': base64.b64encode(h2_wire).decode(),
+                        'content_annotations': [[0, 9, 'h2.frame.header'], [9, len(h2_wire), 'h2.headers']]})
+                    h2_script = ('for part in api.message.parts:\n'
+                        '    if part.headers is not None:\n'
+                        '        part.headers.set_header(b":authority", b"rewrite.example")\n'
+                        'return api.message.commit()')
+                    post_json(inspection_url, {'script': h2_script, 'enabled': True, 'scope': 'rules'}, 'frontend-key')
+                    _, rewritten = post_json(callback, h2_event)
+                    assert rewritten['action'] == 'replace', rewritten
+                    h2_fields = Oracle().decode(unpack(base64.b64decode(rewritten['content']))[0][3])
+                    assert (b':authority', b'rewrite.example') in h2_fields
+                    post_json(inspection_url, {'script': h2_script, 'enabled': False, 'scope': 'rules'}, 'frontend-key')
+                    assert post_json(callback, h2_event)[1]['action'] == 'unchanged'
+
+                    _, completion = post_json(inspection_url + '/language', {
+                        'script': 'part = api.message.parts[0]\npart.',
+                        'language_action': 'complete', 'line': 2, 'column': 5}, 'frontend-key', timeout=5)
+                    if completion['ok']:
+                        assert {'headers', 'commit', 'get_bytes'} <= {item['label'] for item in completion['items']}
+                    replay_url = f"http://127.0.0.1:{spider_port}/api/enrichment/replay"
+                    raw_head = b"GET /replay HTTP/1.1\r\nHost: example.test\r\n\r\n"
+                    replay_event = {"action": "connection-content", "id": "offline-replay",
+                        "details": {"info": {"side": "L", "content_annotations": [
+                            [0, 22, "http1.start_line"], [22, len(raw_head), "http1.headers"]]}}}
+                    meta = json.dumps({"event": replay_event, "context_complete": True}).encode()
+                    wire = f"SXBN001:{len(meta):08x}:{len(raw_head):08x}".encode() + meta + raw_head
+                    for auth in (False, True):
+                        request = urllib.request.Request(replay_url, data=wire, headers={
+                            "Content-Type": "application/octet-stream",
+                            **({"X-Spider-Token": "frontend-key"} if auth else {})})
+                        try:
+                            with urllib.request.urlopen(request) as response:
+                                assert auth
+                                replay = decode_sxbn_chain(response.read())
+                                assert replay[-1][0]["type"] == "replay-summary"
+                                assert replay[0][0]["operation"] == "http1.parse-head"
+                        except urllib.error.HTTPError as error:
+                            assert not auth and error.code == 401
+                    saved_url = f"http://127.0.0.1:{spider_port}/api/inspection/saved-flows"
+                    snapshot = {"name": "Persistent investigation", "scope": {"type": "connection"},
+                        "records": [{"revision": 1, "event": sample, "enrichments": []}]}
+                    try:
+                        post_json(saved_url, snapshot)
+                        raise AssertionError("saving sessions accepted a missing token")
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 401
+                    code, saved = post_json(saved_url, snapshot, "frontend-key")
+                    assert code == 200 and saved["name"] == snapshot["name"]
+                    listing = get_json(saved_url, "frontend-key")
+                    assert listing["items"][0]["id"] == saved["id"]
+                    loaded = get_json(f"http://127.0.0.1:{spider_port}/api/inspection/saved-flow?id={saved['id']}", "frontend-key")
+                    assert loaded["records"] == snapshot["records"]
+                    assert loaded["name"] == snapshot["name"]
+                    catalog_url = inspection_url + '/library'
+                    catalog = get_json(catalog_url, 'frontend-key')
+                    key = 'flow:' + saved['id']
+                    assert any(item['key'] == key for item in catalog['items'])
+                    _, folder = post_json(catalog_url, {'revision': catalog['revision'], 'operation': 'folder', 'name': 'Integration'}, 'frontend-key')
+                    _, edited = post_json(catalog_url, {'revision': folder['revision'], 'operation': 'item', 'key': key,
+                        'name': 'Renamed capture', 'notes': 'catalog needle', 'folder': folder['folders'][0]['id']}, 'frontend-key')
+                    found = get_json(catalog_url + '?q=needle', 'frontend-key')
+                    assert found['total'] == 1 and found['items'][0]['name'] == 'Renamed capture'
+                    assert get_json(inspection_url + '/saved-flow?id=' + saved['id'], 'frontend-key')['name'] == 'Renamed capture'
+                    try:
+                        post_json(catalog_url, {'revision': catalog['revision'], 'operation': 'folder', 'name': 'Stale'}, 'frontend-key')
+                        raise AssertionError('stale catalog edit accepted')
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 400
+                    # HTTP transport proof: no held byte is included in need-more;
+                    # the final response contains one reassembled, resized message.
+                    hold_source = ('for part in api.message.parts:\n'
+                        '    if part.type == PartType.Http1.Body:\n'
+                        '        if not part.content.complete:\n'
+                        '            api.message.parts.hold_from(api.message.parts[0])\n'
+                        '            return api.message.commit()\n'
+                        '        part.set_bytes(b"rewritten body")\n'
+                        'return api.message.commit()')
+                    state = get_json(inspection_url, 'frontend-key')
+                    _, deployed = post_json(inspection_url, {'revision': state['revision'],
+                        'operation': 'deploy', 'name': 'hold HTTP proof', 'script': hold_source,
+                        'scope': 'all', 'instancing': 'flow'}, 'frontend-key')
+                    post_json(inspection_url, {'revision': deployed['revision'], 'operation': 'enable',
+                        'id': deployed['chain'][-1]['id'], 'enabled': True}, 'frontend-key')
+                    hold_head = b'POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 6\r\n\r\n'
+                    for index, fragment in enumerate((hold_head + b'a', b'bc', b'def')):
+                        hold_event = {'action': 'connection-content', 'id': 'hold-http',
+                            'details': {'info': {'side': 'L', 'content': base64.b64encode(fragment).decode()}}}
+                        if index == 0:
+                            hold_event['details']['info']['content_annotations'] = [
+                                [0, 17, 'http1.start_line'], [17, len(hold_head), 'http1.headers']]
+                        _, held_reply = post_json(callback, hold_event)
+                        if index < 2:
+                            assert held_reply == {'action': 'need-more'}, held_reply
+                        else:
+                            assert held_reply['action'] == 'replace', held_reply
+                            assert base64.b64decode(held_reply['content']) == hold_head.replace(
+                                b'Length: 6', b'Length: 14') + b'rewritten body'
                     return 0
             except OSError:
-                pass
+                # Retry only discovery. Replaying a stateful scenario masks the
+                # original error behind stale sessions from its previous run.
+                if scenario_started:
+                    raise
             time.sleep(0.1)
         output = process.stdout.read() if process.poll() is not None else ""
         raise RuntimeError(f"chain did not reach callback ping; spider output: {output}")
@@ -394,6 +584,7 @@ def main():
             process.kill()
         api.shutdown()
         api.server_close()
+        collection_directory.cleanup()
 
 if __name__ == "__main__":
     raise SystemExit(main())
