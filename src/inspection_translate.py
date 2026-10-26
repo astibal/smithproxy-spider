@@ -1,7 +1,8 @@
-"""Explicit, bounded HPACK translation. Embedded before entering the sandbox.
+"""Explicit, bounded HPACK and flow-control translation.
 
 Only data is checkpointed. No pickle, Python globals or worker affinity.
 SETTINGS are synchronized by ordered ACKs. Incomplete units require explicit hold.
+Embedded before entering the sandbox; every output needs a script's translate call.
 """
 try:
     import hpack as _translate_hpack
@@ -10,6 +11,218 @@ except ImportError:
 
 
 _H2_PREFACE = b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n'
+
+
+class _TranslationFlow:
+    """Two independent credit ledgers, advanced only by explicit translation.
+
+    Input credit belongs to the sender; output credit belongs to the recipient.
+    Recipient WINDOW_UPDATEs never pass through after we own flow control.
+    Consumed input is acknowledged only after this direction's queue drains.
+    The checkpoint contains owned bytes, never live Python references.
+    """
+    MAX_WINDOW = 0x7fffffff
+    MAX_PENDING = 384 * 1024
+    MAX_STREAMS = 1024
+
+    @staticmethod
+    def initial():
+        def direction():
+            return {'output': 65535, 'initial': 65535,
+                    'frame': 16384, 'streams': {}, 'queue': [], 'credit': 0}
+        return {'version': 1, 'L': direction(), 'R': direction()}
+
+    def __init__(self, state, side):
+        import base64
+        self.state = state
+        self.side = side
+        self.peer = 'R' if side == 'L' else 'L'
+        self.output = {'L': bytearray(), 'R': bytearray()}
+        self.queues = {key: [base64.b64decode(value, validate=True)
+                             for value in state[key]['queue']] for key in ('L', 'R')}
+
+    def stream(self, side, stream):
+        streams = self.state[side]['streams']
+        key = str(stream)
+
+        if key not in streams:
+            if not stream or len(streams) >= self.MAX_STREAMS:
+                raise CommitException('Translate flow stream quota exceeded or stream zero')
+            initial = self.state[side]['initial']
+            streams[key] = {'output': initial, 'credit': 0, 'closed': False,
+                            'content_length': False}
+
+        return streams[key]
+
+    def settings(self, part):
+        if part.flags & 1:
+            return
+
+        # A received SETTINGS constrains what we may send back to its sender.
+        direction = self.state[self.peer]
+        data = bytes(part._data)
+
+        for offset in range(0, len(data), 6):
+            key = int.from_bytes(data[offset:offset + 2], 'big')
+            value = int.from_bytes(data[offset + 2:offset + 6], 'big')
+
+            if key == 4:
+                delta = value - direction['initial']
+                for stream in direction['streams'].values():
+                    if stream['output'] + delta > self.MAX_WINDOW:
+                        raise CommitException('Translate stream window overflow after SETTINGS')
+                    stream['output'] += delta
+                direction['initial'] = value
+            elif key == 5:
+                direction['frame'] = value
+
+    def update(self, part):
+        data = bytes(part._data)
+
+        if len(data) != 4:
+            raise CommitException('WINDOW_UPDATE requires four bytes')
+
+        increment = int.from_bytes(data, 'big') & self.MAX_WINDOW
+        direction = self.state[self.peer]
+        target = self.stream(self.peer, part.stream_id) if part.stream_id else direction
+
+        if not increment:
+            raise CommitException('WINDOW_UPDATE increment must be nonzero')
+        if target.get('closed'):
+            return  # Late credit for our already emitted END_STREAM is harmless.
+        if target['output'] + increment > self.MAX_WINDOW:
+            raise CommitException('Translate flow-control window overflow')
+
+        target['output'] += increment
+
+    def reset(self, part):
+        if not part.stream_id or len(part._data) != 4:
+            raise CommitException('Invalid RST_STREAM')
+
+        for side in ('L', 'R'):
+            remaining = []
+            for wire in self.queues[side]:
+                stream = int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
+                if stream != part.stream_id:
+                    remaining.append(wire)
+                elif wire[3] != 0:
+                    # Dropping a queued HPACK block would desynchronize tables.
+                    raise CommitException('RST_STREAM conflicts with queued header state')
+            self.queues[side] = remaining
+            self.stream(side, part.stream_id)['closed'] = True
+
+    def accept(self, part, wire):
+        side = self.side
+        kind = part._initial[0]
+
+        if kind == 8:
+            self.update(part)
+            return
+        if kind == 4:
+            self.settings(part)
+        if kind == 3:
+            self.reset(part)
+        if kind == 7 and any(self.queues.values()):
+            raise CommitException('GOAWAY with pending translated output requires connection teardown')
+
+        if kind == 0:
+            stream = self.stream(side, part.stream_id)
+            if stream['closed']:
+                raise CommitException('DATA after translated stream termination')
+            # Include padding and its length byte, but not the frame header.
+            amount = int.from_bytes(bytes(part._wire)[:3], 'big')
+            self.state[side]['credit'] += amount
+            stream['credit'] += amount
+
+        # Control frames must not wait behind DATA whose credit they enable.
+        # Header blocks stay indivisible; queued output never ends mid-block.
+        # ACK is a synchronization boundary for HPACK and frame-size limits.
+        # It must remain behind previously encoded header blocks.
+        if kind in (3, 6, 7, 8) or (kind == 4 and not part.flags & 1):
+            self.output[side].extend(wire)
+        elif wire:
+            self.queues[side].append(wire)
+
+        self.drain(side)
+
+    def drain(self, side):
+        queue = self.queues[side]
+        direction = self.state[side]
+
+        while queue:
+            wire = queue[0]
+            if wire.startswith(_H2_PREFACE) or wire[3] != 0:
+                self.output[side].extend(queue.pop(0))
+                if not wire.startswith(_H2_PREFACE) and wire[3] == 1 and wire[4] & 1:
+                    stream_id = int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
+                    self.stream(side, stream_id)['closed'] = True
+                continue
+
+            stream_id = int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
+            stream = self.stream(side, stream_id)
+            flags = wire[4]
+            payload = wire[9:]
+            available = min(direction['output'], stream['output'], direction['frame'])
+
+            if len(payload) <= available or not payload:
+                self.output[side].extend(queue.pop(0))
+                direction['output'] -= len(payload)
+                stream['output'] -= len(payload)
+                if flags & 1:
+                    stream['closed'] = True
+                continue
+
+            # Padding has no application meaning. Remove it only when a frame
+            # needs reframing; untouched, immediately sendable DATA stays exact.
+            if flags & 8:
+                padding = payload[0]
+                payload = payload[1:len(payload) - padding]
+                flags &= ~8
+                queue[0] = self.frame(0, flags, stream_id, payload)
+                continue
+
+            if available <= 0:
+                break
+
+            self.output[side].extend(self.frame(0, flags & ~1, stream_id, payload[:available]))
+            queue[0] = self.frame(0, flags, stream_id, payload[available:])
+            direction['output'] -= available
+            stream['output'] -= available
+
+    @staticmethod
+    def frame(kind, flags, stream, data):
+        return (len(data).to_bytes(3, 'big') + bytes((kind, flags)) +
+                stream.to_bytes(4, 'big') + data)
+
+    def finish(self):
+        import base64
+        self.drain(self.side)
+        self.drain(self.peer)
+
+        for side in ('L', 'R'):
+            direction = self.state[side]
+            if self.queues[side]:
+                continue
+
+            target = 'R' if side == 'L' else 'L'
+            credits = [(0, direction)] + [(int(key), value)
+                                         for key, value in direction['streams'].items()]
+            for stream_id, entry in credits:
+                amount = entry['credit']
+                if amount and not entry.get('closed'):
+                    self.output[target].extend(self.frame(8, 0, stream_id, amount.to_bytes(4, 'big')))
+                entry['credit'] = 0
+
+        pending = sum(len(wire) for queue in self.queues.values() for wire in queue)
+        if pending > self.MAX_PENDING:
+            raise CommitException('Translate pending output exceeds 384 KiB')
+        if sum(map(len, self.output.values())) > 1024 * 1024:
+            raise CommitException('Translated directional output exceeds 1 MiB')
+
+        for side in ('L', 'R'):
+            self.state[side]['queue'] = [base64.b64encode(wire).decode() for wire in self.queues[side]]
+
+        return bytes(self.output[self.side]), bytes(self.output[self.peer])
 
 
 class Mode:
@@ -441,7 +654,7 @@ def _translate_table_load(codec, saved):
 
 
 class _Translation:
-    def __init__(self, message, checkpoint, active, control=None, side='L'):
+    def __init__(self, message, checkpoint, active, control=None, side='L', reverse_capable=False):
         if _translate_hpack is None:
             raise CommitException('H2 translate requires python-hpack')
 
@@ -451,7 +664,13 @@ class _Translation:
         self.result = None
         self.checkpoint = None
         self.control_checkpoint = None
+        self.reverse_output = b''
+        self.flow_summary = None
         self.control_before = _TranslationSettings(control, side).state
+        if control is None and reverse_capable:
+            self.control_before['flow'] = _TranslationFlow.initial()
+        if 'flow' in self.control_before and not reverse_capable:
+            raise CommitException('Translate lost content-reverse capability')
         self.settings = _TranslationSettings(control, side)
         self.decoded = {}
         self.original_fields = {}
@@ -608,19 +827,24 @@ class _Translation:
         # changes until the entire message and checkpoint have passed validation.
         encoder = copy.deepcopy(self.encoder)
         settings = _TranslationSettings(self.control_before, self.settings.side)
+        flow = (_TranslationFlow(settings.state['flow'], settings.side)
+                if 'flow' in settings.state else None)
 
         emitted = message.parts[:cut]
         body_overrides = _encoded_h2_bodies(emitted)
+        header_lengths = self._body_lengths(emitted, body_overrides, flow)
 
         for part, original in zip(emitted, self.originals):
+            start = len(output)
             if not part.complete:
                 raise CommitException('Incomplete H2 part: hold_from(part) before translate')
 
             if part._initial[0] == 0:
-                output.extend(self._translate_data(body_overrides.get(id(part), part), original))
+                output.extend(self._translate_data(body_overrides.get(id(part), part), original,
+                                                   resizing=flow is not None))
             elif part._initial[0] not in (1, 5):
                 if part.commit() != original:
-                    raise CommitException('Translate supports header edits and same-length DATA only')
+                    raise CommitException('Translate supports logical header and DATA edits only')
 
                 if part.frame_type == 4:
                     _translate_encoder_settings(encoder, settings.process(part))
@@ -633,6 +857,13 @@ class _Translation:
                     raise CommitException('Translate headers must preserve frame type, flags and stream id')
 
                 fields = self._header_fields(part)
+                if id(part) in header_lengths:
+                    fields = [(name, header_lengths[id(part)] if name == b'content-length' else value, sensitive)
+                              for name, value, sensitive in fields]
+                if flow is not None and part.frame_type == 1:
+                    if any(name in (b':method', b':status') for name, _, _ in fields):
+                        flow.stream(settings.side, part.stream_id)['content_length'] = any(
+                            name == b'content-length' for name, _, _ in fields)
                 previous_size = part.max_frame_size
 
                 try:
@@ -641,6 +872,11 @@ class _Translation:
                 finally:
                     part.max_frame_size = previous_size
 
+            if flow is not None:
+                wire = bytes(output[start:])
+                del output[start:]
+                flow.accept(part, wire)
+
             if len(output) > 1024 * 1024:
                 raise CommitException('Translated output exceeds 1 MiB')
 
@@ -648,6 +884,12 @@ class _Translation:
         # Do not emit around a held boundary: the user explicitly retained it.
         if boundary is None:
             output.extend(settings.pending_policy_frame())
+
+        reverse_output = b''
+        if flow is not None:
+            flow.output[settings.side].extend(output)
+            forward, reverse_output = flow.finish()
+            output = bytearray(forward)
 
         if len(output) > 1024 * 1024:
             raise CommitException('Translated output exceeds 1 MiB')
@@ -677,8 +919,8 @@ class _Translation:
         if len(json.dumps(checkpoint)) > 65536:
             raise CommitException('Translate checkpoint exceeds 64 KiB')
 
-        if len(json.dumps(settings.state)) > 16384:
-            raise CommitException('SETTINGS checkpoint exceeds 16 KiB')
+        if len(json.dumps(settings.state)) > 1024 * 1024:
+            raise CommitException('Translate control checkpoint exceeds 1 MiB')
 
         result = bytes(output)
 
@@ -720,14 +962,51 @@ class _Translation:
         self.result = result
         self.checkpoint = checkpoint
         self.control_checkpoint = settings.state
+        self.reverse_output = reverse_output
+        if flow is not None:
+            self.flow_summary = {
+                'pending_bytes': sum(len(wire) for queue in flow.queues.values() for wire in queue),
+                'forward_bytes': len(output), 'reverse_bytes': len(reverse_output),
+            }
         return self.result
 
-    @staticmethod
-    def _translate_data(part, original):
-        """Replace only application bytes; preserve flow-control accounting exactly.
+    def _body_lengths(self, parts, overrides, flow):
+        """Repair retained headers; never pretend to repair headers already sent."""
+        def size(part):
+            draft = overrides.get(id(part), part)
+            return len(draft._data if draft._pending is None else draft._pending)
 
-        Keep the frame header, pad-length byte and padding verbatim. Reusing the
-        generic assembler could split a frame or change its END_STREAM flag.
+        changed = {part.stream_id for part in parts if part.frame_type == 0 and
+                   size(part) != len(part._data)}
+        lengths = {}
+        local = set()
+
+        for group in _h2_content_groups(parts):
+            head = group[0]
+            if not any(part.frame_type == 0 and size(part) != len(part._data) for part in group):
+                continue
+            local.add(head.stream_id)
+            fields = self._header_fields(head)
+            if not any(name == b'content-length' for name, _, _ in fields):
+                continue
+            if not head.content.complete:
+                raise CommitException('Retain complete content before resizing a Content-Length body')
+            length = sum(size(part) for part in group if part.frame_type == 0)
+            lengths[id(head)] = str(length).encode()
+
+        if flow is not None:
+            for stream in changed - local:
+                if flow.stream(flow.side, stream)['content_length']:
+                    raise CommitException('Cannot resize body after emitting Content-Length; hold the header first')
+
+        return lengths
+
+    @staticmethod
+    def _translate_data(part, original, *, resizing=False):
+        """Keep original DATA geometry unless a negotiated resize needs reframing.
+
+        The flow ledger, not this serializer, splits by current output credit.
+        Legacy peers retain exact frame headers, padding and DATA length.
         """
         if (part.frame_type, part.flags, part.stream_id) != part._initial:
             raise CommitException('Translate DATA must preserve frame type, flags and stream id')
@@ -738,7 +1017,9 @@ class _Translation:
         data = _h2_bytes(part.get_bytes())
 
         if len(data) != len(part._data):
-            raise CommitException('Translate DATA requires the same length; flow-control translation is not supported yet')
+            if not resizing:
+                raise CommitException('Translate DATA resizing requires content-reverse capability from connection start')
+            return _TranslationFlow.frame(0, part.flags & ~8, part.stream_id, data)
 
         start = 9 + len(part._prefix)
         end = start + len(data)
@@ -761,7 +1042,9 @@ def _prepare_translation(message, request):
         elif ((message.bytes and _H2_PREFACE.startswith(message.bytes[:len(_H2_PREFACE)])) or
               any(p.is_a(PartType.Http2.Part) for p in message.parts)):
             _resume_translation(message, None, settings)
-        transaction = _Translation(message, request.get('translate_state'), active, control, side)
+        info = request.get('event', {}).get('details', {}).get('info', {})
+        reverse_capable = info.get('webhook_control', {}).get('content-reverse') is True
+        transaction = _Translation(message, request.get('translate_state'), active, control, side, reverse_capable)
         object.__setattr__(message, '_translation', transaction)
     except Exception as error:
         if active:

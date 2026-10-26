@@ -128,6 +128,7 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             }
             event["inspection"] = script_result;
             event["inspection"].erase("replacement");
+            event["inspection"].erase("replacement_reverse");
             event["decision"] = {{"state", "backend-inspected"}, {"mode", "inspect"}};
         }
     }
@@ -148,8 +149,11 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             if (script_result.value("need_more", false))
                 return {200, {{"action", "need-more"}, {"control", {{"mode", "strict"}}}}};
 
-            return {200, {{"action", "replace"}, {"content", script_result["replacement"]},
-                          {"control", {{"mode", "strict"}}}}};
+            nlohmann::json reply = {{"action", "replace"}, {"content", script_result["replacement"]},
+                                    {"control", {{"mode", "strict"}}}};
+            if (script_result.contains("replacement_reverse"))
+                reply["content-reverse"] = script_result["replacement_reverse"];
+            return {200, std::move(reply)};
         }
         if (script_result.value("ok", false) && script_result.value("need_more", false))
             return {200, {{"action", "need-more"}}};

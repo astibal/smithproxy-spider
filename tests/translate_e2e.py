@@ -10,6 +10,7 @@ import contextlib
 import os
 from pathlib import Path
 import socket
+import select
 import subprocess
 import sys
 import tempfile
@@ -99,6 +100,61 @@ def stop(process):
             process.wait()
 
 
+def windows_exchange(client, origin):
+    """Real peers enforce flow control; only their WINDOW_UPDATEs release queues."""
+    from h2.config import H2Configuration
+    from h2.connection import H2Connection
+    from h2.events import DataReceived, StreamEnded
+
+    sockets = {'L': client, 'R': origin}
+    peers = {side: H2Connection(H2Configuration(client_side=side == 'L')) for side in sockets}
+    received = {'L': {}, 'R': {}}
+    ended = set()
+
+    def send(side):
+        data = peers[side].data_to_send()
+        if data:
+            sockets[side].sendall(data)
+
+    def progress(done):
+        deadline = time.monotonic() + 10
+        while not done():
+            if time.monotonic() > deadline:
+                raise AssertionError('Window translation stalled without new source DATA')
+            ready, _, _ = select.select(list(sockets.values()), [], [], .1)
+            for sock in ready:
+                side = next(key for key, value in sockets.items() if value is sock)
+                data = sock.recv(65536)
+                assert data, 'Unexpected EOF during window translation'
+                for event in peers[side].receive_data(data):
+                    if isinstance(event, DataReceived):
+                        received[side].setdefault(event.stream_id, bytearray()).extend(event.data)
+                        peers[side].acknowledge_received_data(event.flow_controlled_length, event.stream_id)
+                    if isinstance(event, StreamEnded):
+                        ended.add((side, event.stream_id))
+                send(side)
+
+    for side, peer in peers.items():
+        peer.initiate_connection()
+        send(side)
+
+    for stream, value, expected in ((1, b'secret', b'z' * 160000), (3, b'delete', b''),
+                                     (5, b'unchanged', b'unchanged')):
+        for side, target in (('L', 'R'), ('R', 'L')):
+            fields = ([(b':method', b'POST'), (b':scheme', b'http'),
+                       (b':authority', b'lab.test'), (b':path', b'/')]
+                      if side == 'L' else [(b':status', b'200')])
+            fields.append((b'content-length', str(len(value)).encode()))
+            peers[side].send_headers(stream, fields)
+            peers[side].send_data(stream, value, end_stream=True)
+            send(side)
+            progress(lambda: (target, stream) in ended)
+            assert bytes(received[target].get(stream, b'')) == expected
+
+    print('PASS: real H2 peers, both directions, expansion beyond windows, shrink-to-zero, '
+          'Content-Length repair, subsequent stream and reverse-only progress')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--smithproxy-source', type=Path, required=True)
@@ -109,6 +165,7 @@ def main():
     parser.add_argument('--settings', action='store_true', help='Exercise acknowledged table eviction and growth in both directions')
     parser.add_argument('--policy', action='store_true', help='Enforce zero capacity after handshake, including synthetic ACK consumption')
     parser.add_argument('--data', action='store_true', help='Rewrite padded same-length DATA in both directions')
+    parser.add_argument('--windows', action='store_true', help='Real H2 peers with length-changing bodies and reverse credit')
     parser.add_argument('--safety', choices=('easy', 'expert'), default='easy')
     args = parser.parse_args()
     source = args.smithproxy_source.resolve()
@@ -148,6 +205,17 @@ def main():
                       "    return\n" + SCRIPT)
             script = script.replace('return api.message.translate()',
                                     f'return api.message.translate(safety=Safety.{args.safety.title()})')
+            if args.windows:
+                script = ("if api.phase == 'setup':\n"
+                          "    api.connection.request_rewrite()\n    return\n"
+                          "assert api.info['webhook_control']['content-reverse']\n"
+                          "for part in api.message.parts:\n"
+                          "    if not part.complete or (part.type == PartType.Http2.Header and part.content.complete is False):\n"
+                          "        api.message.parts.hold_from(part)\n        break\n"
+                          "    if part.type == PartType.Http2.Data:\n"
+                          "        if part.get_bytes() == b'secret':\n            part.set_bytes(b'z' * 160000)\n"
+                          "        elif part.get_bytes() == b'delete':\n            part.set_bytes(b'')\n"
+                          f"return api.message.translate(safety=Safety.{args.safety.title()})\n")
             if args.data:
                 script = script.replace('    if part.type != PartType.Http2.Header:',
                     '    if part.type == PartType.Http2.Data:\n'
@@ -189,6 +257,16 @@ def main():
                 with socks_connect(proxy_port, listener.getsockname()[1], ADDRESSES['ipv4-ip']) as client:
                     origin, _ = listener.accept()
                     with origin:
+                        if args.windows:
+                            windows_exchange(client, origin)
+                            status = get_json(inspection, 'frontend-key')
+                            state = status['chain'][0]
+                            assert state['errors'] == 0, state
+                            assert state['last_result']['flow_control']['pending_bytes'] == 0, state
+                            assert 'replacement_reverse' not in state['last_result']
+                            assert all('replacement_reverse' not in item and 'translate_control' not in item
+                                       for item in status['recent'])
+                            return
                         preface = b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n'
                         settings = frame(b'', 4, 0, 0)
                         client.sendall(preface + settings)
@@ -296,6 +374,8 @@ def main():
                                 if args.data:
                                     sender.sendall(frame(b'\x02secretpp', 0, 9, stream))
                                     assert b''.join(receive_frame(receiver)) == frame(b'\x02******pp', 0, 9, stream)
+                                    # END_STREAM needs connection credit only; no stream grant.
+                                    assert b''.join(receive_frame(sender)) == frame((9).to_bytes(4, 'big'), 8, 0, 0)
 
                         # Control-only callbacks must execute too, not just HEADERS.
                         ping = frame(b'12345678', 6, 0, 0)

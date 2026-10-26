@@ -564,10 +564,10 @@ stay in place. Commit splits oversized DATA and repairs known Content-Length.
 on the prepared draft. A body with no DATA slots accepts only an empty replacement.
 
 Easy and Expert both require complete content for this helper. Rewrite can
-resize it; Translate still allows only same-length DATA edits in either mode.
-The helper does not implement flow-control compensation or repair H2 content
-digests/trailers. Those remain the script's responsibility in the existing H2
-rewrite contract. An incomplete physical DATA frame is visible in `body.chunks`,
+resize it; Translate supports bounded resizing with negotiated content-reverse
+and retained Content-Length headers. See [flow control](H2_TRANSLATE_FLOW_CONTROL.md).
+The helper does not repair H2 content digests/trailers. Those remain the script's
+responsibility. An incomplete physical DATA frame is visible in `body.chunks`,
 but `body.get_bytes()` rejects it because padding cannot yet be safely stripped.
 
 ## 22. Lazy gzip and deflate Body content

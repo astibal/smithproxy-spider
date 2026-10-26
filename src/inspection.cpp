@@ -295,6 +295,7 @@ nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared
     if (!result.value("ok", false)) ++errors_;
     auto summary = result;
     summary.erase("replacement");
+    summary.erase("replacement_reverse");
     summary.erase("instance_state");
     summary.erase("held_parts");
     summary.erase("translate_state");
@@ -422,7 +423,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         const bool invalid_translation = !translated.is_null() && (
             !(translate_allowed || translate_active) || mode != "flow" ||
             !translated.is_object() || translated.dump().size() > 65536 ||
-            !settings.is_object() || settings.dump().size() > 16384);
+            !settings.is_object() || settings.dump().size() > 1024 * 1024);
         const bool invalid_hold = !held.is_null() && (
             !hold_allowed || mode != "flow" || !held.is_object() || held.dump().size() > 1024 * 1024);
         const bool deployment_full = !key.empty() &&
@@ -635,9 +636,11 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
                         std::chrono::system_clock::now().time_since_epoch()).count();
                     live["last_result"] = result;
                     live["last_result"].erase("replacement");
+                    live["last_result"].erase("replacement_reverse");
                 }
             }
             auto step = result; step.erase("replacement");
+            step.erase("replacement_reverse");
             step["script_id"] = item["id"]; step["version"] = item["version"];
             steps.push_back(step);
             // Fail open with the ORIGINAL payload, never a partially applied chain.

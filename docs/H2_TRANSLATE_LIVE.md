@@ -171,7 +171,8 @@ but must return translate.
 - State travels as bounded JSON checkpoints, not pickle or Python globals. The
   worker may change between callbacks. The limit is 64 KiB per direction; these
   checkpoints count toward the 4 MiB deployment limit with user state and hold.
-  The shared SETTINGS checkpoint also has a 16 KiB limit.
+  The shared SETTINGS/flow-control checkpoint has a 1 MiB limit; pending output
+  is independently bounded at 384 KiB across both directions.
 - The first successful result carries `control.mode=strict` with replacement.
   The new proxy applies control before replacement. The next callback must confirm
   strict and exactly consecutive sequence. This is capability/state checking,
@@ -191,12 +192,18 @@ but must return translate.
 
 ## SETTINGS and limit acknowledgement
 
-### Same-length DATA
+### DATA and flow control
 
-Translate permits `set_bytes()` on a complete DATA part, preserving length.
-Frame header, stream ID, all flags including END_STREAM, pad-length byte and
-padding remain exactly original. Flow-control accounting therefore remains unchanged;
-WINDOW_UPDATE is not translated.
+Translate permits `set_bytes()` on a complete DATA part. Legacy proxies require
+the original length. With negotiated content-reverse, bounded resizing is supported.
+Without directional capability, frame header, stream ID, flags and padding stay
+original and WINDOW_UPDATE passes through. With capability, credit is managed
+independently even for same-length edits; DATA is reframed only when needed.
+
+See [directional flow control](H2_TRANSLATE_FLOW_CONTROL.md) for credit accounting,
+output queues, retained Content-Length repair, examples and explicit limits.
+Easy and Expert enforce the same transport requirements. Padding may be removed
+when reframing resized or credit-blocked DATA.
 
 For known uncompressed content, this example masks a six-byte word within one
 DATA frame. It does not search across frame boundaries or decompress.
@@ -219,7 +226,9 @@ return api.message.translate()
 ```
 
 Replacing six-byte content with `part.set_bytes(b"short")` raises
-`CommitException` at translate: resizing needs further flow-control support.
+`CommitException` without content-reverse capability or when a required
+Content-Length header has already been emitted. Otherwise it uses the bounded
+directional flow-control path.
 Changing DATA stream ID, type or flags is also rejected. A failed transaction
 publishes none of the preceding edited parts. Complete edited parts may be held;
 hold incomplete parts first and edit only after completion. Same-length replacement
@@ -317,7 +326,8 @@ not through the entire proxy. Build and generated reference passed.
 
 ## What this first step does not support
 
-- DATA length, stream-ID or flag changes; user control-frame edits and Parts
+- DATA length changes without content-reverse capability; stream-ID or flag
+  changes; user control-frame edits and Parts
   insertion/removal/reordering (except the explicit SETTINGS policy above).
 - Raw HPACK and explicit index manipulation (these remain rewrite operations).
 - Taking over an existing connection, multiple active translating deployments,
@@ -325,8 +335,9 @@ not through the entire proxy. Build and generated reference passed.
 - Guaranteeing HTTP semantics of user-edited headers. HPACK state translation is
   not automatic repair of arbitrary application-protocol modifications.
 
-Known H2 preface and unchanged DATA/control frames pass byte-for-byte. Without
-limit policy, permitted SETTINGS are explicitly processed by the script and
+Known H2 preface passes byte-for-byte. Immediately sendable unchanged DATA stays
+exact; flow-control output may reframe queued DATA and consume WINDOW_UPDATE.
+Without limit policy, permitted SETTINGS are explicitly processed by the script and
 forwarded unchanged. Policy may modify SETTINGS and consume its own ACK.
 The output encoder owns indexing; `never` remains never-indexed.
 

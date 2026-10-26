@@ -285,7 +285,7 @@ class RewritePart:
             self._data = self._data.tobytes()
         return self._data
 
-    @api_method('value: bytes', 'None', 'Replace the representation, not the nine-byte frame header. H1 Body accepts plaintext and encodes gzip/deflate during commit; its physical chunks remain encoded. Rewrite supports unknown frame types; translate permits same-length DATA edits while preserving stream ID, flags and padding.',
+    @api_method('value: bytes', 'None', 'Replace the representation, not the nine-byte frame header. H1 Body accepts plaintext and encodes gzip/deflate during commit; its physical chunks remain encoded. Translate permits DATA resizing with negotiated content-reverse support; frame identity remains fixed and padding can be removed during reframing.',
                 'part.set_bytes(b"changed")', availability='Complete parts only for a changed commit.', access='mutable rewrite draft')
     def set_bytes(self, value):
         self._pending = _h2_bytes(value)
@@ -538,7 +538,7 @@ class H2Body:
 
     @api_method('value: bytes', 'None', 'Replace complete logical content. Compressed content is encoded only during commit/translate. Keep original DATA capacities except the last DATA, which receives the remainder. Keep padding, flags and interleaved frame order; no new stream or implicit flow-control translation.',
                 'body.set_bytes(body.get_bytes())', access='mutable draft',
-                easy='Require complete content and no prior DATA edits; final message commit repairs known Content-Length. Translate allows only same-length DATA.',
+                easy='Require complete content and no prior DATA edits; final assembly repairs known retained Content-Length. Translate resizing requires negotiated content-reverse support.',
                 expert='Same view guards. Rewrite may resize DATA; connection-wide correctness remains the caller responsibility. Translate does not allow resizing.')
     def set_bytes(self, value):
         value = _h2_bytes(value)

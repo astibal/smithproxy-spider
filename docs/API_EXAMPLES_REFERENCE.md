@@ -233,7 +233,7 @@ Access: views of mutable drafts; type/result: `tuple[RewritePart | H2Body, ...]`
 
 Easy: H2 whole-body edits require complete known content and unedited DATA drafts. Commit repairs known Content-Length.
 
-Expert: The same view rules apply. Rewrite permits resizing; Translate still requires same-length DATA in both safety modes.
+Expert: The same view rules apply. Translate resizing requires negotiated content-reverse support and retained Content-Length headers, in both safety modes.
 
 ```python
 for body in api.message.bodies():
@@ -259,15 +259,15 @@ return api.message.commit()
 
 ### Message.translate
 
-Explicitly translate every callback of a pinned H2 flow. Header edits and same-length DATA; requires a capable strict-control proxy and python-hpack. Hold incomplete Parts with parts.hold_from(part); only the emitted prefix advances HPACK state. No silent background runs.
+Explicitly translate every callback of a pinned H2 flow. With content-reverse capability from activation, DATA resizing uses bounded directional queues and independent flow-control windows; legacy peers allow same-length DATA only. Hold incomplete Parts explicitly. No silent background runs.
 
 Availability: First observed content of a new flow, sole enabled deployment; every callback thereafter.
 
 Access: assemble translated output; type/result: `bytes | HeldCommit`.
 
-Easy: Require complete emitted frames, coherent HEADERS/PUSH_PROMISE HPACK state, unchanged header frame identity, explicit callbacks and same-length DATA. PUSH_PROMISE requires server direction and enabled push; full stream lifecycle validation is not provided.
+Easy: Require complete emitted frames, coherent HPACK state, unchanged frame identity and explicit callbacks. Resizing repairs retained Content-Length for complete content; already emitted lengths cannot be repaired. Pending output is limited to 384 KiB and 1024 tracked streams per direction. Full lifecycle and H2 digest repair are not provided.
 
-Expert: The same translate invariants apply. Expert does not disable strict control, HPACK synchronization or DATA flow-control restrictions; use rewrite for local state-breaking experiments.
+Expert: The same Translate invariants and quotas apply. Expert cannot bypass credit, retained Content-Length or capability requirements. GOAWAY with queued output and RST_STREAM conflicting with queued headers fail explicitly; use Rewrite for state-breaking experiments.
 
 ```python
 if api.instance.mode == "flow":
@@ -1395,7 +1395,7 @@ api.print(part.get_bytes()[:32].hex())
 
 ### RewritePart.set_bytes
 
-Replace the representation, not the nine-byte frame header. H1 Body accepts plaintext and encodes gzip/deflate during commit; its physical chunks remain encoded. Rewrite supports unknown frame types; translate permits same-length DATA edits while preserving stream ID, flags and padding.
+Replace the representation, not the nine-byte frame header. H1 Body accepts plaintext and encodes gzip/deflate during commit; its physical chunks remain encoded. Translate permits DATA resizing with negotiated content-reverse support; frame identity remains fixed and padding can be removed during reframing.
 
 Availability: Complete parts only for a changed commit.
 
@@ -1535,7 +1535,7 @@ Availability: Backend scripts, including Run on selected, use persistent storage
 
 Access: mutable draft; type/result: `None`.
 
-Easy: Require complete content and no prior DATA edits; final message commit repairs known Content-Length. Translate allows only same-length DATA.
+Easy: Require complete content and no prior DATA edits; final assembly repairs known retained Content-Length. Translate resizing requires negotiated content-reverse support.
 
 Expert: Same view guards. Rewrite may resize DATA; connection-wide correctness remains the caller responsibility. Translate does not allow resizing.
 

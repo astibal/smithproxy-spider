@@ -319,8 +319,9 @@ instruction need not be accepted in peer state. This is deliberately the script
 author's responsibility. Unchanged HPACK instructions and frames retain original bytes.
 
 Live **TRANSLATE** requires explicit activation. Current H2 support covers
-HEADERS/PUSH_PROMISE, HPACK, supported SETTINGS and same-length DATA edits, not
-general DATA resizing with flow-control compensation. It requires one enabled
+HEADERS/PUSH_PROMISE, HPACK, supported SETTINGS and bounded DATA resizing with
+flow-control compensation when content-reverse is negotiated at activation.
+Legacy proxies retain same-length DATA support. It requires one enabled
 flow deployment and activation in the first content callback. Every subsequent
 callback must run the script and return `api.message.translate()`; there are no
 hidden repairs outside user execution. The backend pins deployment/version and
