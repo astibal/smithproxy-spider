@@ -208,8 +208,8 @@ class Message:
                 'if api.instance.mode == "flow":\n    return api.message.translate()',
                 availability='First observed content of a new flow, sole enabled deployment; every callback thereafter.',
                 access='assemble translated output',
-                easy='Require complete emitted frames, coherent HPACK state, unchanged frame identity and explicit callbacks. Resizing repairs retained Content-Length for complete content; already emitted lengths cannot be repaired. Pending output is limited to 384 KiB and 1024 tracked streams per direction. Full lifecycle and H2 digest repair are not provided.',
-                expert='The same Translate invariants and quotas apply. Expert cannot bypass credit, retained Content-Length or capability requirements. GOAWAY with queued output and RST_STREAM conflicting with queued headers fail explicitly; use Rewrite for state-breaking experiments.')
+                easy='Require complete emitted frames, coherent HPACK state, unchanged frame identity and explicit callbacks. Resizing repairs retained Content-Length for complete content; already emitted lengths cannot be repaired. Pending output is limited to 384 KiB and 1024 live stream records per direction. Closed IDs use bounded compressed ranges. Full lifecycle and H2 digest repair are not provided.',
+                expert='The same Translate invariants and quotas apply. Expert cannot bypass credit, retained Content-Length or capability requirements. RST_STREAM and GOAWAY cancel affected queued DATA while preserving encoded headers and HPACK ordering; use Rewrite for state-breaking experiments.')
     def translate(self, *, safety=Safety.Easy):
         _validate_safety(safety)
         transaction = getattr(self, '_translation', None)

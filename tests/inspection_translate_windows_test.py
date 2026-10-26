@@ -210,22 +210,39 @@ class WindowsTests(unittest.TestCase):
         with self.assertRaisesRegex(CommitException, 'lost content-reverse'):
             _prepare_translation(message, {'translate_active': True, 'translate_control': bridge.control})
 
-    def test_reset_with_queued_headers_fails_without_publishing(self):
+    def test_reset_preserves_queued_hpack_and_later_indexed_headers(self):
         bridge = self.make_bridge()
         bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
         bridge.feed('L', frame(b'x', 0, 0, 1), lambda m: m.parts[0].set_bytes(b'z' * 65536))
-        bridge.feed('L', frame(hpack.Encoder().encode([(b':method', b'GET')]), 1, 5, 3))
-        previous = json.dumps(bridge.control)
-        with self.assertRaisesRegex(CommitException, 'queued header'):
-            bridge.feed('R', frame(b'\x00\x00\x00\x08', 3, 0, 3))
-        self.assertEqual(json.dumps(bridge.control), previous)
+        encoder, decoder = hpack.Encoder(), hpack.Decoder()
+        fields = [(b':method', b'GET'), (b'x-state', b'must survive reset')]
+        bridge.feed('L', frame(encoder.encode(fields), 1, 5, 3))
+        bridge.feed('R', frame(b'\x00\x00\x00\x08', 3, 0, 3))
+        updates = frame((1).to_bytes(4, 'big'), 8, 0, 0) + frame((1).to_bytes(4, 'big'), 8, 0, 1)
+        _, reverse = bridge.feed('R', updates)
+        self.assertEqual([item[0] for item in unpack(reverse)], [0, 1])
+        self.assertEqual(decoder.decode(unpack(reverse)[1][3], raw=True), fields)
+        output, _ = bridge.feed('L', frame(encoder.encode(fields), 1, 5, 5))
+        self.assertEqual(decoder.decode(unpack(output)[0][3], raw=True), fields)
 
-    def test_goaway_with_pending_output_fails_without_publishing(self):
+    def test_goaway_discards_excluded_data_and_drains_accepted_stream(self):
         bridge = self.make_bridge()
         bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
         bridge.feed('L', frame(b'x', 0, 0, 1), lambda m: m.parts[0].set_bytes(b'z' * 65536))
-        with self.assertRaisesRegex(CommitException, 'GOAWAY'):
-            bridge.feed('R', frame(b'\x00' * 8, 7, 0, 0))
+        bridge.feed('L', frame(b'excluded', 0, 0, 3))
+        goaway = frame((1).to_bytes(4, 'big') + b'\0' * 4, 7, 0, 0)
+        forward, reverse = bridge.feed('R', goaway)
+        self.assertEqual(unpack(forward)[0][0], 7)
+        self.assertEqual(unpack(forward)[1:], [(8, 0, 0, (8).to_bytes(4, 'big'))])
+        self.assertEqual(reverse, b'')
+        self.assertEqual(len(bridge.control['flow']['L']['queue']), 1)
+        updates = frame((1).to_bytes(4, 'big'), 8, 0, 0) + frame((1).to_bytes(4, 'big'), 8, 0, 1)
+        _, reverse = bridge.feed('R', updates)
+        self.assertEqual(reverse, frame(b'z', 0, 0, 1))
+        previous = json.dumps(bridge.control)
+        with self.assertRaisesRegex(CommitException, 'must not increase'):
+            bridge.feed('R', frame((3).to_bytes(4, 'big') + b'\0' * 4, 7, 0, 0))
+        self.assertEqual(json.dumps(bridge.control), previous)
 
     def test_both_directions_can_have_pending_output(self):
         bridge = self.make_bridge()
@@ -252,13 +269,109 @@ class WindowsTests(unittest.TestCase):
         self.assertEqual(forward, frame(b'x', 0, 0, 1))
         self.assertEqual([item[2] for item in unpack(reverse)], [0, 1])
 
-    def test_closed_stream_record_quota_is_explicit(self):
+    def test_closed_stream_churn_and_late_credit(self):
         bridge = self.make_bridge()
         bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
-        for stream in range(1, 2048, 2):
+        for stream in range(1, 6000, 2):
             bridge.feed('L', frame(b'', 0, 1, stream))
-        with self.assertRaisesRegex(CommitException, 'stream quota'):
-            bridge.feed('L', frame(b'', 0, 1, 2049))
+        self.assertEqual(bridge.control['flow']['L']['streams'], {})
+        self.assertEqual(bridge.control['flow']['L']['retired'], {'1': [[1, 5999]]})
+        before = json.dumps(bridge.control)
+        self.assertEqual(bridge.feed('R', frame((10).to_bytes(4, 'big'), 8, 0, 1)), (b'', b''))
+        self.assertEqual(json.dumps(bridge.control), before)
+        with self.assertRaisesRegex(CommitException, 'termination'):
+            bridge.feed('L', frame(b'invalid', 0, 0, 1))
+
+    def test_out_of_order_closure_preserves_open_holes(self):
+        bridge = self.make_bridge()
+        bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
+        for stream in (1, 3, 5):
+            bridge.feed('L', frame(b'open', 0, 0, stream))
+        for stream in (5, 1):
+            bridge.feed('L', frame(b'', 0, 1, stream))
+        self.assertEqual(set(bridge.control['flow']['L']['streams']), {'3'})
+        bridge.feed('L', frame(b'still open', 0, 0, 3))
+        bridge.feed('L', frame(b'', 0, 1, 3))
+        self.assertEqual(bridge.control['flow']['L']['retired'], {'1': [[1, 5]]})
+
+    def test_active_and_sparse_retirement_quotas_remain_bounded(self):
+        for end, step, error in ((0, 2, 'stream quota'), (1, 4, 'range quota')):
+            bridge = self.make_bridge()
+            bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
+            bridge.feed('L', b''.join(frame(b'', 0, end, stream)
+                                     for stream in range(1, 1024 * step, step)))
+            previous = json.dumps(bridge.control)
+            with self.assertRaisesRegex(CommitException, error):
+                bridge.feed('L', frame(b'', 0, end, 1024 * step + 1))
+            self.assertEqual(json.dumps(bridge.control), previous)
+
+    def test_inflight_data_after_reset_refunds_only_connection(self):
+        bridge = self.make_bridge()
+        bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
+        bridge.feed('R', frame(b'\0\0\0\x08', 3, 0, 1))
+        forward, reverse = bridge.feed('L', frame(b'late', 0, 0, 1))
+        self.assertEqual(forward, b'')
+        self.assertEqual(unpack(reverse), [(8, 0, 0, (4).to_bytes(4, 'big'))])
+
+    def test_reset_does_not_overtake_own_queued_headers(self):
+        bridge = self.make_bridge()
+        bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
+        bridge.feed('L', frame(b'x', 0, 0, 1), lambda m: m.parts[0].set_bytes(b'z' * 65536))
+        bridge.feed('L', frame(hpack.Encoder().encode([(b':method', b'GET')]), 1, 4, 3))
+        output, _ = bridge.feed('L', frame(b'\0\0\0\x08', 3, 0, 3))
+        self.assertEqual(output, b'')
+        updates = frame((1).to_bytes(4, 'big'), 8, 0, 0) + frame((1).to_bytes(4, 'big'), 8, 0, 1)
+        _, output = bridge.feed('R', updates)
+        self.assertEqual([item[0] for item in unpack(output)], [0, 1, 3])
+
+    def test_input_end_stream_is_enforced_while_output_is_pending(self):
+        bridge = self.make_bridge()
+        bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
+        bridge.feed('L', frame(b'x', 0, 1, 1), lambda m: m.parts[0].set_bytes(b'z' * 65536))
+        before = json.dumps(bridge.control)
+        with self.assertRaisesRegex(CommitException, 'termination'):
+            bridge.feed('L', frame(b'after end', 0, 0, 1))
+        self.assertEqual(json.dumps(bridge.control), before)
+
+    def test_goaway_keeps_hpack_for_excluded_streams_in_both_directions(self):
+        for side, stream in (('L', 3), ('R', 2)):
+            peer = 'R' if side == 'L' else 'L'
+            bridge = self.make_bridge()
+            bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
+            bridge.feed(side, frame(b'x', 0, 0, stream),
+                        lambda m: m.parts[0].set_bytes(b'z' * 65536))
+            encoder, decoder = hpack.Encoder(), hpack.Decoder()
+            fields = [(b'x-shared', b'compression state')]
+            bridge.feed(side, frame(encoder.encode(fields), 1, 5, stream + 2))
+            forward, reverse = bridge.feed(peer, frame(b'\0' * 8, 7, 0, 0))
+            self.assertEqual(unpack(forward)[0][0], 7)
+            self.assertEqual(decoder.decode(unpack(reverse)[0][3], raw=True), fields)
+            # Race with GOAWAY: decode subsequent source indices and preserve
+            # destination compression state, but discard application DATA.
+            forward, reverse = bridge.feed(side, frame(encoder.encode(fields), 1, 4, stream + 4) +
+                                           frame(b'ignored', 0, 1, stream + 4))
+            self.assertEqual([item[0] for item in unpack(forward)], [1])
+            self.assertEqual(decoder.decode(unpack(forward)[0][3], raw=True), fields)
+            self.assertEqual(unpack(reverse), [(8, 0, 0, (7).to_bytes(4, 'big'))])
+
+    def test_reset_markers_survive_fresh_workers(self):
+        from inspection_cookbook_test import run
+        from inspection_translate_worker_test import event
+        states, control = {}, None
+        script = f'return api.message.translate(safety=Safety.{self.safety.title()})'
+        for side, wire in [('L', frame(b'first', 0, 0, 1)),
+                           ('R', frame(b'\0\0\0\x08', 3, 0, 1)),
+                           ('L', frame(b'late', 0, 0, 1))]:
+            request = event(wire, side)
+            request['details']['info']['webhook_control'] = {'content-reverse': True}
+            result = run(script, request, translate_allowed=control is None, translate_active=control is not None,
+                         translate_state=states.get(side), translate_control=control, instance={'mode': 'flow'})
+            self.assertTrue(result['ok'], result)
+            states[side] = result['translate_state']
+            control = result['translate_control']
+        self.assertEqual(base64.b64decode(result['replacement']), b'')
+        self.assertEqual(unpack(base64.b64decode(result['replacement_reverse'])),
+                         [(8, 0, 0, (4).to_bytes(4, 'big'))])
 
     def test_expansion_shrink_zero_and_following_data_both_directions(self):
         for side in ('L', 'R'):

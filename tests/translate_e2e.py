@@ -104,12 +104,13 @@ def windows_exchange(client, origin):
     """Real peers enforce flow control; only their WINDOW_UPDATEs release queues."""
     from h2.config import H2Configuration
     from h2.connection import H2Connection
-    from h2.events import DataReceived, StreamEnded
+    from h2.events import DataReceived, StreamEnded, StreamReset
 
     sockets = {'L': client, 'R': origin}
     peers = {side: H2Connection(H2Configuration(client_side=side == 'L')) for side in sockets}
     received = {'L': {}, 'R': {}}
     ended = set()
+    reset = set()
 
     def send(side):
         data = peers[side].data_to_send()
@@ -129,9 +130,17 @@ def windows_exchange(client, origin):
                 for event in peers[side].receive_data(data):
                     if isinstance(event, DataReceived):
                         received[side].setdefault(event.stream_id, bytearray()).extend(event.data)
-                        peers[side].acknowledge_received_data(event.flow_controlled_length, event.stream_id)
+                        if side == 'R' and event.stream_id == 7:
+                            if (side, 7) not in reset:
+                                peers[side].reset_stream(7)
+                                reset.add((side, 7))
+                            peers[side].increment_flow_control_window(event.flow_controlled_length)
+                        else:
+                            peers[side].acknowledge_received_data(event.flow_controlled_length, event.stream_id)
                     if isinstance(event, StreamEnded):
                         ended.add((side, event.stream_id))
+                    if isinstance(event, StreamReset):
+                        reset.add((side, event.stream_id))
                 send(side)
 
     for side, peer in peers.items():
@@ -151,8 +160,29 @@ def windows_exchange(client, origin):
             progress(lambda: (target, stream) in ended)
             assert bytes(received[target].get(stream, b'')) == expected
 
+    request = [(b':method', b'POST'), (b':scheme', b'http'),
+               (b':authority', b'lab.test'), (b':path', b'/')]
+    peers['L'].send_headers(7, request)
+    peers['L'].send_data(7, b'secret', end_stream=True)
+    send('L')
+    progress(lambda: ('L', 7) in reset)
+    assert len(received['R'][7]) < 160000, 'Reset did not cancel pending DATA'
+
+    # More than the old lifetime quota, in bounded batches below the peer's
+    # concurrent-stream limit. Both directions close, then later IDs continue.
+    for first in range(9, 2209, 100):
+        streams = range(first, first + 100, 2)
+        for stream in streams:
+            peers['L'].send_headers(stream, request, end_stream=True)
+        send('L')
+        progress(lambda: all(('R', stream) in ended for stream in streams))
+        for stream in streams:
+            peers['R'].send_headers(stream, [(b':status', b'204')], end_stream=True)
+        send('R')
+        progress(lambda: all(('L', stream) in ended for stream in streams))
+
     print('PASS: real H2 peers, both directions, expansion beyond windows, shrink-to-zero, '
-          'Content-Length repair, subsequent stream and reverse-only progress')
+          'Content-Length repair, reverse-only progress, pending DATA reset and 1100 closed streams')
 
 
 def main():

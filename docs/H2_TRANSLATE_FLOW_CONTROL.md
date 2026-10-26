@@ -23,8 +23,8 @@ The proxy response uses `action: replace`, forward `content` and optional
 current callback's source. Empty forward output with reverse bytes is a replace,
 not need-more. There is no second callback or background translation.
 
-Input DATA consumption accumulates connection/stream credit. Once a direction's
-pending output drains, the translator grants that consumed credit back to its
+Input DATA consumption accumulates connection/stream credit. Once a stream's
+pending DATA drains, the translator grants that consumed credit back to its
 sender. Receiver WINDOW_UPDATEs feed the independent output windows and are not
 forwarded as grants to the original sender. This prevents overcredit after
 expansion and permits shrink-to-zero to make progress without a receiver reply.
@@ -42,22 +42,42 @@ Queues preserve frame/header-block order. Connection control frames can bypass
 blocked DATA, but SETTINGS ACKs remain behind earlier encoded header blocks.
 This is bounded FIFO output, not a fair per-stream scheduler.
 
+Cancelled streams still need compression processing, as described by
+[RFC 9113 stream states](https://www.rfc-editor.org/rfc/rfc9113.html#section-5.1)
+and [GOAWAY](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.8).
+Preserving queued encoded headers avoids changing the encoder history on which
+later blocks already depend. It does not replay application DATA on those streams.
+
 Both Easy and Expert enforce the same transport invariants:
 
-- At most 384 KiB pending output across both directions, 1024 tracked streams
+- At most 384 KiB pending output across both directions, 1024 live stream records
   per direction, 1 MiB combined forward/reverse response, 1 MiB control checkpoint
-  and the existing 4 MiB deployment-state quota. Closed stream records are retained
-  within that quota; this first implementation does not provide unlimited churn.
+  and the existing 4 MiB deployment-state quota. Closed records are reclaimed after
+  queued DATA and credit settle. Their IDs remain in parity-separated, merged
+  ranges so late WINDOW_UPDATE does not reopen them. Each direction permits 1024
+  retired ranges and 1024 cancellation ranges. Sequential churn is constant-space;
+  sparse/out-of-order histories can still reach an explicit quota.
 - Invalid/overflowing WINDOW_UPDATE and quota failures raise CommitException.
   Failed assembly leaves checkpoints unpublished and is retryable in the script.
-- RST_STREAM discards queued DATA for that stream and refunds connection credit.
-  A reset conflicting with a queued header block fails rather than silently
-  corrupting HPACK. GOAWAY while output is pending also fails explicitly.
+- RST_STREAM discards queued DATA in both directions and refunds connection credit.
+  Encoded headers remain ordered for HPACK synchronization. The reset follows
+  already queued headers in its own direction; unrelated blocked DATA may delay
+  that forwarding under FIFO. In-flight DATA on cancelled streams is consumed
+  and refunded only at connection level, never emitted as application content.
+- GOAWAY records a non-increasing last-stream ID per sender. DATA for excluded
+  peer-initiated streams is discarded in both directions; eligible pending streams
+  can drain on later explicit callbacks. Encoded headers still reach the peer for
+  minimal compression processing. GOAWAY is forwarded promptly. Peer transport
+  closure can still prevent delivery; this does not guarantee graceful shutdown.
+- Input END_STREAM is tracked separately from output END_STREAM, rejecting later
+  DATA even while an expanded terminal frame remains queued.
 - Resizing repairs Content-Length only when the relevant header and complete
   content are still retained. Already emitted Content-Length rejects resizing.
   H2 content digests/signatures are not repaired automatically.
 - Explicitly held input is not credited until released. Holding a body larger
   than the sender's window is not supported by this bounded implementation.
+  [Bounded hold-credit design](H2_TRANSLATE_HOLD_CREDIT_DESIGN.md) specifies the
+  proposed reservation model and its implementation prerequisites; it is not an API.
 
 Once Translate is active, an uncaught failure follows its existing strict
 connection teardown policy. Before activation the existing failure policy is
@@ -211,3 +231,39 @@ path, not just the model.
 
 This is the Spider regression run, not a new native full-P3 run. The preceding
 native content-reverse full P3 passed separately against Smithproxy `63a2c67`.
+
+### Lifecycle review and validation: 2026-10-26
+
+The follow-up review addressed four concrete limitations:
+
+- Closed records exhausted a lifetime stream quota. Closed IDs now compact into
+  bounded ranges, preserving open holes and ignoring late credit without reopening.
+- Reset with pending headers tore down translation. Queued encoded headers now
+  survive cancellation, including subsequent indexed-header dependencies; resets
+  cannot overtake earlier headers in their own output direction.
+- GOAWAY rejected every pending queue. It now cancels only excluded streams,
+  preserves HPACK history and allows eligible output to finish. A later GOAWAY
+  cannot increase the last accepted stream ID. Tests cover both initiator parities.
+- Input END_STREAM was only enforced after output drained. Input termination is
+  now checked while expanded output is pending. Refunds settle per stream, so
+  unrelated blocked DATA does not retain a cancelled stream's connection credit.
+
+Verification after the implementation changes:
+
+- Build passed; full configured CTest: **48/48 suites**, zero failures, **177.34 s**.
+- Production window/lifecycle suite: **48 tests** (24 each in Easy and Expert).
+  Includes 3000 sequential closures, out-of-order holes, live/range quotas and
+  atomic failure, cancelled input refunds, HPACK after reset/GOAWAY, terminal DATA
+  rejection, and cancellation state restored through fresh sandboxed workers.
+- Nine integration suites passed. Both window variants used real proxy/Spider
+  processes and independent hyper-h2 endpoints. In addition to resizing and reverse
+  credit, each tested a reset during pending expanded output and **1100 further
+  completed streams** in both directions. GOAWAY's compression-state cases are
+  API-level tests, not a claim of socket-level graceful-GOAWAY coverage.
+- Generated API reference consistency and `git diff --check` passed.
+
+The full run used an isolated user/network namespace, not a live SASlik instance.
+No native production code changed; the earlier native P3 remains separate evidence.
+Fair scheduling and complete peer stream-lifecycle validation remain out of scope.
+Large retained bodies are addressed by the linked design proposal only; no early
+hold credit is enabled by this change.

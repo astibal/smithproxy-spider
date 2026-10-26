@@ -18,12 +18,13 @@ class _TranslationFlow:
 
     Input credit belongs to the sender; output credit belongs to the recipient.
     Recipient WINDOW_UPDATEs never pass through after we own flow control.
-    Consumed input is acknowledged only after this direction's queue drains.
+    Consumed input is acknowledged after that stream's queued DATA drains.
     The checkpoint contains owned bytes, never live Python references.
     """
     MAX_WINDOW = 0x7fffffff
     MAX_PENDING = 384 * 1024
     MAX_STREAMS = 1024
+    MAX_RANGES = 1024
 
     @staticmethod
     def initial():
@@ -46,6 +47,8 @@ class _TranslationFlow:
         key = str(stream)
 
         if key not in streams:
+            if self.retired(side, stream):
+                raise CommitException('DATA after translated stream termination')
             if not stream or len(streams) >= self.MAX_STREAMS:
                 raise CommitException('Translate flow stream quota exceeded or stream zero')
             initial = self.state[side]['initial']
@@ -53,6 +56,44 @@ class _TranslationFlow:
                             'content_length': False}
 
         return streams[key]
+
+    @staticmethod
+    def _contains(ranges, stream):
+        return any(first <= stream <= last for first, last in ranges.get(str(stream & 1), []))
+
+    def _remember(self, side, name, stream):
+        # IDs increase by two per initiator. Merge adjacent closed intervals;
+        # sequential churn costs constant space without forgetting late frames.
+        ranges = self.state[side].setdefault(name, {})
+        parity = str(stream & 1)
+        merged = []
+        for first, last in sorted(ranges.get(parity, []) + [[stream, stream]]):
+            if merged and first <= merged[-1][1] + 2:
+                merged[-1][1] = max(merged[-1][1], last)
+            else:
+                merged.append([first, last])
+        ranges[parity] = merged
+        if sum(map(len, ranges.values())) > self.MAX_RANGES:
+            raise CommitException('Translate closed stream range quota exceeded')
+
+    def retired(self, side, stream):
+        return self._contains(self.state[side].get('retired', {}), stream)
+
+    def cancelled(self, side, stream):
+        if self._contains(self.state[side].get('cancelled', {}), stream):
+            return True
+        for sender in ('L', 'R'):
+            last = self.state[sender].get('goaway')
+            if last is not None and stream & 1 == (sender == 'R') and stream > last:
+                return True
+        return False
+
+    def close(self, side, stream):
+        entry = self.state[side]['streams'].get(str(stream))
+        if entry is not None:
+            entry['closed'] = True
+        else:
+            self._remember(side, 'retired', stream)
 
     def settings(self, part):
         if part.flags & 1:
@@ -84,10 +125,12 @@ class _TranslationFlow:
 
         increment = int.from_bytes(data, 'big') & self.MAX_WINDOW
         direction = self.state[self.peer]
-        target = self.stream(self.peer, part.stream_id) if part.stream_id else direction
-
         if not increment:
             raise CommitException('WINDOW_UPDATE increment must be nonzero')
+        if part.stream_id and (self.retired(self.peer, part.stream_id) or
+                               self.cancelled(self.peer, part.stream_id)):
+            return
+        target = self.stream(self.peer, part.stream_id) if part.stream_id else direction
         if target.get('closed'):
             return  # Late credit for our already emitted END_STREAM is harmless.
         if target['output'] + increment > self.MAX_WINDOW:
@@ -100,16 +143,30 @@ class _TranslationFlow:
             raise CommitException('Invalid RST_STREAM')
 
         for side in ('L', 'R'):
-            remaining = []
-            for wire in self.queues[side]:
-                stream = int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
-                if stream != part.stream_id:
-                    remaining.append(wire)
-                elif wire[3] != 0:
-                    # Dropping a queued HPACK block would desynchronize tables.
-                    raise CommitException('RST_STREAM conflicts with queued header state')
-            self.queues[side] = remaining
-            self.stream(side, part.stream_id)['closed'] = True
+            self._remember(side, 'cancelled', part.stream_id)
+            self.close(side, part.stream_id)
+        self.discard_cancelled()
+
+    def discard_cancelled(self):
+        for side in ('L', 'R'):
+            # Encoded headers must still reach the peer's HPACK decoder, even
+            # on cancelled streams. Never drop/reorder those compression units.
+            self.queues[side] = [wire for wire in self.queues[side]
+                                 if wire[3] != 0 or not self.cancelled(
+                                     side, int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW)]
+            for key, entry in self.state[side]['streams'].items():
+                if self.cancelled(side, int(key)):
+                    entry['closed'] = True
+
+    def goaway(self, part):
+        if part.stream_id or len(part._data) < 8:
+            raise CommitException('Invalid GOAWAY')
+        last = int.from_bytes(part._data[:4], 'big') & self.MAX_WINDOW
+        previous = self.state[self.side].get('goaway', self.MAX_WINDOW)
+        if last > previous:
+            raise CommitException('GOAWAY last stream ID must not increase')
+        self.state[self.side]['goaway'] = last
+        self.discard_cancelled()
 
     def accept(self, part, wire):
         side = self.side
@@ -122,23 +179,32 @@ class _TranslationFlow:
             self.settings(part)
         if kind == 3:
             self.reset(part)
-        if kind == 7 and any(self.queues.values()):
-            raise CommitException('GOAWAY with pending translated output requires connection teardown')
+        if kind == 7:
+            self.goaway(part)
 
         if kind == 0:
-            stream = self.stream(side, part.stream_id)
-            if stream['closed']:
-                raise CommitException('DATA after translated stream termination')
-            # Include padding and its length byte, but not the frame header.
             amount = int.from_bytes(bytes(part._wire)[:3], 'big')
+            if self.cancelled(side, part.stream_id):
+                # In-flight DATA after reset still consumes connection credit.
+                self.state[side]['credit'] += amount
+                return
+            stream = self.stream(side, part.stream_id)
+            if stream['closed'] or stream.get('ended'):
+                raise CommitException('DATA after translated stream termination')
+            stream['ended'] = bool(part.flags & 1)
+            # Include padding and its length byte, but not the frame header.
             self.state[side]['credit'] += amount
             stream['credit'] += amount
+
+        if kind == 1 and part.flags & 1 and not self.cancelled(side, part.stream_id):
+            if not self.retired(side, part.stream_id):
+                self.stream(side, part.stream_id)['ended'] = True
 
         # Control frames must not wait behind DATA whose credit they enable.
         # Header blocks stay indivisible; queued output never ends mid-block.
         # ACK is a synchronization boundary for HPACK and frame-size limits.
         # It must remain behind previously encoded header blocks.
-        if kind in (3, 6, 7, 8) or (kind == 4 and not part.flags & 1):
+        if kind in (6, 7, 8) or (kind == 4 and not part.flags & 1):
             self.output[side].extend(wire)
         elif wire:
             self.queues[side].append(wire)
@@ -155,7 +221,7 @@ class _TranslationFlow:
                 self.output[side].extend(queue.pop(0))
                 if not wire.startswith(_H2_PREFACE) and wire[3] == 1 and wire[4] & 1:
                     stream_id = int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
-                    self.stream(side, stream_id)['closed'] = True
+                    self.close(side, stream_id)
                 continue
 
             stream_id = int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
@@ -201,17 +267,28 @@ class _TranslationFlow:
 
         for side in ('L', 'R'):
             direction = self.state[side]
-            if self.queues[side]:
-                continue
-
             target = 'R' if side == 'L' else 'L'
-            credits = [(0, direction)] + [(int(key), value)
-                                         for key, value in direction['streams'].items()]
-            for stream_id, entry in credits:
+            blocked = {int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
+                       for wire in self.queues[side] if wire[3] == 0}
+            retained = 0
+            refunds = bytearray()
+            for key, entry in list(direction['streams'].items()):
+                stream_id = int(key)
+                if stream_id in blocked:
+                    retained += entry['credit']
+                    continue
                 amount = entry['credit']
                 if amount and not entry.get('closed'):
-                    self.output[target].extend(self.frame(8, 0, stream_id, amount.to_bytes(4, 'big')))
+                    refunds.extend(self.frame(8, 0, stream_id, amount.to_bytes(4, 'big')))
                 entry['credit'] = 0
+                if entry['closed']:
+                    self._remember(side, 'retired', stream_id)
+                    del direction['streams'][key]
+            amount = direction['credit'] - retained
+            if amount:
+                self.output[target].extend(self.frame(8, 0, 0, amount.to_bytes(4, 'big')))
+            self.output[target].extend(refunds)
+            direction['credit'] = retained
 
         pending = sum(len(wire) for queue in self.queues.values() for wire in queue)
         if pending > self.MAX_PENDING:
@@ -860,7 +937,9 @@ class _Translation:
                 if id(part) in header_lengths:
                     fields = [(name, header_lengths[id(part)] if name == b'content-length' else value, sensitive)
                               for name, value, sensitive in fields]
-                if flow is not None and part.frame_type == 1:
+                if (flow is not None and part.frame_type == 1 and
+                        not flow.cancelled(settings.side, part.stream_id) and
+                        not flow.retired(settings.side, part.stream_id)):
                     if any(name in (b':method', b':status') for name, _, _ in fields):
                         flow.stream(settings.side, part.stream_id)['content_length'] = any(
                             name == b'content-length' for name, _, _ in fields)
@@ -996,6 +1075,8 @@ class _Translation:
 
         if flow is not None:
             for stream in changed - local:
+                if flow.cancelled(flow.side, stream):
+                    continue
                 if flow.stream(flow.side, stream)['content_length']:
                     raise CommitException('Cannot resize body after emitting Content-Length; hold the header first')
 
