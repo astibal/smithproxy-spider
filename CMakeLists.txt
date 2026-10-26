@@ -22,6 +22,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/too
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_h2.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_hold.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_chunked.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_translate.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_language.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_sandbox.py"
@@ -33,6 +34,7 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tools/pack-inspection-worker.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_translate.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_hold.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_chunked.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_h2.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_worker.py src/inspection_api.py src/inspection_language.py src/inspection_sandbox.py tools/generate-inspection-schema.py)
 configure_file(src/inspection_worker.hpp.in generated/inspection_worker.hpp @ONLY)
@@ -187,6 +189,8 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_test.py)
     add_test(NAME inspection_hold_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_hold_test.py)
+    add_test(NAME inspection_chunked_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_chunked_test.py)
     add_test(NAME inspection_h1_corpus_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h1_corpus_test.py)
     add_test(NAME inspection_h2_corpus_tests

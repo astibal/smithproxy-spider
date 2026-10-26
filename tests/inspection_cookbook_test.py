@@ -13,7 +13,7 @@ from worker_bootstrap import packed
 from inspection_h2_test import frame, literal, unpack, Oracle
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SOURCES = ('inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_translate.py',
+SOURCES = ('inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_chunked.py', 'inspection_translate.py',
            'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py')
 WORKER = '\n'.join((ROOT / 'src' / name).read_text() for name in SOURCES)
 
@@ -35,7 +35,11 @@ def fixture(name):
         head = b'POST / HTTP/1.1\r\nHost: lab.test\r\nX-Old: yes\r\n'
         if name == 'gzip':
             head += b'Content-Encoding: gzip\r\n'
-        head += b'Content-Length: ' + str(len(body)).encode() + b'\r\n\r\n'
+        if name == 'h1-chunked':
+            head += b'Transfer-Encoding: chunked\r\n\r\n'
+            body = b'3\r\nabc\r\n0\r\n\r\n'
+        else:
+            head += b'Content-Length: ' + str(len(body)).encode() + b'\r\n\r\n'
         start_end = head.index(b'\r\n') + 2
         annotations = [[0, start_end, 'http1.start_line'], [start_end, len(head), 'http1.headers']]
         data = head + (body[:1] if name == 'h1-partial' else body)
@@ -192,6 +196,9 @@ class CookbookTests(unittest.TestCase):
                 elif name == 'h1-body':
                     self.assertTrue(wire.endswith(b'{"lab":true}'))
                     self.assertIn(b'Content-Length: 12\r\n', wire)
+                elif name in ('h1-chunked-body', 'h1-chunked-chunk'):
+                    self.assertNotIn(b'Content-Length:', wire)
+                    self.assertTrue(wire.endswith(b'7\r\nchanged\r\n0\r\n\r\n'))
                 elif name == 'h1-hold':
                     self.assertTrue(wire.endswith(b'abc-checked'))
                     self.assertIn(b'Content-Length: 11\r\n', wire)

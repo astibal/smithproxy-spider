@@ -229,7 +229,7 @@ class RewriteTests(unittest.TestCase):
 
     def test_worker_explicit_publish(self):
         source = '\n'.join((ROOT / 'src' / name).read_text() for name in
-            ('inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_translate.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
+            ('inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_chunked.py', 'inspection_translate.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
         data = frame(literal(b'x', b'v'), 1, 5)
         request = {'event': {'details': {'info': {'content': base64.b64encode(data).decode(),
             'content_annotations': [[0, 9, 'h2.frame.header']]}}}}

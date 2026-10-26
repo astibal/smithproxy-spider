@@ -7,7 +7,8 @@ def language_prelude():
              'class PartType:', '    Opaque: str',
              '    class Http2:', '        Part: str', '        Header: str',
              '        Data: str', '        Frame: str',
-             '    class Http1:', '        Part: str', '        Header: str', '        Body: str']
+             '    class Http1:', '        Part: str', '        Header: str', '        Body: str',
+             '        Chunk: str']
     for name, definition in api_schema()['types'].items():
         base = '(list[RewritePart])' if name == 'PartList' else ''
         lines += [f'class {name}{base}:', '    ' + json.dumps(definition['description'])]

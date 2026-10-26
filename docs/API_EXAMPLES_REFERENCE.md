@@ -1309,7 +1309,7 @@ part.max_frame_size = 16384
 
 ### RewritePart.http1
 
-H1 header draft for an annotated Content-Length message; None on other parts. Edit the body through its Body part.
+H1 header draft for an annotated Content-Length or chunked message; None on other parts. Edit the body through its Body part.
 
 Availability: Always available for a content callback.
 
@@ -1323,6 +1323,23 @@ Expert: This member has the same behavior in both modes. It does not select or p
 for part in api.message.parts:
     if part.http1 is not None:
         part.http1.set_header("X-Test", "held")
+```
+
+### RewritePart.chunks
+
+Physical data-chunk views owned by a chunked H1 Body; empty on other parts. Edit chunk bytes or the whole Body, never both. Do not emit these views separately or reorder them.
+
+Availability: Always available for a content callback.
+
+Access: read-only tuple of editable views; type/result: `tuple[RewritePart, ...]`.
+
+Easy: Rebuild changed chunk sizes. Body edits with trailers are rejected until trailer dependencies can be repaired.
+
+Expert: Rebuild changed chunk sizes and preserve trailers unchanged; their meaning is the caller responsibility. Framing, completeness and quotas remain enforced.
+
+```python
+for chunk in part.chunks:
+    api.print(chunk.get_bytes().hex())
 ```
 
 ### RewritePart.is_a

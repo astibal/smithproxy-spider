@@ -71,6 +71,20 @@ int main() {
     expect_release(send("one", "L", "def"));
     assert(send("one", "L", "next")["content"] == spider::base64_encode("next"));
 
+    // Chunk framing can end in any callback. The peer must receive only the
+    // final rebuilt message, with no intermediate chunk or duplicate body.
+    const std::string chunk_head = "POST / HTTP/1.1\r\nHost: test\r\nTransfer-Encoding: chunked\r\n\r\n";
+    auto chunk_event = event("chunked", "L", chunk_head + "3\r\na", false);
+    chunk_event["details"]["info"]["content_annotations"] = {
+        {0, 17, "http1.start_line"}, {17, chunk_head.size(), "http1.headers"}};
+    expect_hold(spider::process_webhook(store, decisions, chunk_event,
+        std::nullopt, &enrichment, &engine).body);
+    expect_hold(send("chunked", "L", "bc\r\n3\r\ndef\r\n0\r\n"));
+    const auto chunk_reply = send("chunked", "L", "\r\n");
+    assert(chunk_reply["action"] == "replace");
+    assert(chunk_reply["content"] == spider::base64_encode(
+        chunk_head + "c\r\nchanged body\r\n0\r\n\r\n"));
+
     // The complete Content-Length body can arrive one byte at a time.
     expect_hold(send("tiny", "L", head, true));
     for (char ch : std::string("abcde")) expect_hold(send("tiny", "L", std::string(1, ch)));

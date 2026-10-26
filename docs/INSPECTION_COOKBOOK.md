@@ -475,9 +475,64 @@ draft.http1.body = b"A" * (1024 * 1024)
 return draft.commit()
 ```
 
+## 20. Chunked H1: one body, two views
+
+An annotated complete HTTP/1.1 head with `Transfer-Encoding: chunked` produces
+Header and Body parts. The Body owns its physical `chunks`; they are nested
+views, not additional top-level parts to emit. `get_bytes()` returns dechunked
+content (completed chunks only while input is incomplete). `content.complete`
+becomes true only after the zero chunk and the final trailer-section CRLF.
+
+Replace the whole logical body; commit rebuilds chunk sizes and does not emit
+Content-Length. This works in Easy and Expert, including empty replacements.
+
+<!-- example: h1-chunked-body fixture=h1-chunked expect=replace -->
+```python
+for part in api.message.parts:
+    if part.type == PartType.Http1.Body:
+        part.set_bytes(b"changed")
+return api.message.commit()
+```
+
+Alternatively, edit a physical chunk. An empty replacement removes that data
+chunk, not the final sentinel. Untouched chunks retain exact original bytes,
+including extensions. Changed chunks lose their extensions, which might depend
+on the old data. Whole-body replacement emits one data chunk and preserves the
+original terminal chunk and trailers. No-op preserves the entire wire message.
+
+<!-- example: h1-chunked-chunk fixture=h1-chunked expect=replace -->
+```python
+for part in api.message.parts:
+    if part.chunks:
+        part.chunks[0].set_bytes(b"changed")
+return api.message.commit()
+```
+
+Do not combine body replacement with edits to its chunk views in one transaction:
+
+<!-- example: h1-chunked-conflict fixture=h1-chunked expect=CommitException -->
+```python
+body = api.message.parts[1]
+body.chunks[0].set_bytes(b"chunk edit")
+body.set_bytes(b"whole body edit")
+return api.message.commit()
+```
+
+Hold from the Header until `body.content.complete`, exactly as in the H1 hold
+example. Chunk size lines, data, CRLF and trailers can span callbacks. The initial
+HTTP head still needs complete supplied annotations. No compression is performed.
+
+Easy rejects body changes when trailers exist: their integrity dependencies are
+not repaired yet. Expert preserves trailers unchanged and leaves their meaning
+to the caller. Both modes require complete, unambiguous chunk framing, reject
+Content-Length alongside chunked encoding and conflicting body/chunk edits, and
+enforce the 1 MiB wire limit, hold budget and 8192-data-chunk limit. Chunk tuple
+removal/reordering and Trailer-declaration edits are not supported in this phase.
+Snapshots remain Content-Length-only; use Parts for chunked content.
+
 ## Other important boundaries
 
-- H1 Parts do not yet parse chunked/compressed/pipelined messages. Without suitable
+- H1 Parts do not yet parse compressed/pipelined messages. Without suitable
   annotations, the result is Opaque, not automatically recognized HTTP.
 - An incomplete H2 frame can be preserved unchanged but not arbitrarily rewritten;
   rewrite hold currently needs the complete nine-byte frame header.

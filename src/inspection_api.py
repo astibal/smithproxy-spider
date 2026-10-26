@@ -735,5 +735,7 @@ if '__file__' in globals():
     exec(compile(_h2_source.read_text(), str(_h2_source), 'exec'), globals())
     _hold_source = _ApiPath(__file__).with_name('inspection_hold.py')
     exec(compile(_hold_source.read_text(), str(_hold_source), 'exec'), globals())
+    _chunked_source = _ApiPath(__file__).with_name('inspection_chunked.py')
+    exec(compile(_chunked_source.read_text(), str(_chunked_source), 'exec'), globals())
     _translate_source = _ApiPath(__file__).with_name('inspection_translate.py')
     exec(compile(_translate_source.read_text(), str(_translate_source), 'exec'), globals())

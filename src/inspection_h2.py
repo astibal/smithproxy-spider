@@ -13,6 +13,7 @@ class PartType:
         Part = 'http1'
         Header = 'http1.header'
         Body = 'http1.body'
+        Chunk = 'http1.chunk'
 
     class Http2:
         Part = 'http2'
@@ -248,7 +249,11 @@ class RewritePart:
     max_frame_size: int = documented('Output splitting limit, default 16384. Caller may set a known peer limit up to 16777215.', 'part.max_frame_size = 16384', access='mutable rewrite draft',
         easy='Commit accepts 16384..16777215 and rejects oversized control/unknown frames.',
         expert='Commit accepts 1..16777215 for fragmentation and permits control/unknown frames above this limit. Positive frame capacity, wire representation and output quota remain mandatory.')
-    http1: Http1Draft | None = documented('H1 header draft for an annotated Content-Length message; None on other parts. Edit the body through its Body part.', 'for part in api.message.parts:\n    if part.http1 is not None:\n        part.http1.set_header("X-Test", "held")', access='mutable rewrite draft')
+    http1: Http1Draft | None = documented('H1 header draft for an annotated Content-Length or chunked message; None on other parts. Edit the body through its Body part.', 'for part in api.message.parts:\n    if part.http1 is not None:\n        part.http1.set_header("X-Test", "held")', access='mutable rewrite draft')
+    chunks: tuple[RewritePart, ...] = documented('Physical data-chunk views owned by a chunked H1 Body; empty on other parts. Edit chunk bytes or the whole Body, never both. Do not emit these views separately or reorder them.',
+        'for chunk in part.chunks:\n    api.print(chunk.get_bytes().hex())', access='read-only tuple of editable views',
+        easy='Rebuild changed chunk sizes. Body edits with trailers are rejected until trailer dependencies can be repaired.',
+        expert='Rebuild changed chunk sizes and preserve trailers unchanged; their meaning is the caller responsibility. Framing, completeness and quotas remain enforced.')
 
     def __init__(self, wire=b'', frame_type=None, flags=0, stream_id=1, data=b'', complete=True):
         self.type = (PartType.Opaque if frame_type is None else PartType.Http2.Header
@@ -257,6 +262,7 @@ class RewritePart:
         self.complete, self.content = complete, PartContent(None)
         self.headers, self.max_frame_size = None, 16384
         self.http1 = None
+        self.chunks = ()
         self._wire, self._data = wire, data
         self._pending, self._prefix, self._padding = None, b'', b''
         self._initial = (frame_type, flags, stream_id)
@@ -531,6 +537,9 @@ def commit_rewrite_message(message, update_content_length=True, *, safety=Safety
         raise CommitException('Expected RewritePart in message.parts')
     if len({id(p) for p in message.parts}) != len(message.parts):
         raise CommitException('A part cannot be emitted twice; construct an explicit copy')
+
+    if any(p.type == PartType.Http1.Chunk for p in message.parts):
+        raise CommitException('Chunk views belong to their Body; do not append them to message.parts')
 
     overrides = _h2_length_overrides(message) if update_content_length else {}
     output = bytearray()

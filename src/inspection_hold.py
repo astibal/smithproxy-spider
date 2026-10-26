@@ -120,7 +120,10 @@ def make_message_parts(data, info, enrichments):
     annotations = _hold_ranges(info, len(data))
     for start, end in _h1_head_ranges(annotations):
         try:
-            group = _H1Group(data[start:end], data[end:])
+            head = data[start:end]
+            chunked = any(line.split(b':', 1)[0].lower() == b'transfer-encoding'
+                          for line in head.split(b'\r\n')[1:])
+            group = (_ChunkedGroup if chunked else _H1Group)(head, data[end:])
         except CommitException:
             continue
 
@@ -158,7 +161,7 @@ def _checkpoint_types():
     """Both directions use the same closed set of data-only checkpoint types."""
     classes = (
         RewritePart, HpackField, H2Headers, PartContent,
-        _H1Part, _H1Group, Http1Draft, Header,
+        _H1Part, _H1Group, _ChunkedGroup, _ChunkedBody, _H1Chunk, Http1Draft, Header,
     )
     return {cls.__name__: cls for cls in classes}
 
@@ -230,6 +233,9 @@ def _resume_h1_body(part, data):
 
     if group.content_part._pending is not None:
         raise CommitException('Cannot append input to an already edited incomplete H1 body')
+
+    if isinstance(group, _ChunkedGroup):
+        return group.feed(data)
 
     consumed = min(len(data), group.expected - len(group.body))
     group.body += data[:consumed]

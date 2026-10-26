@@ -100,7 +100,7 @@ class WriteTests(unittest.TestCase):
         import base64, json, subprocess
         source_dir = pathlib.Path(__file__).resolve().parents[1] / 'src'
         worker = '\n'.join((source_dir / name).read_text() for name in (
-            'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_translate.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
+            'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_chunked.py', 'inspection_translate.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
         def run(script):
             request = {'script': script, 'event': {'details': {'info': {
                 'content': base64.b64encode(self.request).decode()}}}}
