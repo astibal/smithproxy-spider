@@ -1,64 +1,63 @@
 # First Class API Design
 
-**Status: ZÁVAZNÝ NÁVRHOVÝ KONTRAKT**  
-Verze: 1.1
+**Status: BINDING DESIGN CONTRACT**
+Version: 1.1
 
-Datum: 2026-10-25
-Rozsah: skriptovací API Spideru, Parts, editace, commit, hold a jejich prezentace.
+Date: 2026-10-25
+Scope: Spider scripting API, Parts, editing, commit, hold and their presentation.
 
-Tento dokument určuje cílovou architekturu First Class API. Implementace,
-generovaná dokumentace, editor i testy se s ním musí shodovat. Odchylka vyžaduje
-výslovně schválenou změnu kontraktu; nesmí vzniknout potichu jako implementační
-zkratka. Závaznost návrhu neznamená, že jsou všechny jeho části implementované.
+This document defines the target First Class API architecture. Implementation,
+generated documentation, editor and tests must agree with it. Deviations require
+an explicitly approved contract change, not a silent implementation shortcut.
+A binding design does not imply that every part is already implemented.
 
-Slova **musí**, **nesmí** a **má** označují závazné požadavky. Otevřená rozhodnutí
-jsou uvedena samostatně a nesmějí být vydávána za hotový kontrakt.
+**Must**, **must not** and **shall** denote binding requirements. Open decisions
+are listed separately and must not be presented as settled contracts.
 
-## Základní filozofie
+## Core philosophy
 
-Pracujeme s **Parts**: částmi obsahu, které si nesou svůj význam, reprezentaci
-a vazby na původní přenosová data. Stejná abstrakce slouží ke čtení, úpravě,
-sestavení i čekání na další callback. Hold prodlužuje životnost části, nikoli
-jen anonymních bajtů.
+We work with **Parts**: content units carrying meaning, representation and links
+to original wire data. The same abstraction supports reading, editing, assembly
+and waiting for another callback. Hold extends a part's lifetime, not just that
+of anonymous bytes.
 
-API má být nízkoprahové. Uživatel má pracovat s tím, čemu Spider skutečně rozumí,
-bez ručního počítání offsetů, délek a rutinního převádění reprezentací.
-Neznámý obsah je přitom plnohodnotný: absence anotace není chyba.
+The API should be approachable. Users work with what Spider actually understands,
+without manually calculating offsets, lengths or routine representation conversions.
+Unknown content is first-class: a missing annotation is not an error.
 
-Skripty běží na backendu i bez otevřeného GUI. Editor zná API, poskytuje typovou
-nápovědu a příklady. Referenční dokumentace se generuje z definic API, aby se
-nemusela nezávisle synchronizovat s implementací.
+Scripts run on the backend even without an open GUI. The editor knows the API and
+provides typed hints and examples. Reference documentation is generated from API
+definitions rather than maintained independently.
 
-## Zpráva a seznam Parts
+## Message and Parts list
 
-`api.message` je pracovní zpráva aktuálního běhu skriptu. Její `parts` zahrnují
-veškerý dostupný obsah, včetně neanotovaných mezer. Po zavedení holdu může zpráva
-obsahovat podržené části z předchozích callbacků před novými částmi.
+`api.message` is the working message for the current script invocation. Its `parts`
+cover all available content, including unannotated gaps. With hold, the message
+can contain retained parts from previous callbacks before newly received parts.
 
-Part není automaticky jedna anotace ani jeden souvislý wire slice. Anotace se
-mohou překrývat; jedna interpretovaná část může mít vazbu na více wire rozsahů.
-Překryv anotací nesmí sám způsobit duplicitní emisi bajtů. Konkrétní pravidla
-rozdělení překrývajících se anotací do parts jsou ještě otevřená.
+A part is not necessarily one annotation or one contiguous wire slice. Annotations
+can overlap; one interpreted part can refer to multiple wire ranges. Overlapping
+annotations must not cause duplicate byte emission. Exact rules for splitting
+overlapping annotations into parts remain open.
 
-Skript smí parts přeskupovat. Framework nesmí obecně zakazovat pořadí jen proto,
-že je neobvyklé nebo ho protistrana nemusí přijmout. Odpovídá za sestavení známých
-reprezentací a jednoznačně určených závislostí, ne za záruku úspěchu aplikace.
+Scripts may reorder parts. The framework must not generally prohibit an order
+merely because it is unusual or the peer might reject it. It assembles known
+representations and unambiguous dependencies; it does not guarantee application success.
 
-Přepočet hlavičky vychází z následujících **relevantních** parts. Relevantnost
-musí zohledňovat konkrétní zprávu, směr a případný protokolový stream; nesmí
-znamenat prostě všechny bajty za hlavičkou. Nejednoznačnou závislost commit
-odmítne, místo aby ji odhadoval.
+Header recalculation uses subsequent **relevant** parts. Relevance must account
+for the particular message, direction and protocol stream, not simply every byte
+after the header. Commit rejects ambiguous dependencies instead of guessing.
 
-## Typy částí
+## Part types
 
-Typ určuje, co part reprezentuje, ne protokol celého spojení. Například HTTP
-obsah může zahrnovat MIME části. Samostatný `Protocol` přepínač není součástí
-tohoto modelu.
+A type describes the part, not the protocol of the entire connection. HTTP content
+can contain MIME parts, for example. A separate `Protocol` selector is not part
+of this model.
 
 ```python
 for part in api.message.parts:
     if part.is_a(PartType.Http1.Part):
-        # Rodina HTTP/1 částí, například Header nebo Body.
+        # HTTP/1 family, for example Header or Body.
         ...
     elif part.is_a(PartType.Mime.Part):
         ...
@@ -68,47 +67,45 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
-- `part.type == ...` porovnává přesný typ.
-- `part.is_a(...)` testuje příslušnost do rodiny typů.
-- `PartType.Opaque` znamená obsah bez protokolové interpretace. Má stejné základní
-  operace čtení, zápisu, commit a hold jako ostatní části.
-- Protokolové API musí mít oporu v anotacích nebo explicitně vytvořeném typovaném
-  partu. Text připomínající HTTP uvnitř Opaque části se nesmí sám stát HTTP API.
+- `part.type == ...` compares the exact type.
+- `part.is_a(...)` tests membership in a type family.
+- `PartType.Opaque` means content without a protocol interpretation. It has the
+  same basic read, write, commit and hold operations as other parts.
+- Protocol APIs must be backed by annotations or explicitly constructed typed
+  parts. HTTP-looking text inside an Opaque part must not automatically become HTTP API.
 
-Příklady ukazují cílové API, nikoli seznam již dostupných implementací typů.
+Examples describe the target API, not a list of already implemented types.
 
-## Lazy reprezentace a původní bajty
+## Lazy representations and original bytes
 
-Parts představují významový obsah. HTTP body může být zpřístupněné jako cleartext,
-i když původní wire data byla gzipovaná.
+Parts represent meaningful content. An HTTP body may be exposed as cleartext
+even when its original wire representation was gzipped.
 
-`part.get_bytes()` podle potřeby vytvoří slice, kopii nebo dekódovanou reprezentaci.
-Pouhá existence, iterace nebo podržení partu nesmí vyžadovat materializaci jeho
-obsahu. Pokud je vhodná reprezentace už dostupná, může se znovu použít.
+`part.get_bytes()` creates a slice, copy or decoded representation as needed.
+Creating, iterating or holding a part must not require materializing its content.
+An already available suitable representation may be reused.
 
-Čtení nesmí označit part jako změněný. Explicitní `part.set_bytes(data)` vytváří
-změnu. Nezměněný part musí zachovat původní wire bajty; nesmí se zbytečně znovu
-komprimovat ani serializovat. Stejný cleartext nemusí vytvořit identický gzip.
+Reading must not mark a part dirty. Explicit `part.set_bytes(data)` creates a
+change. An unchanged part must preserve its original wire bytes, without needless
+recompression or serialization. Identical cleartext need not produce identical gzip.
 
-U Opaque části je převod reprezentace na wire obsah identita. Typované části
-zajišťují odpovídající serializaci nebo kódování, pokud je podporované.
+For Opaque, representation-to-wire conversion is the identity. Typed parts provide
+the corresponding serialization or encoding where supported.
 
-Velikost reprezentace, původní wire velikost a výsledná wire velikost jsou různé
-veličiny a API je nesmí skrývat pod jedním nejasným `size()`. Encoding musí být
-zjistitelný přímo, ne odhadem z rozdílu velikostí. Přesné názvy těchto atributů
-zůstávají otevřené.
+Representation size, original wire size and resulting wire size are distinct.
+The API must not hide them behind one ambiguous `size()`. Encoding must be directly
+discoverable rather than inferred from size differences. Exact attribute names remain open.
 
-## Dvě úrovně commitu
+## Two commit levels
 
-`part.commit()` validuje změněnou reprezentaci a připraví její wire podobu.
-Například serializuje hlavičky nebo znovu zkomprimuje upravené body.
-Neodesílá data protistraně. U nezměněného partu jde o levný no-op.
+`part.commit()` validates the edited representation and prepares its wire form,
+for example by serializing headers or recompressing a modified body. It sends
+nothing to the peer. For an unchanged part it is a cheap no-op.
 
-`api.message.commit()` provede průchod všemi částmi určenými k výstupu a jejich
-commit, následovaný společným sestavením. Dopočítá známé závislosti, například
-Content-Length, rámování a výstupní offsety. Explicitní volání `part.commit()`
-není povinné; slouží k včasné validaci nebo získání výsledné wire velikosti.
-Podržené části nejsou výstup a samotný hold jejich commit nevynucuje.
+`api.message.commit()` commits all output parts and assembles the result. It
+recalculates known dependencies such as Content-Length, framing and output offsets.
+Explicit `part.commit()` is optional: use it for early validation or to inspect
+the resulting wire size. Held parts are not output; hold alone does not force commit.
 
 ```python
 for part in api.message.parts:
@@ -121,273 +118,287 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
-Commit nesmí během sestavování publikovat dílčí změny. Neúspěšné sestavení vyvolá
-chytatelnou `CommitException`, zachová původní vstup a ponechá drafty opravitelné.
-Úspěšný lokální commit nezaručuje úspěch celkového commitu. Již odeslané bajty
-z minulého callbacku nelze zpětně opravit.
+Commit must not publish partial changes during assembly. Failed assembly raises
+a catchable `CommitException`, preserves the original input and leaves drafts
+repairable. A successful local commit does not guarantee a successful message
+commit. Bytes emitted by an earlier callback cannot be repaired retroactively.
 
-Výsledný obsah se předává existujícím mechanismem návratu ze skriptu.
-Payloadová transakce sama o sobě neslibuje rollback externích operací,
-sdíleného úložiště ani ostatních vedlejších účinků skriptu.
+The result uses the existing script return mechanism. A payload transaction does
+not promise rollback of external operations, shared storage or other script effects.
 
-## Úplnost části a obsahu
+## Part and content completeness
 
 ```python
 part.complete
 part.content.complete
 ```
 
-`part.complete` vyjadřuje úplnost konkrétní části, například H2 DATA rámce.
-`part.content.complete` vyjadřuje úplnost příslušného celého obsahu, například
-HTTP body. Kompletní DATA rámec tedy nemusí znamenat kompletní content.
+`part.complete` describes one part, such as an H2 DATA frame. `part.content.complete`
+describes its entire associated content, such as an HTTP body. A complete DATA
+frame does not necessarily mean complete content.
 
-Obě vlastnosti rozlišují `True`, `False` a `None`: úplné, prokazatelně neúplné,
-a z dostupných informací neurčitelné. Zjištění úplnosti samo nesmí vyžadovat
-zbytečné materializování decoded obsahu.
+Both distinguish `True`, `False` and `None`: complete, known incomplete, and
+undeterminable from available information. Checking completeness must not require
+unnecessary decoded-content materialization.
 
-Úplný content vyžaduje známý konec i přítomnost všech potřebných částí.
-Samotný END_STREAM ani úspěšný inflate to nezaručují. `content` je kontext
-souvisejících částí, ne automaticky další kopie bajtů nebo samostatný stream view.
+Complete content requires a known end and every required part. END_STREAM or a
+successful inflate alone is insufficient. `content` is a context linking related
+parts, not automatically another byte copy or a separate stream view.
 
-Framework nečeká magicky na budoucí callbacky. Skript, který potřebuje celý
-obsah, musí příslušné části podržet. Pokud bude měnit délku body, musí zachovat
-i možnost upravit související hlavičku; emitovanou hlavičku hold body nevrátí.
+The framework does not magically wait for future callbacks. A script needing the
+whole content must hold the relevant parts. To change body length, it must retain
+the ability to modify the corresponding header; holding a body cannot retrieve
+an already emitted header.
 
-## Streams bez automatických pohledů
+## Streams without automatic views
 
-`part.stream_id` je vždy integer. U částí s protokolovým stream ID obsahuje
-skutečné ID; jinak má hodnotu **1**, včetně Opaque částí. Skutečná nula zůstává
-nulou, například u connection-level H2 rámců.
+`part.stream_id` is always an integer. Parts with protocol stream IDs expose the
+actual ID; otherwise the value is **1**, including Opaque parts. Actual zero stays
+zero, for example for connection-level H2 frames.
 
 ```python
 for part in api.message.parts:
     if part.stream_id == 1:
-        # Záměrně zahrnuje skutečný stream 1 i části s výchozí hodnotou.
+        # Deliberately includes actual stream 1 and parts with the default ID.
         ...
 ```
 
-Výběr a seskupování provádí skript. API zatím nevytváří automatické per-stream
-views ani pořadí podle streamů. Interní vazby nesmějí vycházet pouze z veřejného
-`stream_id`: výchozí 1 nedokazuje příslušnost Opaque části k H2 streamu 1.
+Scripts select and group parts. The API does not currently create automatic
+per-stream views or stream-based ordering. Internal relationships must not rely
+solely on public `stream_id`: default 1 does not associate an Opaque part with H2 stream 1.
 
-## Hold uchovává celé Parts
+## Hold preserves whole Parts
 
-Free-form `hold(N)` nad bajty není cílový model. Zadržujeme celé parts se zachováním
-jejich významu, nikoli bajty určené k novému rozpoznávání.
+Free-form byte `hold(N)` is not the target model. We retain whole parts and their
+meaning, not bytes to be rediscovered later.
 
 ```python
 api.message.parts.hold_from(part)
 ```
 
-Tato operace zadrží označenou část i všechny následující části v aktuálním pořadí.
-Předcházející prefix může být sestaven a odeslán. Skript může před operací seznam
-přeskupit; neexistuje obecný zákaz, že původně pozdější part nesmí předběhnout
-podržený part.
+This retains the selected part and every subsequent part in the current order.
+The preceding prefix may be assembled and emitted. Scripts may reorder the list
+first; there is no general prohibition on a formerly later part overtaking a held part.
 
-Hold buffer zachovává typ, stream ID, úplnost, anotace, interní vazby, původní
-wire obsah, lazy reprezentaci, rozpracované změny a případný výsledek lokálního
-commitu. Hold sám nevynucuje decode ani commit. Podržené části se z aktuálního
-výstupu zkonzumují a protistraně nesmějí odejít.
+The hold buffer preserves type, stream ID, completeness, annotations, internal
+relationships, original wire content, lazy representation, draft edits and any
+local commit result. Hold itself forces neither decode nor commit. Held parts
+are consumed from the current output and must not reach the peer.
 
-Další běh dostane podržené parts před novými se zachovaným pořadím. Backend musí
-uchovat jejich významový stav mezi zanikajícími Python workery; nesmí se spoléhat
-na přežití Python objektů. Životnost transportně podrženého obsahu nelze zaměnit
-za životnost uživatelského `api.state`.
+The next invocation receives held parts before new parts, preserving order. The
+backend must retain semantic state across Python worker lifetimes rather than
+relying on surviving Python objects. Transport hold lifetime is not user
+`api.state` lifetime.
 
-Podržení musí být izolované minimálně podle deploymentu, spojení a směru;
-endpoint instancing nesmí smíchat data různých spojení. Přesné transakční chování
-mezi více skripty a při změně deploymentu je otevřený implementační kontrakt.
+Hold must be isolated at least by deployment, connection and direction. Endpoint
+instancing must not mix connections. Exact transactions across scripts and
+deployment changes remain an open implementation contract.
 
-## Vlastní typované Parts
+## Custom typed Parts
 
-Skript může do seznamu vložit nově vytvořený part, například cílově:
+A script may insert a newly constructed part; the target API includes:
 
 ```python
 ping = api.http2.Ping(opaque_data=b"12345678")
 api.message.parts.append(ping)
 ```
 
-Nový part nemá původní wire rozsahy, ale sdílí stejný commit kontrakt. Typovaná
-serializace kontroluje požadavky konkrétního typu; příklad PING konstruktoru
-není příslib již implementované podpory. Interakce vložených řídicích rámců
-s protistranou, například zpracování ACK, musí mít výslovně určené chování.
+New parts have no original wire ranges but share the commit contract. Typed
+serialization validates type-specific requirements. This constructor example is
+not a promise of already implemented support. Interactions with peers, such as
+ACK handling for inserted control frames, require explicitly defined behavior.
 
-## Stavové dekódování a anotace
+## Stateful decoding and annotations
 
-Živý stavový engine zpracovává každý nový příchozí bajt právě jednou. Složený
-vstup skriptu obsahující podržené parts se nesmí znovu přehrát do živého HPACK
-nebo dekompresního stavu.
+The live stateful engine processes each new incoming byte exactly once. A script's
+assembled input containing held parts must not be replayed into live HPACK or
+decompression state.
 
 ```text
-nový vstup → stavový enrichment → nové parts
-                                    + podržené parts
-                                    ↓
-                               pracovní zpráva
-                                    ↓
-                         editace / hold / commit
+new input -> stateful enrichment -> new parts
+                                   + held parts
+                                   |
+                                   v
+                              working message
+                                   |
+                                   v
+                            edit / hold / commit
 ```
 
-Přesuny a sestavení přepočítávají souřadnice a vazby anotací. Framework nemusí
-opravovat jejich původní věcnou správnost ani překryvy. Musí ale zachovat původ
-odvozených reprezentací; enrichment přes více callbacků není obyčejný slice.
+Moves and assembly recalculate annotation coordinates and relationships. The
+framework need not repair their original semantic correctness or overlaps, but
+must preserve derived representation provenance. Enrichment spanning callbacks
+is not an ordinary slice.
 
-Stav dekodéru příchozího streamu a stav protistrany po změnách výstupu nejsou
-totéž. Zvláště zápisy do HPACK nelze prohlásit za bezpečné pouze proto, že
-umíme serializovat jednu hlavičku.
+Incoming decoder state and peer state after output edits are different. In
+particular, HPACK writes are not safe merely because one header can be serialized.
 
-## Viditelnost změn v GUI
+## GUI visibility
 
-Publikace do GUI musí jednoznačně sdělit alespoň to, že se obsah změnil nebo
-byl podržen. Původní payload a jeho anotace nesmějí být vydávány za skutečně
-odeslaný změněný výstup.
+GUI publication must clearly report at least that content changed or was held.
+Original payloads and annotations must not masquerade as modified transmitted output.
 
-Metadata zpracování mají odlišit příchozí, změněný, podržený, uvolněný a odeslaný
-obsah a identifikovat původní callbacky a zasahující skript. Přesné názvy polí
-a rozsah uchovávaného výstupního obsahu nejsou zatím stanovené. Pouhý příznak
-změny neopravňuje GUI zobrazovat rekonstruovaný výstup jako skutečně zachycený.
+Processing metadata should distinguish incoming, modified, held, released and
+sent content, identifying original callbacks and the intervening script. Exact
+field names and retained-output scope remain open. A change flag alone does not
+justify displaying reconstructed output as actually captured data.
 
-## Otevřená rozhodnutí a vědomě odložená ochrana holdu
+## Open decisions and deliberately deferred hold protection
 
-- Atomická návaznost hold bufferů a výstupu v řetězci více skriptů.
-- Chyba, timeout nebo nedostupný worker po předchozím úspěšném holdu. Běžné
-  „pusť jen aktuální originál“ není dostatečné: ztratilo by starší zadržené části.
-- Ukončení spojení, disable, redeploy, změna filtru a restart backendu.
-- Limity paměti, délky čekání a politika při jejich překročení.
-- Serializace a verzování uchovávaných parts, včetně neúplných reprezentací.
-- Způsob doplnění neúplného partu nebo content kontextu dalšími callbacky bez
-  dvojího průchodu živým dekodérem.
-- Přesná pravidla překryvů anotací, rozdělení parts a vazeb mezi nimi.
-- Chování `return None`, chyb a ad-hoc preview při práci s hold bufferem.
+- Atomic continuity of hold buffers and output across a script chain.
+- Error, timeout or unavailable worker after a successful hold. Passing only the
+  current original fragment is insufficient: earlier held parts would be lost.
+- Connection termination, disable, redeploy, filter changes and backend restart.
+- Memory/wait limits and policies on exceeding them.
+- Serialization and versioning of retained parts, including incomplete representations.
+- Completing parts/content across callbacks without replay through the live decoder.
+- Exact annotation-overlap, part-splitting and relationship rules.
+- `return None`, errors and ad-hoc preview with a hold buffer.
 
-Pro první živou implementaci bylo výslovně schváleno ponechat **fail-open** a
-výpadkovou ochranu odložit do `docs/TODO.md`. Výpadek po need-more může porušit
-úplnost/pořadí přenosu; současný hold tento problém neřeší. Normální úspěšná cesta
-musí nadále zabránit předčasné nebo dvojité emisi. Nejde o režim TRANSLATE.
+The first live implementation explicitly retains **fail-open**, deferring outage
+protection to `docs/TODO.md`. Failure after need-more may break completeness or
+ordering; current hold does not solve this. The normal success path must still
+prevent early or duplicate emission. This is not TRANSLATE mode.
 
-Živý hold je nyní dostupný v posledním zapnutém deploymentu s instanciací `flow`.
-Checkpointy jsou oddělené podle deploymentu/generace, spojení a L/R směru;
-nejsou uživatelským `api.state` ani stavem procesu Pythonu. Jsou to verzovaná,
-typovaná JSON data bez pickle. Limit je 1 MiB serializovaného checkpointu,
-celkově 4 MiB na deployment včetně instance state. Převzetí nastává jen úspěšným
-vrácením výsledku `message.commit()`: prázdný prefix vrací `need-more`, neprázdný
-prefix `replace`. Další callback obnoví původní Parts a jejich drafty.
+Live hold is available in the last enabled `flow` deployment. Checkpoints are
+separated by deployment/generation, connection and L/R direction, independently
+of user `api.state` and Python process state. They are versioned typed JSON, not
+pickle. The serialized checkpoint limit is 1 MiB; the deployment limit including
+instance state is 4 MiB. Ownership transfers only on successfully returning
+`message.commit()`: an empty prefix returns `need-more`, a nonempty prefix returns
+`replace`. The next callback restores original Parts and their drafts.
 
-`return None` po obnovení holdu je chyba: skript musí explicitně vrátit výsledek
-nebo znovu podržet části. Preview a message/endpoint instanciace hold odmítnou.
-Při chybě vykonaného skriptu se dřívější hold daného směru opustí s metadaty
-`hold.state=abandoned`; aktuální fragment se podle dnešní politiky pustí beze změny.
-Checkpoint se odstraní také s instancí při stop/expiry/redeploy; není persistentní
-přes restart backendu. Tato omezení musí být viditelná v dokumentaci.
+`return None` after restoring hold is an error: explicitly return a result or
+hold again. Preview and message/endpoint instancing reject hold. An executed
+script failure abandons prior hold in that direction with `hold.state=abandoned`;
+current policy passes the current fragment unchanged. Stop/expiry/redeploy also
+remove the instance checkpoint. It does not persist across backend restart.
+Documentation must expose these limitations.
 
-## Vztah k současné implementaci
+## Relationship to the current implementation
 
-Existuje write API přes `api.message.snapshot()` a monolitický `draft.http1`,
-s privátním commitem a přepočtem Content-Length pro omezenou množinu kompletních
-HTTP/1 zpráv. Živý H1 Parts/hold nyní podporuje anotovanou úplnou hlavičku s jedním
-Content-Length a tělem doplňovaným dalšími callbacky, bez komprese. H1 Header
-vystavuje `part.http1`, Body `get_bytes/set_bytes`; commit přepočítá Content-Length.
+The write API includes `api.message.snapshot()` and monolithic `draft.http1`,
+with private commit and Content-Length recalculation for a limited set of complete
+HTTP/1 messages. Live H1 Parts/hold supports an annotated complete header with one
+Content-Length and an uncompressed body completed by subsequent callbacks. H1
+Header exposes `part.http1`, Body exposes `get_bytes/set_bytes`; commit recalculates
+Content-Length.
 
-První živá H2 implementace používá `api.message.parts` v režimu REWRITE:
-anotované framy, celé lokální HEADERS/PUSH_PROMISE + CONTINUATION bloky a Opaque
-mezery. Neúplné části lze zachovat, nikoli přestavět. HPACK pole, explicitní
-indexy, table-size updates, DATA a vlastní framy jsou zapisovatelné. Celý lokálně
-známý content umožňuje přepočet Content-Length. `commit(False)` tento přepočet
-explicitně vypíná pro assemblerové/research úpravy.
+Initial live H2 REWRITE uses `api.message.parts`: annotated frames, complete local
+HEADERS/PUSH_PROMISE + CONTINUATION blocks and Opaque gaps. Incomplete parts can
+be preserved, not rebuilt. HPACK fields, explicit indexes, table-size updates,
+DATA and custom frames are writable. Complete locally known content permits
+Content-Length recalculation; `commit(False)` explicitly disables that repair
+for assembler/research edits.
 
-`part.complete` značí úplný frame/header blok, `part.content.complete` úplný
-lokálně známý content (`True`), rozpracovaný (`False`), nebo neznámý (`None`).
-U DATA bez lokální počáteční hlavičky není END_STREAM samo důkazem celého contentu.
-Komprese contentu, obecné překryvy anotací a TRANSLATE zatím nejsou implementované.
-H2 hold uchovává i neúplné framy s dostupnou devítibajtovou hlavičkou a neúplné
-HEADERS/CONTINUATION bloky; jejich obsah se doplňuje bez opakovaného průchodu
-živým HPACK dekodérem. Strukturální H2 části se sestavují při vytvoření callbackového
-API. DATA a Opaque drží view původních bajtů; `get_bytes()` je materializuje až
-při čtení. Nezměněný commit je nekopíruje do jednotlivých reprezentací znovu.
+`part.complete` means a complete frame/header block. `part.content.complete` means
+complete locally known content (`True`), in progress (`False`) or unknown (`None`).
+For DATA without a local initial header, END_STREAM alone does not prove complete
+content. Compressed-content writes and general annotation overlaps are not yet
+implemented. Bounded live H2 TRANSLATE is implemented as described below.
 
-Současné rozpoznání HTTP/1 snapshotu přímo z bajtů musí být při přechodu na Parts
-nahrazeno interpretací opřenou o anotace. Monolitický snapshot není vzor pro
-další růst veřejného API; jeho validační a serializační logika může sloužit
-jako stavební dílek jednotlivých parts a jejich společného commitu.
+H2 hold preserves incomplete frames with an available nine-byte header and
+incomplete HEADERS/CONTINUATION blocks, completing them without replay into the
+live HPACK decoder. Structural H2 parts are assembled when the callback API is
+created. DATA and Opaque retain views into original bytes; `get_bytes()` materializes
+them on read. An unchanged commit does not copy them into individual representations.
 
-## REWRITE a TRANSLATE
+Current HTTP/1 snapshot recognition directly from bytes must be replaced by
+annotation-backed interpretation when moving to Parts. The monolithic snapshot
+is not a model for further public API growth; its validation and serialization
+can become building blocks for parts and their joint commit.
 
-Výchozí **REWRITE** sestaví výhradně explicitně upravený aktuální obsah. Nikdy
-neaktivuje skryté přepisy dalších callbacků. Engine zajistí serializaci délek
-framů, rozdělení DATA/header bloků a podporované lokální závislosti. Nezajišťuje
-smysluplnost hodnot, kompenzaci flow-control oken ani budoucí shodu HPACK tabulek
-obou protějšků. Explicitní
-index může odkazovat na neexistující položku; validní HPACK instrukce neznamená,
-že ji protějšek ve svém stavu přijme. To je vědomá odpovědnost autora skriptu.
-Nezměněné HPACK instrukce i celé nezměněné framy zachovají originální bajty.
+## REWRITE and TRANSLATE
 
-Budoucí **TRANSLATE** musí uživatel explicitně aktivovat. Vyžaduje dostupnost
-celého dalšího contentu spojení a alespoň flow instanciaci. Každá výstupní
-modifikace musí projít explicitním voláním skriptu; žádné magické opravy mimo
-uživatelský běh. Chyba nebo chybějící nutný překlad znamenají ukončení spojení,
-nikoli pokračování s nekonzistentním stavem. REWRITE může mít odlišnou politiku
-chyb (dnes živá exekuce fail-open). Protokolové řízení/strict a potvrzení jeho
-aktivace jsou odložené; tento kontrakt netvrdí, že už existují.
+Default **REWRITE** assembles only explicitly modified current content. It never
+activates hidden rewriting of later callbacks. The engine serializes frame lengths,
+splits DATA/header blocks and resolves supported local dependencies. It does not
+guarantee meaningful values, flow-control compensation or future agreement between
+peer HPACK tables. An explicit index may reference a missing entry: a valid HPACK
+instruction need not be accepted in peer state. This is deliberately the script
+author's responsibility. Unchanged HPACK instructions and frames retain original bytes.
 
-## Ověřovací kritéria
+Live **TRANSLATE** requires explicit activation. Current H2 support covers
+HEADERS/PUSH_PROMISE, HPACK, supported SETTINGS and same-length DATA edits, not
+general DATA resizing with flow-control compensation. It requires one enabled
+flow deployment and activation in the first content callback. Every subsequent
+callback must run the script and return `api.message.translate()`; there are no
+hidden repairs outside user execution. The backend pins deployment/version and
+maintains separate input/output HPACK states in both directions.
 
-Testy implementace musí pokrývat zachování původních wire bajtů po pouhém čtení,
-lazy materializaci, Opaque mezery, typovou hierarchii a výchozí stream ID 1.
-Dále musí odlišovat úplnost rámce od contentu, ověřovat atomický commit a
-opakovaný pokus po CommitException a prokázat zachování významu parts přes hold.
+The current proxy requires `request_rewrite()` during setup, before first-payload
+analysis. Setup has no `api.message` and does not activate Translate. Without
+reservation, only same-length replacement is permitted, at the script's risk.
+A missing legacy `rewrite` field remains a compatibility path, not an explicit
+denial; see [capability metadata compatibility](INSPECTION_COOKBOOK.md#capability-metadata-compatibility).
 
-Transportní testy musí ověřit, že podržený obsah neodejde předčasně, po uvolnění
-neodejde dvakrát, nesmíchá se mezi spojeními a znovu nevstoupí do živého dekodéru.
-GUI testy musí odlišovat původní vstup od změněného nebo podrženého výstupu.
+The first successfully returned Translate result activates strict alongside content
+or need-more. Subsequent callbacks confirm strict and contiguous sequence. An
+already active translation failure returns HTTP 503 and closes the strict proxy
+connection instead of continuing with inconsistent state. Failure before first
+successful activation may still fail open under regular policy. Ordinary REWRITE,
+including hold, remains fail-open; state-loss protection is deliberately deferred.
+Implemented contract details: [Live H2 Translate](H2_TRANSLATE_LIVE.md).
 
-### Ověření první H2 REWRITE implementace — 2026-10-25
+## Verification criteria
 
-- `ctest --test-dir build --output-on-failure -j 2`: **17/17 prošlo**.
-- `tests/inspection_h2_test.py`: **17 testů**, včetně 200 deterministických
-  náhodných no-op/partial vstupů a 100 sad binárních HPACK literálů. Výstup
-  ověřuje nezávislý dekodér libnghttp2, nikoli vlastní encoder/parser.
-- Pokryté jsou Huffman/indexované vstupy, explicitní table/index editace,
-  padding/priority, PUSH_PROMISE, CONTINUATION, hranice velikostí, END_STREAM,
-  Content-Length, přidání/odebrání DATA, Opaque mezery, lazy materializace,
-  atomické selhání/retry a explicitní publikace výsledku workerem.
-- `spider_chain_test`: skutečný lokální webhook s backendovým HPACK enrichmentem,
-  sandboxovaným rewritem a nezávislým dekódováním náhrady; vypnutí skriptu znovu
-  ponechá callback beze změny. Žádný překlad nepokračuje skrytě.
-- Jazykové testy ověřují typy parts, hlaviček, položek HPACK i konstruktorů.
-- `tests/browser_smoke.py --repeat 1`: **prošlo**, izolovaná regrese editoru
-  a oddělení library/deploy/draft. Netestuje živý H2 provoz v browseru; ten
-  pokrývá výše uvedená backendová integrace.
+Implementation tests must cover original wire preservation after read-only access,
+lazy materialization, Opaque gaps, type hierarchy and default stream ID 1. They
+must distinguish frame from content completeness, check atomic commit and retry
+after CommitException, and prove semantic preservation across hold.
 
-### Živý hold — ověření 2026-10-25
+Transport tests must prove that held content is neither emitted early nor twice,
+mixed between connections, or replayed into the live decoder. GUI tests must
+distinguish original input from modified or held output.
 
-- Celá sada rozšířena na **19 testovacích sad**, všechny prošly také v UBSan.
-- `inspection_hold_test.py`: **11 testů**; všechny řezy H1 body a H2 DATA,
-  opakované checkpointy přes skutečně nové workery, zachování rozpracovaných
-  hlaviček a délkových závislostí po odstranění DATA, prefix emit, limity, chybné
-  anotace a odmítnutí nepodporovaných režimů.
-- `inspection_hold_live_tests`: skutečný backendový handler + pool; prokládaná
-  spojení a oba směry, souběžné callbacky, postup po jednom bajtu, jeden výsledný
-  replace, stop/redeploy bez přenosu starého holdu do nové generace a dnešní
-  fail-open při chybě. H2 HEADERS/CONTINUATION používá skutečné HPACK enrichmenty.
-- `spider_chain_test`: HTTP callbacky vrátí dvakrát čisté `need-more`, poté jediný
-  `replace` s přepsaným body a novým Content-Length. Nevyžaduje běžící lab1.
-- Výsledky testů negarantují zotavení při výpadku backendu/proxy; to zůstává
-  výslovně odloženou položkou TODO, nikoli implicitně vyřešenou vlastností.
+### First H2 REWRITE verification — 2026-10-25
 
-### Rozšířené deterministické korpusy — 2026-10-25
+- `ctest --test-dir build --output-on-failure -j 2`: **17/17 passed**.
+- `tests/inspection_h2_test.py`: **17 tests**, including 200 deterministic random
+  no-op/partial inputs and 100 binary HPACK literal sets. Independent libnghttp2
+  validates output, not our own encoder/parser.
+- Coverage includes Huffman/indexed input, explicit table/index edits,
+  padding/priority, PUSH_PROMISE, CONTINUATION, size boundaries, END_STREAM,
+  Content-Length, DATA insertion/removal, Opaque gaps, lazy materialization,
+  atomic failure/retry and explicit worker result publication.
+- `spider_chain_test`: real local webhook with backend HPACK enrichment,
+  sandboxed rewrite and independent replacement decoding. Disabling the script
+  restores unchanged callbacks; translation does not secretly continue.
+- Language tests check part, header, HPACK entry and constructor types.
+- `tests/browser_smoke.py --repeat 1`: **passed**, isolated editor and
+  library/deploy/draft separation regression. It does not test live H2 browser
+  traffic; the backend integration above covers that traffic.
 
-- Ověření: standardní build a **21/21 CTest sad prošlo**, celkem 26,17 s.
-  Tento běh není novým UBSan během; výsledek UBSan výše patří předchozí sadě.
-- `inspection_h1_corpus_tests`: request i response, prázdné body, všechny hodnoty
-  bajtu, UTF-8, JSON, nulové bajty, HTTP-like obsah uvnitř body, náhodná data
-  a 64 KiB+1 body. Matice 54 přepisů s různými fragmentacemi a délkami náhrady;
-  dalších 69 řezů ověřuje přesné zachování body i navazujícího Opaque obsahu.
-  Samostatně 24 prokládaných checkpointů a oprava draftu po neúspěšném commitu.
-- `inspection_h2_corpus_tests`: 40 kombinací délky DATA a stream ID včetně hranic
-  16383/16384/16385, rozdělení rámců a END_STREAM; 27 kombinací HPACK délky
-  a indexing režimu, HEADERS/CONTINUATION ověřené přes libnghttp2; 16 prokládaných
-  streamů s nezávislým Content-Length; 128 řezů DATA s opakovanými checkpointy;
-  100 náhodných neznámých rámců zachovaných byte-for-byte.
-- Generátory používají pevné seedy, chyby jsou reprodukovatelné. Obě sady jsou
-  součástí CTest s timeoutem 30 sekund. Jde o transakční/serializační testy,
-  nikoli náhradu existujících živých webhook a worker-pool integrací ani důkaz
-  stoprocentního pokrytí všech vstupů.
+### Live hold verification — 2026-10-25
+
+- Expanded to **19 suites**, all also passed under UBSan.
+- `inspection_hold_test.py`: **11 tests** covering every H1 body/H2 DATA split,
+  repeated checkpoints across fresh workers, retained header drafts and length
+  dependencies after DATA removal, prefix emission, limits, invalid annotations
+  and unsupported-mode rejection.
+- `inspection_hold_live_tests`: real backend handler/pool; interleaved connections
+  and directions, concurrent callbacks, bytewise progress, one final replacement,
+  stop/redeploy generation isolation and current failure fail-open behavior.
+  H2 HEADERS/CONTINUATION uses real HPACK enrichments.
+- `spider_chain_test`: two pure `need-more` HTTP responses followed by one `replace`
+  with edited body and new Content-Length; no running lab1 required.
+- Results do not guarantee backend/proxy outage recovery. That remains an explicit
+  TODO, not an implicitly solved property.
+
+### Extended deterministic corpora — 2026-10-25
+
+- Standard build and **21/21 CTest suites passed** in 26.17 s. This was not a new
+  UBSan run; the UBSan result above belongs to the preceding suite.
+- `inspection_h1_corpus_tests`: requests/responses, empty bodies, every byte value,
+  UTF-8, JSON, null bytes, HTTP-looking body content, random data and 64 KiB+1
+  bodies. A 54-rewrite fragmentation/length matrix and 69 additional splits check
+  exact body/following-Opaque preservation; also 24 interleaved checkpoints and
+  draft repair after failed commit.
+- `inspection_h2_corpus_tests`: 40 DATA-length/stream-ID combinations including
+  16383/16384/16385 boundaries, frame splitting and END_STREAM; 27 HPACK-length/
+  indexing combinations with libnghttp2-validated HEADERS/CONTINUATION; 16
+  interleaved streams with independent Content-Length; 128 DATA splits with
+  repeated checkpoints; 100 random unknown frames preserved byte-for-byte.
+- Fixed seeds make failures reproducible. Both suites run in CTest with a 30 s
+  timeout. These are transaction/serialization tests, not replacements for live
+  webhook/worker-pool integrations or proof of full coverage of all inputs.

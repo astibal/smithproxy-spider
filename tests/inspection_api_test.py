@@ -18,14 +18,14 @@ class WriteTests(unittest.TestCase):
     def test_noop_and_independent_snapshots(self):
         one, two = self.draft(), self.draft()
         self.assertEqual(one.commit(), self.request)
-        one.http1.body = 'longer ž'.encode()
+        one.http1.body = 'longer λ'.encode()
         one.http1.target = '/new/path'
         one.http1.set_header('X-A', 'replaced')
         result = one.commit()
         self.assertIn(b'Content-Length: 9\r\n', result)
         self.assertIn(b'POST /new/path HTTP/1.1', result)
         self.assertEqual(result.count(b'X-A:'), 1)
-        self.assertTrue(result.endswith('longer ž'.encode()))
+        self.assertTrue(result.endswith('longer λ'.encode()))
         self.assertEqual(two.commit(), self.request)
         self.assertEqual(one.commit(), result)
         self.assertIn(Header('Content-Length', '3'), one.http1.headers)  # commit does not mutate draft

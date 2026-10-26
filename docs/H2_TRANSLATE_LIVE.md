@@ -1,27 +1,35 @@
-# H2 translate: první živé napojení (API 0.6)
+# H2 translate: first live integration (API 0.6)
 
-**Experimentální, omezený rozsah.** API už prochází běžným backendem a jeho
-sandboxovanými workery. Není to kompletní H2 terminátor ani transparentní
-podpora všech HTTP/2 spojení. Nepodporovaný stav se odmítá, neobchází.
+**Experimental, limited scope.** The API runs through the regular backend and
+sandboxed workers. It is not a complete H2 terminator or transparent support for
+every HTTP/2 connection. Unsupported state is rejected, not bypassed.
 
-## Spuštění
+## Getting started
 
-1. Proxy musí obsahovat webhook control patch a posílat v content metadatech
+1. The proxy must include the webhook control patch and send content metadata
    `webhook_control: {version: 1, mode: "regular"|"strict", sequence: N, rewrite: true}`.
-   `sequence` počítá content callbacky celého spojení, společně pro oba směry.
-2. Python worker potřebuje `python-hpack`. Bez něj dál funguje rewrite,
-   ale translate vyvolá CommitException.
-3. Povol jediný deployment s instanciací `flow`. Scope a session filter určují
-   přijetí nového spojení; aktivovat lze jen v prvním callbacku (`sequence == 1`).
-4. V setup callbacku (`api.phase == 'setup'`) explicitně rezervuj rewrite a vrať
-   `None`. `api.message` zde není. Easy i Expert potřebují stejnou rezervaci;
-   vytvoř nové spojení, již běžící nerezervovanou session nelze později povýšit.
-   Výjimka pro stejně dlouhý raw replacement nezapíná Translate ani druhý
-   protokolový kontext a tuto rezervaci nenahrazuje.
-5. Skript musí v každém **content** callbacku vrátit translate výsledek.
-   Setup pouze rezervuje možnost přepisovat, neaktivuje vlastní Translate:
+   `sequence` counts content callbacks for the whole connection, across both directions.
+2. The Python worker needs `python-hpack`. Without it, rewrite still works,
+   but translate raises CommitException.
+3. Enable exactly one deployment with `flow` instancing. Scope and session filter
+   determine admission; activation is allowed only in the first callback (`sequence == 1`).
+4. Explicitly reserve rewrite during setup (`api.phase == 'setup'`) and return
+   `None`. There is no `api.message` here. Easy and Expert need the same reservation;
+   create a new connection, since an existing unreserved session cannot be upgraded.
+   The same-length raw replacement exception does not activate Translate or a second
+   protocol context and does not replace reservation.
+5. Every **content** callback must return a translate result. Setup only reserves
+   rewrite capability; it does not activate Translate.
+
+Steps 1 and 4 describe the current proxy. For a legacy control-v1 peer without
+`rewrite`, the backend retains compatible permission (not implicit `false`),
+still requiring first sequence, one flow deployment and subsequent strict confirmation.
+Without control-v1 capability, Translate cannot start. See
+[metadata compatibility](INSPECTION_COOKBOOK.md#capability-metadata-compatibility);
+this does not promise support for every old proxy version.
 
 <!-- translate-example: replace-header -->
+
 ```python
 if api.phase == 'setup':
     api.connection.request_rewrite()
@@ -33,9 +41,10 @@ for part in api.message.parts:
 return api.message.translate()
 ```
 
-I když není co změnit:
+Even when nothing needs editing:
 
 <!-- translate-example: unchanged -->
+
 ```python
 if api.phase == 'setup':
     api.connection.request_rewrite()
@@ -44,17 +53,18 @@ if api.phase == 'setup':
 return api.message.translate()
 ```
 
-## Příklady: indexovaná hlavička a explicitní překlad
+## Examples: indexed headers and explicit translation
 
-Nejde o zápis číselného indexu jako v rewrite režimu. Aktivní translate předá
-skriptu rozbalené jméno a hodnotu; výstupní indexování obstará vlastní encoder.
-Stejný `set_header()` tedy funguje i tehdy, když na drátu přišel jen index.
+Unlike rewrite, this does not write a numeric index. Active translate exposes the
+decoded name and value; its own encoder manages output indexing. The same
+`set_header()` works even when only an index arrived on the wire.
 
-Příklad pro testovací endpoint: změň `x-lab` pouze ve druhém klientském callbacku.
-První callback aktivuje překlad a naplní vstupní tabulku. V tomto malém scénáři
-každý klientský callback obsahuje jeden HEADERS blok; obecně callback není request.
+For a test endpoint, change `x-lab` only in the second client callback. The first
+activates translation and populates the input table. In this small scenario each
+client callback contains one HEADERS block; a callback is not generally a request.
 
 <!-- translate-example: indexed-once -->
+
 ```python
 if api.phase == 'setup':
     api.connection.request_rewrite()
@@ -69,25 +79,26 @@ if api.side == "L":
             if part.type == PartType.Http2.Header:
                 part.headers.set_header(b"x-lab", b"changed")
 
-# I třetí callback musí překládat, přestože už nic neměníme.
+# The third callback must translate too, even without further edits.
 return api.message.translate()
 ```
 
-| Callback | Vstup odesílatele | Hodnota u příjemce |
+| Callback | Sender input | Receiver value |
 | --- | --- | --- |
-| 1 | literal `x-lab: original`, uložený do tabulky | `x-lab: original` |
-| 2 | dynamický index 62 (`be`) | `x-lab: changed` |
-| 3 | znovu index 62 (`be`) | `x-lab: original` |
+| 1 | literal `x-lab: original`, inserted into the table | `x-lab: original` |
+| 2 | dynamic index 62 (`be`) | `x-lab: changed` |
+| 3 | index 62 (`be`) again | `x-lab: original` |
 
-Index 62 zde plyne z konkrétního testovacího vstupu, není to pevné číslo této
-hlavičky. Skript index vůbec neřeší. Tabulky jsou oddělené po směrech, proto ani
-odpověď serveru nemusí mít stejné indexy. Protisměr také vždy zavolá translate.
+Index 62 follows from this fixture, not a fixed index for that header. The script
+does not handle indexes. Tables are direction-specific, so server responses need
+not use the same indexes. The reverse direction must also always translate.
 
-### Chybný příklad: „tentokrát nic neměním, tak nemusím překládat“
+### Incorrect example: no edit means no translation
 
-Následující skript je **záměrně špatně** pro již aktivní translate:
+This script is **deliberately wrong** for already active translate:
 
 <!-- translate-example: missing-translate -->
+
 ```python
 if api.phase == 'setup':
     api.connection.request_rewrite()
@@ -96,13 +107,15 @@ if api.phase == 'setup':
 return None
 ```
 
-Worker odmítne výsledek: chybí explicitní `api.message.translate()`. Backend
-vrátí 503 a strict proxy spojení zavře. Ani `return api.message.commit()` tuto
-povinnost nenahrazuje; to je lokální rewrite, ne pokračování HPACK překladu.
+The worker rejects the result because explicit `api.message.translate()` is
+missing. The backend returns 503 and the strict proxy closes the connection.
+`return api.message.commit()` does not satisfy this requirement either: it is a
+local rewrite, not continued HPACK translation.
 
-### Neúplný rámec nebo HEADERS/CONTINUATION přes více callbacků
+### Incomplete frame or HEADERS/CONTINUATION across callbacks
 
 <!-- translate-example: hold-incomplete -->
+
 ```python
 if api.phase == 'setup':
     api.connection.request_rewrite()
@@ -119,71 +132,77 @@ for part in api.message.parts:
 return api.message.translate()
 ```
 
-Skript sám určuje hranici holdu. Kompletní prefix se přeloží a odešle, suffix
-zůstane jako typované Parts. Prázdný prefix vrací `need-more` a současně zapíná
-nebo zachovává strict policy. Další callback ve stejném směru doplní neúplný
-rámec/blok; protisměr má vlastní hold i HPACK tabulky a dál spouští svůj callback.
+The script selects the hold boundary. The complete prefix is translated and sent;
+the suffix remains typed Parts. An empty prefix returns `need-more`, activating
+or preserving strict policy. The next callback in that direction completes the
+frame/block; the reverse direction has separate hold and HPACK tables and continues
+running its callback.
 
-HPACK checkpoint reprezentuje jen **odeslaný prefix**. Hlavičky v holdu sice
-mohou mít dekódovaný pohled pro skript, ale neposouvají trvale tabulky. U kompletní
-podržené hlavičky přežijí logické změny; neúplnou část nejprve dosbírej, před
-holdu ji neupravuj. Opětovné spuštění tvého skriptu může tvoje změny zopakovat:
-u ne-idempotentních úprav si to ohlídej pomocí vlastního stavu.
+The HPACK checkpoint represents only the **emitted prefix**. Held headers may
+provide decoded script views but do not permanently advance tables. Logical edits
+to complete held headers survive; collect incomplete parts before editing them.
+Running the script again can repeat edits: use your own state for non-idempotent changes.
 
-Dokud není celá devítibajtová hlavička rámce, je fragment reprezentovaný jako
-`PartType.Opaque` s `complete == False`; není ještě známý ani jeho stream ID.
-Podobně lze podržet prefix H2 preface. Toto rámování platí pro aktivní H2 translate,
-není to obecné odhadování protokolu u libovolných opaque dat. První aktivace stále
-vyžaduje H2 preface (případně její prefix) nebo H2 anotaci od proxy.
+Until a complete nine-byte frame header is available, its fragment is
+`PartType.Opaque` with `complete == False`; even its stream ID is not yet known.
+An H2 preface prefix can similarly be held. This framing applies to active H2
+translate, not arbitrary protocol guessing from opaque data. First activation
+still requires H2 preface (or its prefix) or an H2 annotation from the proxy.
 
-`api.message.bytes` dál obsahuje aktuální callback; celé obnovené zobrazení je
-v `api.message.parts`. Hold je omezený existujícím 1 MiB limitem serializovaného
-checkpointu a 4 MiB deployment kvótou; obnova nad 1 MiB vstupních bajtů se odmítá.
-Překročení limitu v aktivním translate je chyba a spojení se zavře, nikoliv bypass.
+`api.message.bytes` still contains the current callback; the full restored view
+is in `api.message.parts`. Hold uses the existing 1 MiB serialized checkpoint
+limit and 4 MiB deployment quota; restoration beyond 1 MiB input bytes is rejected.
+Exceeding a limit during active translate fails and closes the connection, not bypasses it.
 
-Tyto označené příklady test čte přímo z dokumentace a spouští v sandboxovaných
-workerech. U indexovaného scénáře ověřuje skutečné `be` na vstupu a výsledné
-hodnoty nezávislým libnghttp2 dekodérem, nikoli jen návratový status.
+Tests read these marked examples directly and execute them in sandboxed workers.
+The indexed scenario checks actual `be` input and independently decodes output
+values with libnghttp2, not merely a return status.
 
-**Žádné rozhodování engine, zda se skript vyplatí spustit.** Aktivní spojení
-projde při každém content callbacku svým skriptem, včetně DATA, SETTINGS/PING
-a opačného směru. Filtr, scope, GUI rozhodnutí a heavy-traffic cutoff už ho
-nesmějí tiše vynechat. Skript lze vevnitř větvit, ale musí vrátit translate.
+**The engine does not decide whether running the script is worthwhile.** Every
+content callback in an active connection runs its script, including DATA,
+SETTINGS/PING and the reverse direction. Filters, scope, GUI decisions and
+heavy-traffic cutoff must not silently skip it. Scripts may branch internally
+but must return translate.
 
-## Stav a selhání
+## State and failures
 
-- Backend připne spojení k deployment ID a verzi. Další deploymenty mu do toku
-  nevstupují. HPACK tabulky jsou samostatné pro vstup/výstup a L/R.
-- Stav se přenáší jako omezený JSON checkpoint, ne pickle ani Python globals.
-  Worker může být mezi callbacky jiný. Limit je 64 KiB na směr; checkpointy
-  vstupují také do deployment limitu 4 MiB společně s user state a holdem.
-  Společný SETTINGS checkpoint má navíc limit 16 KiB.
-- První úspěšný výsledek obsahuje `control.mode=strict` spolu s replacementem.
-  Nová proxy aplikuje control před replacementem. Další callback musí potvrdit
-  strict a přesně navazující sequence. Jde o capability + stavovou kontrolu,
-  nikoli samostatný round-trip handshake před prvním přepisem.
-- Chyba, timeout, přetížení, `return None`, chybějící translate, expirovaný stav,
-  vypnutí/redeploy skriptu nebo mezera v sequence znamenají HTTP 503. Strict
-  proxy spojení zavře bez propuštění aktuálního obsahu. Backend si ponechá
-  neúspěšné připnutí až do connection-stop; nepokouší se začít tabulky znovu.
-- Strict callback bez známého připnutí (například po restartu Spideru) je také
-  odmítnut. Chybějící capability na staré proxy nikdy nepovolí první překlad.
-- Tabulky nejsou publikovány do GUI ani do uživatelského `api.state`.
-  Úspěch přípravy není odeslání: teprve návrat výsledku ze skriptu je publikuje.
+- The backend pins a connection to deployment ID/version. Other deployments do
+  not enter its flow. Input/output and L/R HPACK tables are separate.
+- State travels as bounded JSON checkpoints, not pickle or Python globals. The
+  worker may change between callbacks. The limit is 64 KiB per direction; these
+  checkpoints count toward the 4 MiB deployment limit with user state and hold.
+  The shared SETTINGS checkpoint also has a 16 KiB limit.
+- The first successful result carries `control.mode=strict` with replacement.
+  The new proxy applies control before replacement. The next callback must confirm
+  strict and exactly consecutive sequence. This is capability/state checking,
+  not a separate round-trip handshake before the first rewrite.
+- After activation, error, timeout, overload, `return None`, missing translate,
+  expired state, disable/redeploy or sequence gaps yield HTTP 503. The strict proxy
+  closes without releasing current content. The backend retains the failed pin
+  until connection-stop instead of attempting to restart tables.
+- Strict is not automatically active before the first successfully published
+  Translate result. Failure of that first attempt may leave original content
+  unchanged under regular policy (fail-open); `set_mode` alone does not enable
+  strict on the proxy.
+- A strict callback without a known pin (for example after Spider restart) is
+  rejected too. Missing capability on an old proxy never allows first translation.
+- Tables are not published to the GUI or user `api.state`. Successful preparation
+  is not transmission: only returning the script result publishes them.
 
-## SETTINGS a potvrzení limitů
+## SETTINGS and limit acknowledgement
 
-### DATA stejné délky
+### Same-length DATA
 
-Translate dovoluje upravit reprezentaci kompletního DATA partu přes `set_bytes()`.
-Délka musí zůstat stejná. Frame header, stream ID, všechny flags včetně END_STREAM,
-pad-length byte a padding zůstanou přesně původní. Tím zůstává beze změny také
-počet bajtů účtovaných do flow-control oken; WINDOW_UPDATE se nepřekládá.
+Translate permits `set_bytes()` on a complete DATA part, preserving length.
+Frame header, stream ID, all flags including END_STREAM, pad-length byte and
+padding remain exactly original. Flow-control accounting therefore remains unchanged;
+WINDOW_UPDATE is not translated.
 
-Příklad pro známý nekomprimovaný obsah: maskování šestibajtového slova uvnitř
-jednoho DATA rámce. Nehledá přes hranice rámců a neprovádí dekompresi.
+For known uncompressed content, this example masks a six-byte word within one
+DATA frame. It does not search across frame boundaries or decompress.
 
 <!-- translate-example: data-redaction -->
+
 ```python
 if api.phase == 'setup':
     api.connection.request_rewrite()
@@ -199,15 +218,15 @@ for part in api.message.parts:
 return api.message.translate()
 ```
 
-`part.set_bytes(b"short")` místo šestibajtového obsahu způsobí při translate
-`CommitException`: změny délky vyžadují další podporu flow control. Stejně tak
-se odmítne změna stream ID, typu nebo flags DATA. Neúspěšná transakce nepublikuje
-ani předchozí upravené části. Kompletní upravený part lze držet přes hold;
-neúplný part nejdřív zadrž a uprav až po dokončení. Hlavičky `content-length`
-není kvůli stejně dlouhé náhradě potřeba přepočítávat. Integritní metadata těla
-(například digest) tento režim automaticky neopravuje.
+Replacing six-byte content with `part.set_bytes(b"short")` raises
+`CommitException` at translate: resizing needs further flow-control support.
+Changing DATA stream ID, type or flags is also rejected. A failed transaction
+publishes none of the preceding edited parts. Complete edited parts may be held;
+hold incomplete parts first and edit only after completion. Same-length replacement
+needs no `content-length` repair. This mode does not automatically repair body
+integrity metadata such as digests.
 
-### Explicitní režim a trvalý limit
+### Explicit mode and persistent limit
 
 ```python
 api.connection.set_mode(Mode.Translate)
@@ -221,50 +240,49 @@ for part in api.message.parts:
 return api.message.translate()
 ```
 
-Obě volání jsou idempotentní a pouze připravují záměr. První vyžaduje flow
-instanciaci a způsobilé živé H2 spojení. Druhé nastaví stálý maximální limit
-pro oba směry. Vynechání návratu `message.translate()` po `set_mode()` je chyba;
-nic se nepublikuje. Původní aktivace samotným `message.translate()` zůstává
-kompatibilní. `Mode.Rewrite` nelze použít pro návrat již přeloženého spojení.
+Both calls are idempotent and only stage intent. The first requires flow instancing
+and an eligible live H2 connection. The second sets a persistent maximum for both
+directions. Omitting `return message.translate()` after `set_mode()` is an error;
+nothing is published. Activation through `message.translate()` alone remains
+compatible. `Mode.Rewrite` cannot revert an already translated connection.
 
-Politika omezuje budoucí SETTINGS a nikdy nezvýší menší limit oznámený peerem.
-Pokud už handshake proběhl, může vložit vlastní SETTINGS; jeho ACK spotřebuje
-engine a nepředá ho protistraně jako potvrzení jejího požadavku. Původní ACK
-nadále procházejí. Opakované stejné nastavení negeneruje další rámce.
+The policy caps future SETTINGS and never raises a smaller peer-advertised limit.
+After handshake it may insert its own SETTINGS; the engine consumes that ACK
+rather than forwarding it as acknowledgement of a peer request. Original ACKs
+still pass through. Repeating the same setting generates no additional frames.
 
-Každý směr politiku dostane při nejbližším způsobilém callbacku, až po jeho
-prvním SETTINGS. Samostatné vložení čeká také na uvolnění holdu. Není to okamžitý
-broadcast do obou socketů ani background task. Nula zakáže dynamickou tabulku,
-nikoli statické indexy nebo Huffman. Po `translate()` už settery volat nelze.
+Each direction receives the policy at its next eligible callback after its first
+SETTINGS. Standalone insertion also waits for hold to clear. This is neither an
+immediate broadcast to both sockets nor a background task. Zero disables the
+dynamic table, not static indexes or Huffman. Setters cannot run after `translate()`.
 
-SETTINGS i ACK nadále procházejí explicitním `return api.message.translate()`.
-Rámce se předávají beze změny; skript nepotřebuje zvláštní volání pro jejich
-zpracování. SETTINGS odeslané z R nastavují omezení pro L a naopak.
+SETTINGS and ACK still pass through explicit `return api.message.translate()`.
+Frames are forwarded unchanged; no extra script call is required to process them.
+SETTINGS from R constrain L and vice versa.
 
-- Každý směr má FIFO frontu nejvýše 64 čekajících SETTINGS, včetně prázdných
-  nebo těch s neznámými identifikátory. ACK potvrzuje nejstarší položku.
-- Nový limit se při kontrole vstupu uplatní po ACK. Před ním mohou ještě přijít
-  data podle starých limitů. ACK bez čekajícího SETTINGS je chyba.
-- Zmenšení HPACK tabulky vyžaduje odpovídající table-size update v následujícím
-  header bloku. Při zmenšení a zvětšení se zachová nejmenší mez i konečná hodnota.
-- Vstupní dekodér respektuje oznámenou kapacitu; stále platí velikostní kvóty
-  checkpointu. Výstupní encoder používá nejvýše 4096 bajtů tabulky, i když peer
-  povolí více. To je legální menší kapacita, nikoliv limit peerova vstupu.
-- MAX_FRAME_SIZE řídí kontrolu vstupních rámců i dělení výstupních
-  HEADERS/CONTINUATION. Změna se může potvrdit uprostřed jednoho callbacku.
-- Zadržený SETTINGS/ACK nemění publikovaný stav. Ten se posune až spolu
-  s emitovaným prefixem. Neúspěšný commit nepublikuje nic.
+- Each direction has a FIFO queue of at most 64 pending SETTINGS, including empty
+  ones or unknown identifiers. ACK acknowledges the oldest entry.
+- Input validation applies a new limit after ACK. Before ACK, data using old limits
+  may still arrive. An ACK without pending SETTINGS is an error.
+- Shrinking the HPACK table requires a matching table-size update in the next
+  header block. Shrink-then-grow preserves the minimum and final capacity.
+- The input decoder respects advertised capacity; checkpoint quotas still apply.
+  The output encoder uses at most 4096 bytes even when the peer permits more.
+  This is a legal smaller capacity, not a limit on peer input.
+- MAX_FRAME_SIZE controls input-frame validation and output HEADERS/CONTINUATION
+  splitting. A change may be acknowledged within a single callback.
+- Held SETTINGS/ACK do not change published state; it advances with the emitted
+  prefix. Failed commit publishes nothing.
 
-Synchronizace vychází z [RFC 9113 §6.5.3](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.5.3)
-a změny HPACK kapacity z [RFC 7541 §4.2](https://www.rfc-editor.org/rfc/rfc7541.html#section-4.2).
+Synchronization follows [RFC 9113 §6.5.3](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.5.3),
+and HPACK capacity changes follow [RFC 7541 §4.2](https://www.rfc-editor.org/rfc/rfc7541.html#section-4.2).
 
 ## PUSH_PROMISE
 
-Translate překládá také HPACK v PUSH_PROMISE. Part má typ
-`PartType.Http2.Header`, `frame_type == 5` a `stream_id` označuje původní
-klientský stream, nikoli slíbený stream. Slíbené ID a padding zůstávají
-zachované. Blok může pokračovat přes CONTINUATION i více callbacků; neúplný
-part musí skript explicitně podržet.
+Translate also handles HPACK in PUSH_PROMISE. Its type is `PartType.Http2.Header`,
+`frame_type == 5`, and `stream_id` identifies the original client stream, not
+the promised stream. Promised ID and padding are preserved. The block may span
+CONTINUATION and multiple callbacks; the script must explicitly hold incomplete parts.
 
 ```python
 for part in api.message.parts:
@@ -276,52 +294,50 @@ for part in api.message.parts:
 return api.message.translate()
 ```
 
-**Easy i Expert:** stejný kontrakt. Překládají logické hlavičky, zachovávají
-typ, flags a stream ID; nepovolují raw HPACK ani změnu slíbeného ID. Vstup musí
-být ze serverového směru, na lichém nenulovém klientském streamu a slibovat
-sudý nenulový stream. Po ACK zákazu push je další PUSH_PROMISE odmítnut.
-Nejde o úplnou kontrolu životního cyklu streamů, unikátnosti slíbených ID ani
-HTTP sémantiky slíbeného requestu; tyto kontroly zůstávají na protějšcích.
+**Easy and Expert:** the same contract. They translate logical headers, preserve
+type, flags and stream ID, and prohibit raw HPACK or promised-ID changes. Input
+must come from the server direction, on a nonzero odd client stream, promising
+a nonzero even stream. After ACK of push disablement, further PUSH_PROMISE is
+rejected. This is not complete stream-lifecycle, promised-ID uniqueness or promised
+request HTTP-semantic validation; peers remain responsible for those checks.
 
-PUSH_PROMISE a HEADERS sdílejí HPACK kontext daného směru podle
+PUSH_PROMISE and HEADERS share a direction's HPACK context under
 [RFC 9113 §4.3](https://www.rfc-editor.org/rfc/rfc9113.html#section-4.3).
-Změna slíbené hlavičky tak nerozbije další indexované hlavičky v tomto směru.
-Hold publikuje pouze stav emitovaného prefixu, nikoli spekulativně dekódovaného
-zbytku. Žádný překlad neprobíhá bez `message.translate()`.
+Editing a promised header therefore does not break later indexed headers in that
+direction. Hold publishes only emitted-prefix state, not the speculatively decoded
+remainder. No translation runs without `message.translate()`.
 
-Ověření PUSH_PROMISE (2026-10-25): devět nových scénářů prošlo, včetně všech
-hranic fragmentace, paddingu, přenosu held draftu, emitovaného prefixu,
-navazujících indexovaných HEADERS, ACK zákazu push a čerstvých sandboxovaných
-workerů. Výstup ověřuje nezávislý libnghttp2 dekodér. Prošlo také 11/11
-vybraných regresních CTest sad (15,26 s) a existující skutečný E2E scénář
-Expert s DATA/SETTINGS/fragmentací (24,07 s). Tento E2E scénář zatím neposílá
-PUSH_PROMISE; nová push podpora je ověřená na API/worker úrovni, nikoli přes
-celou proxy. Build a generovaná reference prošly.
+PUSH_PROMISE verification (2026-10-25): nine new scenarios passed, covering every
+fragmentation boundary, padding, held-draft transfer, emitted prefix, subsequent
+indexed HEADERS, push-disable ACK and fresh sandboxed workers. Independent
+libnghttp2 validates output. Also passed: 11/11 selected CTest regressions (15.26 s)
+and the existing real Expert DATA/SETTINGS/fragmentation E2E (24.07 s). That E2E
+did not yet send PUSH_PROMISE; new push support was verified at API/worker level,
+not through the entire proxy. Build and generated reference passed.
 
-## Co tento první krok ještě neumí
+## What this first step does not support
 
-- změny délky DATA, jejich stream ID nebo flags; uživatelské změny control rámců,
-  vložení/mazání/přeskládání Parts
-  (výjimkou je explicitní SETTINGS politika výše);
-- raw HPACK a explicitní manipulace s indexy (to zůstává rewrite);
-- převzetí již rozběhlého spojení, více aktivních překladových deploymentů,
-  živý návrat přeloženého spojení do rewrite;
-- garanci HTTP sémantiky uživatelem změněných hlaviček. Překládá se HPACK stav,
-  nejde o automatickou opravu libovolně pozměněného aplikačního protokolu.
+- DATA length, stream-ID or flag changes; user control-frame edits and Parts
+  insertion/removal/reordering (except the explicit SETTINGS policy above).
+- Raw HPACK and explicit index manipulation (these remain rewrite operations).
+- Taking over an existing connection, multiple active translating deployments,
+  or reverting a translated live connection to rewrite.
+- Guaranteeing HTTP semantics of user-edited headers. HPACK state translation is
+  not automatic repair of arbitrary application-protocol modifications.
 
-Známá H2 preface a nezměněné DATA/control frames projdou byte-for-byte.
-Bez zapnuté politiky limitu se přípustné SETTINGS explicitně zpracují skriptem
-a předají nezměněné. Politika smí změnit SETTINGS a spotřebovat vlastní ACK.
-Output encoder vlastní indexování; `never` zůstává never-indexed.
+Known H2 preface and unchanged DATA/control frames pass byte-for-byte. Without
+limit policy, permitted SETTINGS are explicitly processed by the script and
+forwarded unchanged. Policy may modify SETTINGS and consume its own ACK.
+The output encoder owns indexing; `never` remains never-indexed.
 
-## Ověření
+## Verification
 
-`inspection_translate_worker_tests` obnovuje checkpoint v novém sandboxovaném
-procesu po každé zprávě a kontroluje výsledek nezávislým libnghttp2 dekodérem.
-`inspection_translate_live_tests` používá skutečný backend handler a worker pool:
-filtr přestane odpovídat, DATA i opačný směr přesto spouštějí skript; testuje
-vynechané translate, vypnutí, ztracený stav, starou proxy a chybějící callback.
-Původní POC přidává negativní kontrolu a dlouhou sérii indexů/eviction.
+`inspection_translate_worker_tests` restores checkpoints in a fresh sandboxed
+process after each message and checks output with independent libnghttp2.
+`inspection_translate_live_tests` uses the real backend handler and worker pool:
+DATA and reverse-direction callbacks still run after the filter stops matching;
+it tests missing translate, disable, lost state, old proxies and missing callbacks.
+The original POC adds a negative control and a long index/eviction sequence.
 
 ```sh
 cmake -S . -B build -DSPIDER_TEST_TRANSLATE_POC=ON
@@ -329,21 +345,21 @@ cmake --build build -j 2
 ctest --test-dir build --output-on-failure
 ```
 
-Proxy control/sequence se zvlášť ověřuje jejími JSON a SXBN integračními testy.
-První implementace se ověřovala izolovaně; následné nasazení lab1 je popsané níže.
+Proxy control/sequence is independently tested by its JSON and SXBN integrations.
+The first implementation was verified in isolation; subsequent lab1 deployment follows.
 
-### Lab1: společný balík Easy/Expert a PUSH_PROMISE (2026-10-25)
+### Lab1: combined Easy/Expert and PUSH_PROMISE package (2026-10-25)
 
-Nasazeno: Spider `6fbb860` + pracovní změny Easy/Expert/PUSH_PROMISE, proxy
-`ddb5ce1f` (strict/sequence). Původní čisté checkouty byly aktualizovány
-fast-forwardem; frontend i backend Spideru a proxy byly sestavené a restartované.
-Frontend hlásí `d7fa71541792`; všech 87 členů živého API schématu má Easy/Expert.
+Deployed: Spider `6fbb860` plus working Easy/Expert/PUSH_PROMISE changes, proxy
+`ddb5ce1f` (strict/sequence). Originally clean checkouts were fast-forwarded;
+Spider frontend/backend and proxy were built and restarted. Frontend reported
+`d7fa71541792`; all 87 live API schema members documented Easy/Expert.
 
-`tests/lab_translate_smoke.py` používá běžící lab, jeho skutečnou registraci
-webhooku a dočasný deployment omezený filtrem na port lokálního origin serveru.
-Odmítne běžet vedle aktivních skriptů; deployment odstraní i při chybě.
-Nemění pravidla provozu. Není součástí automatického CTest: restart a živý lab
-vyžadují vědomé spuštění.
+`tests/lab_translate_smoke.py` uses a running lab, its actual webhook registration
+and a temporary deployment filtered to a local origin-server port. It refuses to
+run alongside active scripts and removes its deployment even on error. Traffic
+rules are unchanged. It is not automatic CTest: restart and live-lab use require
+deliberate execution.
 
 ```sh
 python3 tests/lab_translate_smoke.py --lab /home/astib/.local/share/saslik/instances/lab1
@@ -351,59 +367,58 @@ python3 tests/lab_translate_smoke.py --lab /home/astib/.local/share/saslik/insta
   --transport connect --proxy-address 127.0.0.1 --proxy-port 33128
 ```
 
-Oba transporty prošly v Easy i Expert, tedy 4/4 scénáře. Každý ověřil 10
-callbacků: strict/sequence, handshake, fragmentovaný padded PUSH_PROMISE/hold,
-změnu hlavičky, navazující indexované HEADERS přes libnghttp2, stejně dlouhou
-náhradu DATA a záměrnou výjimku se zavřením spojení bez úniku aktuálních dat.
-H1 snapshot preview na živém backendu navíc odmítl Content-Digest/body změnu
-v Easy a povolil ji v Expert. Ze zdrojů labu prošlo 12 Easy, 12 Expert a devět
-PUSH_PROMISE testů.
+Both transports passed in Easy and Expert: 4/4 scenarios. Each checked 10 callbacks:
+strict/sequence, handshake, fragmented padded PUSH_PROMISE/hold, header edits,
+subsequent indexed HEADERS through libnghttp2, same-length DATA replacement and
+deliberate failure closing the connection without leaking current data. Live-backend
+H1 snapshot preview also rejected a Content-Digest/body edit in Easy and allowed it
+in Expert. Lab sources passed 12 Easy, 12 Expert and nine PUSH_PROMISE tests.
 
-První CONNECT pokus těsně po restartu neprošel: testovací deployment měl nula
-běhů a provoz ještě nebyl zpracovaný skriptem. Přesná příčina nebyla určena;
-po ustálení labu prošly SOCKS i opakovaný CONNECT. Harness nyní kontroluje
-spuštění deploymentu už po prvním contentu, aby neaktivní webhook nezaměňoval
-s chybou holdu. Nejde o tvrzení, že se při startu labu nikdy neobjeví mezera.
+The first CONNECT attempt immediately after restart failed: the test deployment
+had zero runs and its script had not processed traffic. The exact cause was not
+determined; after the lab settled, SOCKS and repeated CONNECT passed. The harness
+now checks deployment execution after the first content callback to distinguish
+inactive webhooks from hold failure. This does not claim gap-free lab startup.
 
-### Skutečný end-to-end harness
+### Real end-to-end harness
 
-`tests/translate_e2e.py` spouští oba produktové procesy a řízené H2 protějšky:
+`tests/translate_e2e.py` starts both product processes and controlled H2 peers:
 
 ```text
-H2 klient -- SOCKS --> Smithproxy -- TCP --> H2 origin
+H2 client -- SOCKS --> Smithproxy -- TCP --> H2 origin
                           |
                           +-- content webhook --> Spider --> sandbox worker
 ```
 
-Content webhook vede přímo z proxy do Spideru; žádný mock nevytváří anotace ani
-replacement. Pouze discovery management API je testovací stub, který získá
-náhodnou callback URL Spideru pro dočasnou konfiguraci proxy. Registraci/obnovu
-lease proti skutečnému management API tento harness netestuje.
+The content webhook runs directly from proxy to Spider; no mock creates annotations
+or replacement. Only the discovery management API is stubbed, obtaining Spider's
+random callback URL for temporary proxy configuration. This harness does not test
+lease registration/renewal against the real management API.
 
-Základní scénáře ověřují:
+Basic scenarios verify:
 
-- H2 preface, výchozí SETTINGS a ACK;
-- čtyři request/response streamy se skutečným dynamickým indexem 62 na vstupu;
-- změnu hlavičky jen ve druhém requestu i response a původní hodnotu v dalších;
-- nezávislé dekódování výstupu pomocí libnghttp2;
-- PING/ACK bez změny bajtů a přesně 14 spuštění skriptu;
-- capability, strict mode a souvislou sequence uvnitř každého callbacku;
-- patnáctý callback s výjimkou nebo chybějícím translate: EOF/reset na origin
-  socketu, žádný propuštěný bajt a jedna zaznamenaná chyba deploymentu.
+- H2 preface, default SETTINGS and ACK.
+- Four request/response streams with actual dynamic index 62 on input.
+- Header changes only in the second request and response; original values later.
+- Independent output decoding with libnghttp2.
+- Byte-preserving PING/ACK and exactly 14 script invocations.
+- Capability, strict mode and contiguous sequence in each callback.
+- A fifteenth callback with exception or missing translate: origin-socket EOF/reset,
+  no released bytes and one recorded deployment error.
 
-Test používá plaintext H2 na loopbacku, malé rámce a výchozí SETTINGS.
-Varianta `--settings --fragmented` mění tabulky v obou směrech
-`4096 → 0 → 128 → 8192`, potvrzuje je přes ACK a ověřuje výstup nezávislým
-libnghttp2 dekodérem. Jednotková sada `inspection_translate_settings_tests`
-navíc kontroluje pořadí ACK, stará data před ACK, chybné limity, kvótu fronty,
-duplicitní změny kapacity, velké HEADERS/CONTINUATION a zadržení SETTINGS/ACK.
-Varianta `--fragmented` navíc dělí HEADERS/CONTINUATION po jednotlivých bajtech,
-čeká na každý callback, kontroluje ticho do dokončení bloku a testuje hotový
-PING prefix i odpověď v protisměru během holdu. Jednotková sada
-`inspection_translate_hold_tests` prochází všechny hranice dělení zprávy,
-částečnou preface, přenos mezi čerstvými workery a zachování kompletních drafts.
-Není to test TLS, dlouhodobé zátěže nebo všech H2 stavových přechodů.
-Porty, konfigurace i úložiště jsou dočasné; skutečné lab instance se nemění.
+Tests use plaintext H2 on loopback, small frames and default SETTINGS.
+`--settings --fragmented` changes both directions' tables through
+`4096 -> 0 -> 128 -> 8192`, acknowledges via ACK and independently decodes output
+with libnghttp2. `inspection_translate_settings_tests` additionally checks ACK
+ordering, old data before ACK, invalid limits, queue quotas, duplicate capacity
+changes, large HEADERS/CONTINUATION and held SETTINGS/ACK.
+
+`--fragmented` also splits HEADERS/CONTINUATION bytewise, waits for each callback,
+checks silence until block completion, and tests a complete PING prefix and
+reverse-direction response during hold. `inspection_translate_hold_tests` covers
+every message split, partial preface, fresh-worker transfer and complete-draft
+preservation. This is not TLS, sustained-load or exhaustive H2 state-transition
+testing. Ports, configuration and storage are temporary; actual labs are unchanged.
 
 ```sh
 python3 tests/translate_e2e.py \
@@ -412,58 +427,56 @@ python3 tests/translate_e2e.py \
   --spider build/smithproxy-spider --failure exception
 ```
 
-Pro druhý scénář použij `--failure missing-translate`, pro fragmentaci `--fragmented`.
-Pro kombinaci fragmentace a změn limitů přidej `--fragmented --settings`.
-Varianta `--fragmented --policy` aktivuje nulový limit až po handshaku,
-ověřuje vložené SETTINGS a spotřebování obou syntetických ACK na skutečných
-socketech. Další callbacky opakují stejné nastavení bez dalších SETTINGS.
-CTest registraci všech variant
-zapneš spolu s `SPIDER_TEST_TRANSLATE_POC=ON` nastavením absolutních cest
-`SPIDER_E2E_SMITHPROXY_SOURCE` a `SPIDER_E2E_SMITHPROXY_BINARY` při konfiguraci
-CMake. Testy vyžadují loopback sockety, sandbox worker a `python-hpack`.
+Use `--failure missing-translate` for the second failure scenario, and
+`--fragmented` for fragmentation. Combine `--fragmented --settings` for limit changes.
+`--fragmented --policy` activates a zero limit after handshake, checks inserted
+SETTINGS and consumption of both synthetic ACKs on real sockets. Later callbacks
+repeat the setting without more SETTINGS. Register all CTest variants with
+`SPIDER_TEST_TRANSLATE_POC=ON` and absolute CMake paths
+`SPIDER_E2E_SMITHPROXY_SOURCE` / `SPIDER_E2E_SMITHPROXY_BINARY`.
+Tests require loopback sockets, sandboxed workers and `python-hpack`.
 
-Lokální ověření 2026-10-25: build úspěšný, všech 25 CTest sad Spideru prošlo
-(32,34 s), včetně tří translate sad. Proxy prošla pěti control/need-more sadami
-(28,47 s). Generované API příklady odpovídají schématu; `git diff --check` čistý.
+Local verification on 2026-10-25: build passed; all 25 Spider CTest suites passed
+(32.34 s), including three translate suites. Proxy passed five control/need-more
+suites (28.47 s). Generated examples matched the schema; `git diff --check` was clean.
 
-Po přidání skutečného E2E: všech 27 sad Spideru prošlo (41,09 s), včetně obou
-variant selhání. Samostatně každá E2E varianta prošla třikrát za sebou (celkem
-6/6 běhů, 23,43 s). Proxy control/need-more regrese opět 5/5 (28,47 s).
-Testovaná proxy obsahuje commit `ddb5ce1` nad `412680e`.
+After real E2E integration: 27/27 Spider suites passed (41.09 s), including both
+failure variants. Each E2E variant also passed three consecutive standalone runs
+(6/6, 23.43 s). Proxy control/need-more regression again passed 5/5 (28.47 s).
+The tested proxy included `ddb5ce1` over `412680e`.
 
-Po doplnění translate hold/reassembly: všech 29 sad prošlo (58,99 s).
-Nová hold sada obsahuje devět testů včetně všech hranic dělení testovací zprávy,
-jednotlivých bajtů a atomických chyb. Fragmentovaný E2E potvrdil přesně 225
-úspěšných explicitních callbacků v obou směrech a zavření bez úniku při následné
-výjimce. Samostatně prošel i live test prvního `need-more` s aktivací strict.
+After translate hold/reassembly: 29/29 suites passed (58.99 s). The new nine-test
+hold suite includes every fixture split, single bytes and atomic failure.
+Fragmented E2E confirmed exactly 225 successful explicit callbacks across both
+directions and closure without leakage after a subsequent exception. The live
+test of initial `need-more` activating strict also passed separately.
 
-Po doplnění SETTINGS/ACK: všech 31 sad prošlo (83,64 s), včetně čtyř skutečných
-E2E variant. Nová SETTINGS sada obsahuje devět testů; worker sada navíc ověřuje
-společný stav protisměrů mezi čerstvými sandboxovanými procesy. SETTINGS E2E
-prošel s fragmentací HEADERS/CONTINUATION, evikcí a opětovným růstem tabulek
-a nezávislým libnghttp2 dekodérem (21,95 s). Build, kontrola generovaných API
-příkladů i `git diff --check` prošly. Proxy zůstává na `ddb5ce1`, beze změn.
+After SETTINGS/ACK: 31/31 suites passed (83.64 s), including four real E2E variants.
+The new SETTINGS suite had nine tests; the worker suite checked shared bidirectional
+state across fresh sandboxed processes. SETTINGS E2E passed with fragmented
+HEADERS/CONTINUATION, eviction/regrowth and independent libnghttp2 decoding
+(21.95 s). Build, generated examples and whitespace checks passed. Proxy remained
+unchanged at `ddb5ce1`.
 
-Po přidání `api.connection` a trvalé politiky: SETTINGS sada má 16 testů,
-worker ověřuje explicitní mode, chybějící translate i nekompatibilní instanciaci;
-editorové testy ověřují completion nových členů. Policy E2E prošel samostatně
-(24,20 s) i v celé sadě (24,18 s). Celý běh měl 32 sad: 30 prošlo přímo,
-dvě vyžadovaly aktualizaci očekávaného API schématu a offline příkladů.
-API sada poté prošla; chain při opakování jednou narazil na bootstrap assertion
-`active_sessions == 0`, následující samostatný běh prošel (7,62 s).
-Všech 32 sad tedy má úspěšný běh; není to tvrzení o jednom čistém full-run.
-Build, generovaná reference a kontrola whitespace prošly.
+After `api.connection` and persistent policy: SETTINGS had 16 tests; worker tests
+covered explicit mode, missing translate and incompatible instancing; editor tests
+covered completion. Policy E2E passed standalone (24.20 s) and in-suite (24.18 s).
+Of 32 suites, 30 passed directly; two needed expected API schema/offline-example
+updates. API then passed; one chain retry hit bootstrap assertion
+`active_sessions == 0`, and the next standalone run passed (7.62 s). All 32 thus
+had a passing run; this was not one clean full run. Build, generated reference
+and whitespace checks passed.
 
-Po přidání DATA stejné délky: nová sada má sedm testů, včetně matice směrů,
-délek, paddingu a END_STREAM, všech hranic fragmentace s aktivním protisměrem,
-prokládaných streamů, holdu upraveného partu, atomického odmítnutí a příkladu
-spuštěného z této dokumentace. `--fragmented --data` ověřuje maskování padded
-DATA v requestech i responses přes skutečnou proxy, při zachování content-length
-a END_STREAM. E2E prošel dvakrát (18,48 s a po doplnění no-op fast-path 17,43 s).
+After same-length DATA: seven new tests covered directions, lengths, padding,
+END_STREAM, all fragmentation boundaries with an active reverse direction,
+interleaved streams, edited-part hold, atomic rejection and this document's
+executable example. `--fragmented --data` checked padded request/response DATA
+masking through the real proxy, preserving content-length and END_STREAM.
+E2E passed twice (18.48 s; 17.43 s after the no-op fast path).
 
-Full-run měl 33/34 úspěšných sad (139,10 s). Zbývající chain test odhalil chybu
-harnessu: HTTP timeout 2 s byl kratší než backend language budget 2,5 s a jeho
-OSError spouštěl celý stateful scénář znovu. Harness nyní opakuje jen discovery
-a pro language čeká 5 s; samostatný chain poté prošel (8,02 s). Produkční
-timeouty se neměnily. Všech 34 sad má úspěšný běh; build i generovaná reference
-jsou ověřené. Nezměněné DATA se vracejí bez materializace obsahu.
+The full run passed 33/34 suites (139.10 s). The remaining chain test exposed a
+harness bug: its 2 s HTTP timeout was shorter than the backend's 2.5 s language
+budget, and OSError restarted the entire stateful scenario. The harness now retries
+only discovery and waits 5 s for language; standalone chain then passed (8.02 s).
+Production timeouts were unchanged. All 34 suites had a passing run; build and
+generated reference were verified. Unchanged DATA returns without materialization.

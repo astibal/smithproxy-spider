@@ -22,7 +22,7 @@ class H1CorpusTests(unittest.TestCase):
         rng = random.Random(4301)
         corpus = [
             b'', b'a', bytes(range(256)), b'\x00\xff\r\n' * 37,
-            'Příliš žluťoučký kůň 🕷'.encode(),
+            'Unicode sample λ 日本語 🕷'.encode(),
             b'{"ok":true,"items":[1,2,3]}',
             b'\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n',
             rng.randbytes(8193), b'A' * 65537,

@@ -66,13 +66,24 @@ return None
 
 ### Transactional HTTP/1 writes (API v0.4)
 
+Live scripts receive setup before content: `api.phase == 'setup'` and
+`api.message is None`. Reserve length-changing rewrite, hold or Translate with
+`api.connection.request_rewrite()` there and return `None`. The examples below
+include that guard. Offline previews only receive content and need no reservation.
+An unreserved live connection allows same-size raw replacement, not a guarantee
+of protocol consistency. See the [setup and compatibility contract](docs/INSPECTION_COOKBOOK.md#setup-before-live-rewrites).
+
 Original views remain immutable. `api.message.snapshot()` creates an independent
 draft from the **wire bytes**, not the escaped display enrichment. Edit its
 `http1.headers`, `http1.target` or `http1.body`, then call `commit()` to validate
 and assemble replacement bytes. Header values use Latin-1; encode a text body
 explicitly (for example with UTF-8) and set its Content-Type appropriately.
 
+<!-- live-example: h1-snapshot -->
 ```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
 draft = api.message.snapshot()
 if not draft.http1.available:
     return None
@@ -107,8 +118,11 @@ Unsupported edits raise CommitException: HTTP/2, chunked/Transfer-Encoding,
 trailers, partial or pipelined messages, close-delimited responses, CONNECT and
 protocol upgrades. No cross-callback buffering is done. `available` describes
 supported input framing, not a guarantee that every subsequent edit can commit.
-Body changes with Content-Encoding, known digest/ETag/range metadata, and changes
-to signed messages are rejected rather than silently leaving stale metadata.
+The default `Safety.Easy` rejects unresolved encoding/integrity/range/signature
+dependencies. Supported unencoded Content-Digest (sha-256/sha-512) is repaired.
+`Safety.Expert` relaxes documented semantic guards, not framing or quotas;
+it still repairs supported Content-Digest and Content-Length. See the cookbook
+for the exact Easy/Expert matrix.
 Compression, HPACK, application-specific checksums/authentication and semantic
 request-response correlation are not recomputed. In particular, a HEAD response
 whose declared length exceeds the supplied bytes is not treated as a complete
@@ -225,6 +239,13 @@ Both filenames and PCAPNG section comments identify the synthetic nature of the 
 Small, fast C++ webhook observer/controller for Smithproxy. The C++ backend uses
 `lmhpp` and `libmicrohttpd`; the frontend is a separate static application and
 can run on another machine.
+
+## Repository language
+
+Use English for repository content, including documentation, headings, link labels
+and anchors, code comments, examples and commit messages. Czech is permitted only
+as an explicit exception in a clearly named file carrying an `_CZ` tag.
+Unicode test data may exercise non-ASCII encoding without using localized prose.
 
 ## Build
 
@@ -561,7 +582,11 @@ local CONTINUATION frames), and Opaque gaps, in source order. Original read-only
 `api.http2.frames/header_blocks` remain available. Edits are drafts: only returning
 the committed bytes publishes a replacement.
 
+<!-- live-example: h2-rewrite -->
 ```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
 for part in api.message.parts:
     if part.is_a(PartType.Http2.Header) and part.headers is not None:
         part.headers.set_header(b"x-spider", b"rewrite")
@@ -593,8 +618,10 @@ limit. This mode does not discover or maintain output peer settings/HPACK state.
 It also does not compensate connection/stream flow-control windows after DATA
 size changes. It permits explicit index/table changes and nonsensical semantic values: a valid
 HPACK encoding can still fail against the receiver's dynamic table. **No later
-messages are silently translated.** TRANSLATE and strict control policy are future
-work. Failed assembly raises `CommitException`, leaves original bytes untouched,
+messages are silently translated.** The separate, bounded
+[live H2 Translate mode](docs/H2_TRANSLATE_LIVE.md) maintains HPACK/SETTINGS state
+through explicit script calls and strict control. Failed assembly raises
+`CommitException`, leaves original bytes untouched,
 and allows fixing the draft and retrying. The script must return the result.
 
 ### Live Parts hold / need-more
@@ -602,7 +629,11 @@ and allows fixing the draft and retrying. The script must return the result.
 Deploy with **flow** instancing, as the **last enabled script** in the chain.
 Hold is not supported in preview or message/endpoint instances yet.
 
+<!-- live-example: h1-hold -->
 ```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
 for part in api.message.parts:
     if part.type == PartType.Http1.Body:
         if not part.content.complete:
@@ -633,10 +664,13 @@ are separate from `api.state`, with a 1 MiB serialized checkpoint limit and a
 `None` is an error. Event inspection metadata reports `holding`, `released` or
 `abandoned`; checkpoint contents are not copied into status/event output.
 
-**Known limitation, deliberately deferred:** failure handling remains fail-open.
+**Known limitation, deliberately deferred:** ordinary REWRITE hold failure
+handling remains fail-open under regular policy.
 A failed webhook, script error, stop/expiry, disable/redeploy or backend restart
 can lose held data while later bytes continue. Strict ordering/failure protection
-is tracked in `docs/TODO.md`, for HOLD/REWRITE as well as future TRANSLATE.
+is tracked in `docs/TODO.md` for HOLD/REWRITE. Already active Translate instead
+fails closed through strict control; a failure before its first successful
+activation can still leave the original callback unchanged under regular policy.
 
 Live edit is opt-in. When enabled, each new content callback waits up to ten
 seconds for `accept`, `accept-session`, `replace`, or `discard`. Accept-session

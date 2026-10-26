@@ -1,86 +1,104 @@
 # Inspection cookbook
 
-## Setup před živým přepisem
+## Setup before live rewrites
 
-Živý skript nyní dostane také `connection-start`: `api.phase == 'setup'`,
-`api.message is None`, metadata jsou v `api.info`. V této fázi musí explicitně
-zavolat `api.connection.request_rewrite()` a vrátit `None`, pokud bude později
-měnit délku nebo používat hold/Translate. Bez opt-in smí vrátit `None` nebo
-replacement **přesně stejné délky v bajtech jako vstup daného callbacku**,
-v Easy **i** Expert. Pozdní opt-in vyvolá `CommitException`; pouhé zapnutí Expert
-rezervaci neudělí.
+Live scripts also receive `connection-start`: `api.phase == 'setup'`,
+`api.message is None`, and metadata is in `api.info`. During this phase,
+explicitly call `api.connection.request_rewrite()` and return `None` if later
+callbacks will change length or use hold/Translate. Without opt-in, a script may
+return `None` or a replacement **exactly as long in bytes as this callback's input**,
+in both Easy and Expert. Late opt-in raises `CommitException`; Expert alone does
+not grant a reservation.
 
-Stejně dlouhý raw replacement tiše projde, i když mění hlavičky nebo stavová pole.
-Proxy zůstane u jediného vstupního kontextu: nic nepřepočítává pro druhý pohled,
-nezapíná Translate ani dodatečný fork. Správnost protokolu, obsah, digesty a
-případné rozbití dalších zpráv jsou odpovědnost skriptu. Kontroly typed `commit()`
-v Easy/Expert tím neměníme; raw výstup žádnou takovou kontrolu neslibuje.
-Počítá se výsledná délka celého replacementu, ne počet znaků, base64 délka ani
-jen délka upraveného body. Změna délky bez rezervace skončí `CommitException` ve
-workeru; přímou nepovolenou webhookovou odpověď proxy odmítne zavřením spojení.
+Same-length raw replacement passes silently, even when it changes headers or
+state fields. The proxy retains one input context: no second-view recalculation,
+Translate activation or late fork. Protocol consistency, content, digests and
+possible breakage of later messages are the script's responsibility. Typed
+`commit()` checks in Easy/Expert are unchanged; raw output promises no such validation.
+Length means the entire resulting replacement, not character count, base64 length
+or just the modified body. Unreserved resizing raises `CommitException` in the
+worker; the proxy closes the connection on a directly supplied unauthorized
+webhook response.
 
 <!-- example: same-size-without-reservation fixture=h1-unreserved expect=replace -->
 ```python
 if api.phase == 'setup':
-    return  # Žádná rezervace druhého kontextu.
-# Jednoduchý raw přepis; délka se nezmění, parserovou konzistenci nehlídáme.
+    return  # No second-context reservation.
+# Simple same-length raw rewrite; parser consistency is not checked.
 return api.bytes.replace(b'abc', b'xyz')
 ```
 
-Před následující payloadové příklady proto při živém deploymentu přidej tento
-guard. Náhledy nad uloženými vzorky mají `api.phase == 'content'` a rezervaci
-nepotřebují. Setup samo nezapíná Translate: obsah dál vyžaduje explicitní
-`return api.message.translate()` v každém jeho callbacku.
+For live deployment, prepend this guard to the payload examples below. Saved-sample
+previews have `api.phase == 'content'` and need no reservation. Setup does not
+activate Translate: each content callback still requires an explicit
+`return api.message.translate()`.
 
 <!-- example: reserve-rewrite fixture=setup expect=setup -->
 ```python
 if api.phase == 'setup':
     api.connection.request_rewrite()
     return
-# Zde pokračuje vlastní payloadový příklad.
+# The payload example continues here.
 return None
 ```
 
-Rezervace platí pro spojení; změna deploymentu uprostřed již běžící nerezervované
-session ji nemůže dodatečně udělit. Filtr i scope se vyhodnocují už při setupu,
-takže mohou používat jen metadata dostupná v tuto chvíli, nikoli budoucí L7
-anotace. Chyba setupu nepublikuje rezervaci. Ve flow instanci se úspěšně
-uložené `api.state` přenese ze setupu do prvního content callbacku.
+Reservation belongs to the connection; changing deployments mid-session cannot
+grant it retroactively to an unreserved session. Filters and scope are evaluated
+during setup, so they can use only metadata available then, not future L7 annotations.
+Failed setup publishes no reservation. In flow instancing, successfully saved
+`api.state` carries from setup to the first content callback.
 
-## Easy a Expert
+### Capability metadata compatibility
 
-Výchozí je `Safety.Easy`. Volba `commit(safety=Safety.Expert)` platí jen pro toto
-volání; samostatný `part.commit()` ani hold ji nepřenese do dalšího commitu.
-Stejný parametr podporuje snapshot, message i translate. Je nezávislý na
-`Mode.Rewrite` / `Mode.Translate`, instanciaci i scope deploymentu.
+`webhook_control.rewrite` has three distinct states:
 
-| Oblast | Easy | Expert |
+| Value | Current behavior |
+|---|---|
+| `false` | Unreserved: same-length replacement only, no hold/Translate. |
+| `true` | The proxy confirms reserved rewrite capability. |
+| Absent | Legacy path or offline input; the worker does not enforce reservation. |
+
+An absent field does not confirm the new setup contract. For compatibility, it is
+not converted to `false`. Legacy Translate still requires all other conditions:
+control `version == 1`, first content `sequence == 1`, one flow deployment and
+subsequent strict/sequence confirmation. Absence alone or offline preview does
+not activate Translate. This does not promise compatibility with every old proxy;
+use current proxy and Spider versions with explicit setup.
+
+## Easy and Expert
+
+The default is `Safety.Easy`. `commit(safety=Safety.Expert)` applies only to that
+call; neither separate `part.commit()` nor hold carries it to the next commit.
+Snapshot, message and translate accept the same parameter. It is independent of
+`Mode.Rewrite` / `Mode.Translate`, instancing and deployment scope.
+
+| Area | Easy | Expert |
 |---|---|---|
-| H1 podporovaný Content-Digest | Přepočítá | Přepočítá |
-| H1 změna těla s nepodporovanými encoding/digest/range/signature metadaty | Odmítne | Ponechá metadata na odpovědnosti skriptu |
-| H1 Host a bodyless status | Kontroluje sémantiku při změně | Povolí nesoulad |
-| Známé Content-Length | Přepočítá | Přepočítá stejně; Expert není implicitní vypnutí oprav |
-| H2 control nad nastaveným max_frame_size | Odmítne při commitu; limit lze nastavit předem | Povolí v mezích fyzické reprezentace a kvóty |
-| H2 fragmentace pod 16384 | Odmítne | Povolí, má-li rámec kladnou kapacitu pro data |
-| Neúplný editovaný part, konfliktní raw/typed zápis, kvóta, duplicitní objekt | Odmítne | Odmítne |
-| Translate HPACK/strict/flow-control podmínky | Zachová | Zachová; nejde o implicitní přechod do rewrite |
+| Supported H1 Content-Digest | Recalculates | Recalculates |
+| H1 body edit with unsupported encoding/digest/range/signature metadata | Rejects | Leaves metadata to the script |
+| H1 Host and bodyless status | Checks semantics on change | Permits inconsistency |
+| Known Content-Length | Recalculates | Also recalculates; Expert does not implicitly disable repairs |
+| H2 control above configured max_frame_size | Rejects at commit; the limit can be set first | Permits within physical representation and quota |
+| H2 fragmentation below 16384 | Rejects | Permits with positive frame data capacity |
+| Edited incomplete part, conflicting raw/typed writes, quota, duplicate object | Rejects | Rejects |
+| Translate HPACK/strict/flow-control conditions | Preserves | Preserves; no implicit switch to rewrite |
 
-`message.commit(False, safety=Safety.Expert)` vypíná pouze známý přepočet H2
-Content-Length. H1 typed assembly přepočítává délku vždy. Komprimované H1 Parts,
-chunked, trailers, upgrade a nejednoznačné vstupní framing zůstávají nepodporované
-v obou režimech; Expert je neimplementuje a neprovádí automatickou kompresi.
+`message.commit(False, safety=Safety.Expert)` disables only known H2 Content-Length
+repair. H1 typed assembly always recalculates length. Compressed H1 Parts, chunked,
+trailers, upgrade and ambiguous input framing remain unsupported in both modes;
+Expert neither implements them nor automatically compresses content.
 
-Easy znamená existující sémantické ochrany, **ne úplný protokolový validátor**.
-Například H2 rewrite ani v Easy neudržuje stav vzdálené HPACK tabulky; nezměněné
-bajty včetně neznámých rámců zachovává. Typované hodnoty dál vyžadují jednoznačné
-kódování (například header name bez CR/LF nebo kladný HPACK index); explicitní
-raw výstup není bezpečnostní filtr. Stejně tak storage operace, čtení a settery
-nejsou závislé na safety commitu. Přesná pravidla **každého** pole a metody jsou
-v [generované referenci](API_EXAMPLES_REFERENCE.md), browser API Reference a
-editorové nápovědě. Automatický fallback z Easy do Expert neexistuje.
+Easy provides existing semantic safeguards, **not complete protocol validation**.
+For example, H2 rewrite does not maintain peer HPACK state even in Easy; unchanged
+bytes, including unknown frames, are preserved. Typed values still require
+unambiguous encoding (for example, a header name without CR/LF or a positive HPACK
+index); explicit raw output is not a safety filter. Storage, reads and setters
+also do not depend on commit safety. Every field/method's exact rules are in the
+[generated reference](API_EXAMPLES_REFERENCE.md), browser API Reference and editor
+hints. There is no automatic Easy-to-Expert fallback.
 
-Stejná změna s neplatným digestem: Easy ji odmítne, Expert sestaví záměrně
-nekonzistentní zprávu. Ostatní příklady bez parametru `safety` používají Easy.
+For the same edit with an invalid digest, Easy rejects it while Expert assembles
+a deliberately inconsistent message. Other examples without `safety` use Easy.
 
 <!-- example: easy-digest fixture=h1 expect=CommitException -->
 ```python
@@ -90,6 +108,8 @@ draft.http1.body = b"changed"
 return draft.commit(safety=Safety.Easy)
 ```
 
+
+
 <!-- example: expert-digest fixture=h1 expect=replace -->
 ```python
 draft = api.message.snapshot()
@@ -98,85 +118,89 @@ draft.http1.body = b"changed"
 return draft.commit(safety=Safety.Expert)
 ```
 
-Živé spojení má také `api.connection`: explicitní režim přes `set_mode(Mode.Translate)`
-a trvalou H2 politiku přes `http2.enforce_header_table_limit(0)`. Praktický kontrakt
-a příklad jsou v [H2 translate](H2_TRANSLATE_LIVE.md); vyžadují živou flow instanci,
-nikoli offline fixture. Settery nenahrazují `return api.message.translate()`.
+Live connections also expose `api.connection`: explicit mode selection through
+`set_mode(Mode.Translate)` and persistent H2 policy through
+`http2.enforce_header_table_limit(0)`. See [H2 translate](H2_TRANSLATE_LIVE.md)
+for the contract and example; they require a live flow instance, not an offline
+fixture. Setters do not replace `return api.message.translate()`.
 
-Krátké scénáře pro vlastní lab a autorizované testování. Každý blok vlož jako
-samostatný skript. Nejde o skripty, které se mají spustit všechny za sebou.
-Test `inspection_cookbook_tests` spouští všechny zdejší Python bloky ve skutečném
-workeru nad označenými fixture payloady, včetně očekávaných chyb.
+These short scenarios are for your own lab and authorized testing. Use each block
+as a separate script, not successive steps of one script.
+`inspection_cookbook_tests` executes every Python block here in a real worker
+against its marked fixture, including expected errors.
 
-## H1 změna obsahu s Content-Digest
+## H1 content changes with Content-Digest
 
-Úplné nekomprimované H1 tělo lze změnit přes snapshot i Body part. Commit
-přepočítá Content-Length a existující nebo nově nastavený Content-Digest.
-Podporujeme `sha-256` a `sha-512`, včetně obou současně a více řádků hlavičky
-(výstup se sjednotí do jednoho řádku). Jde o byte-sequence dictionary podle
-[RFC 9530 §2](https://www.rfc-editor.org/rfc/rfc9530.html#section-2).
+Complete uncompressed H1 bodies can be edited through a snapshot or Body part.
+Commit recalculates Content-Length and existing or newly set Content-Digest.
+Supported algorithms are `sha-256` and `sha-512`, including both together and
+multiple header lines (output is normalized to one line). This is a byte-sequence
+dictionary under [RFC 9530 §2](https://www.rfc-editor.org/rfc/rfc9530.html#section-2).
 
 <!-- example: content-digest-repair fixture=h1 expect=replace -->
 ```python
 draft = api.message.snapshot()
 draft.http1.body = b"changed"
-# Prázdná byte sequence je vstup pro sestavení, commit doplní skutečný hash.
+# An empty byte sequence is an assembly input; commit fills in the actual hash.
 draft.http1.set_header("Content-Digest", "sha-256=::, sha-512=::")
 return draft.commit()
 ```
 
-Easy i Expert opravují podporované digests. Expert není vypínač přepočtu.
-Neznámé algoritmy, parametry členů, opakované algoritmy a neplatná syntaxe
-jsou zatím nepodporované: Easy vyvolá CommitException, Expert zachová celý
-slovník beze změny (žádná částečná oprava). Úplný no-op zachová původní bajty;
-nezměněné digests se neověřují. Samotné čtení snapshotu tedy není validace integrity.
-Odstranění Content-Digest je explicitní odstranění tohoto tvrzení o integritě.
+Both Easy and Expert repair supported digests. Expert does not disable repair.
+Unknown algorithms, member parameters, duplicate algorithms and invalid syntax
+are currently unsupported: Easy raises CommitException, Expert preserves the
+whole dictionary unchanged (no partial repair). A complete no-op preserves
+original bytes; unchanged digests are not verified. Reading a snapshot is not an
+integrity check. Removing Content-Digest explicitly removes that integrity claim.
 
-Repr-Digest, ETag, podpisy, Content-Range, chunked/trailers a komprese zůstávají
-mimo tento krok. Easy dál odmítne změnu těla, pokud má takovou neřešitelnou
-závislost. Hlavičku s digestem nelze odeslat před jeho výpočtem: u neúplných
-Parts podrž celou H1 zprávu od Header partu a commitni až po dosbírání těla.
-Draft se přepočtem nemění a neúspěšný commit nic nepublikuje.
+Repr-Digest, ETag, signatures, Content-Range, chunked/trailers and compression are
+outside this step. Easy still rejects body edits with such unresolved dependencies.
+A digest header cannot be sent before the digest is calculated: for incomplete
+Parts, hold the entire H1 message from its Header part until the body is complete.
+Recalculation does not mutate the draft, and failed commit publishes nothing.
 
-## Co znamená 100% pokrytí
+## What 100% coverage means
 
-[Úplný inventář](API_EXAMPLES_REFERENCE.md) obsahuje příklad **každého členu
-aktuálního typovaného API schematu**. Generátor a test odmítnou zastaralý dokument;
-`inspection_api_tests` navíc každý schema příklad vykonává nad prázdnými,
-naplněnými i neúplnými callbacky. Níže jsou praktické scénáře a chyby.
-Starší ploché helpery jsou souhrnně ukázané v prvním příkladu.
+The [complete inventory](API_EXAMPLES_REFERENCE.md) contains an example of **every
+member of the current typed API schema**. Generator and test reject stale docs;
+`inspection_api_tests` also executes every schema example against empty, populated
+and incomplete callbacks. Practical scenarios and failures follow below.
+Older flat helpers are demonstrated together in the first example.
 
-Ověření 2026-10-25: schema v0.5 má 20 typů a 82 členů; cookbook obsahuje
-21 samostatných spustitelných bloků. Celá sada **22/22 CTest testů prošla**
-(29,17 s). Nové dokumentační testy používají skutečný sandboxovaný worker;
-nejde o nový UBSan ani produkční load test.
+Verification on 2026-10-25: schema v0.5 had 20 types and 82 members; the cookbook
+contained 21 independent executable blocks. **22/22 CTest tests passed** (29.17 s).
+New documentation tests used the real sandboxed worker; this was not a new UBSan
+or production load test.
 
-To neznamená 100% branch coverage, všechny kombinace protokolu ani záruku
-bezchybnosti. `PartType` podporuje `Opaque`, `Http1.Part/Header/Body`
-a `Http2.Part/Header/Data/Frame`; `part.is_a(...)` testuje rodinu typu.
-`HeldCommit` je neprůhledný výsledek: pouze ho vrať, nevyráběj ani neserializuj ho.
+This does not mean 100% branch coverage, all protocol combinations or a guarantee
+of correctness. `PartType` supports `Opaque`, `Http1.Part/Header/Body` and
+`Http2.Part/Header/Data/Frame`; `part.is_a(...)` tests the type family.
+`HeldCommit` is opaque: return it, do not construct or serialize it.
 
-## Základní pravidla
+## Basic rules
 
-- Read-only views popisují vstup; `message.parts` jsou editovatelné drafty.
-- `get_bytes()` materializuje bajty až při čtení. Komprese zde zatím není write API.
-- `part.commit()` vrací lokální bajty; teprve `return api.message.commit()` publikuje
-  sestavenou zprávu. Samotné volání commitu neposílá nic.
-- `complete` znamená úplný part; `content.complete` celý známý content
-  (`True`, `False`, nebo `None`, pokud ho nelze určit).
-- Hold vyžaduje živý flow deployment, poslední v povoleném řetězci, směr L/R.
-  Run on selected ani message/endpoint instanciace transportní hold nepodporují.
-- REWRITE nepřekládá pozdější zprávy. Změnou HPACK tabulky můžeš rozladit spojení.
-- Chyba skriptu má nyní fail-open chování. Po chybě s drženými daty nelze zaručit
-  neporušený tok; strict/drop a ochrana při výpadku jsou zatím TODO.
-- Limity: náhrada 1 MiB, checkpoint 1 MiB, kombinovaný prefix/checkpoint 1,5 MiB,
-  state 64 KiB, state+hold 4 MiB na deployment. U velkých vstupů počítej s chybou.
+- Read-only views describe input; `message.parts` contains editable drafts.
+- `get_bytes()` materializes bytes on read. Compression is not yet a write API here.
+- `part.commit()` returns local bytes; only `return api.message.commit()` publishes
+  the assembled message. Calling commit alone sends nothing.
+- `complete` means a complete part; `content.complete` means the entire known
+  content (`True`, `False`, or `None` when undeterminable).
+- Hold requires the last enabled live flow deployment and direction L/R.
+  Run on selected and message/endpoint instancing do not support transport hold.
+- REWRITE does not translate subsequent messages. HPACK table edits can desynchronize peers.
+- Ordinary REWRITE script failure under regular policy is fail-open. After failure
+  with held data, an intact flow cannot be guaranteed; HOLD/REWRITE protection is
+  TODO. Already active Translate instead returns HTTP 503 and the strict proxy
+  closes the connection. Failure before first successful activation may still
+  fail open; a setter call alone does not activate proxy mode.
+- Limits: replacement 1 MiB, checkpoint 1 MiB, combined prefix/checkpoint 1.5 MiB,
+  state 64 KiB, state+hold 4 MiB per deployment. Large inputs may fail.
 
-## 1. Diagnostika bez změny provozu
+## 1. Diagnostics without changing traffic
 
-Metadata mohou obsahovat tajné údaje; zde vypisujeme jen omezené náhledy.
-Ploché helpery jsou kompatibilní starší rozhraní. L7 ranges jsou offsety
-do původních `api.bytes`, ne do sestaveného draftu.
+Metadata can contain secrets; only limited previews are printed here. Flat helpers
+are the compatible older interface. L7 ranges are offsets into original
+`api.bytes`, not the assembled draft.
 
 <!-- example: observe fixture=h1 expect=unchanged -->
 ```python
@@ -191,10 +215,11 @@ api.print(api.hexdump(limit=32, width=8))
 return None
 ```
 
-## 2. H1: změnit cestu a přidat identifikátor testu
+## 2. H1: change the path and add a test identifier
 
-Snapshot je nezávislý draft kompletní H1 zprávy. `set_header` nahrazuje duplicity;
-pro zachování opakovaných hlaviček přidej přímo `Header(name, value)` do seznamu.
+A snapshot is an independent draft of a complete H1 message. `set_header`
+replaces duplicates; to retain repeated headers, append `Header(name, value)`
+directly to the list.
 
 <!-- example: h1-route fixture=h1 expect=replace -->
 ```python
@@ -209,10 +234,10 @@ draft.http1.headers.append(Header("X-Tag", "second"))
 return draft.commit()
 ```
 
-## 3. H1 Parts: přepsat body a opravit délku
+## 3. H1 Parts: rewrite the body and repair length
 
-Bez komprese, s jedním Content-Length a anotovanou kompletní hlavičkou.
-HTTP-looking text v body není nová hlavička. Délku počítáme v bajtech.
+Uncompressed, with one Content-Length and an annotated complete header.
+HTTP-looking body text is not another header. Length is measured in bytes.
 
 <!-- example: h1-body fixture=h1 expect=replace -->
 ```python
@@ -224,11 +249,11 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
-## 4. H1: počkat na zbytek body
+## 4. H1: wait for the rest of the body
 
-První callback obsahuje hlavičku a jen `a` z body `abc`. Druhý dodá `bc`.
-První výsledek je `need-more`, druhý jediný `replace` s opravenou délkou.
-Zadržujeme od hlavičky, protože její Content-Length ještě musíme upravit.
+The first callback contains the header and only `a` of body `abc`; the second
+supplies `bc`. The first result is `need-more`, the second a single `replace`
+with repaired length. Hold from the header because its Content-Length still needs editing.
 
 <!-- example: h1-hold fixture=h1-partial expect=hold-resume -->
 ```python
@@ -241,10 +266,10 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
-## 5. H2: označit testovací request
+## 5. H2: tag a test request
 
-Pracujeme pouze se streamem 3. Hodnoty rewrite hlaviček jsou `bytes`, zatímco
-read-only dekódované views používají text. Lokální commit můžeš použít k náhledu.
+This example handles only stream 3. Rewrite header values are `bytes`, whereas
+read-only decoded views use text. Local commit can be used for a preview.
 
 <!-- example: h2-header fixture=h2 expect=replace -->
 ```python
@@ -255,10 +280,10 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
-## 6. H2: větší DATA a automatické rozdělení rámců
+## 6. H2: larger DATA and automatic frame splitting
 
-V testovací odpovědi/requestu změníme body na 20 KiB. Engine rozdělí DATA,
-ponechá END_STREAM poslednímu rámci a opraví známý Content-Length.
+Change a test response/request body to 20 KiB. The engine splits DATA, retains
+END_STREAM on the last frame and repairs known Content-Length.
 
 <!-- example: h2-body fixture=h2 expect=replace -->
 ```python
@@ -269,11 +294,11 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
-## 7. H2: explicitní HPACK a vlastní rámce
+## 7. H2: explicit HPACK and custom frames
 
-Pouze izolovaný lab. Index 2 je statický `:method: GET`; index 62 už může záviset
-na dynamické tabulce. Table-size update musí být před hlavičkami. Incremental
-indexing mění stav peeru — pozdější zprávy za tebe rewrite neopraví.
+Isolated labs only. Index 2 is static `:method: GET`; index 62 may already depend
+on the dynamic table. Table-size updates must precede header fields. Incremental
+indexing changes peer state; rewrite does not repair subsequent messages for you.
 
 <!-- example: h2-construct fixture=h2 expect=replace -->
 ```python
@@ -290,13 +315,13 @@ api.message.parts.append(api.http2.Frame(0, 1, 5, b"lab"))
 return api.message.commit(False)
 ```
 
-`commit(False)` vypíná automatickou opravu Content-Length, nikoli validaci
-serializace. Zde je výsledná návaznost streamů vědomě odpovědností autora testu.
+`commit(False)` disables automatic Content-Length repair, not serialization
+validation. Resulting stream consistency is deliberately the test author's responsibility.
 
-## 8. Opaque: známý vlastní binární formát
+## 8. Opaque: a known custom binary format
 
-Bez anotací engine neháda HTTP. U vlastního protokolu můžeš explicitně měnit
-Opaque obsah; tím na sebe bereš odpovědnost za jeho framing.
+Without annotations, the engine does not guess HTTP. Explicitly editing Opaque
+content in a custom protocol makes its framing your responsibility.
 
 <!-- example: opaque fixture=opaque expect=replace -->
 ```python
@@ -306,11 +331,11 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
-## 9. Instance a sdílené počítadlo
+## 9. Instance and shared counter
 
-`state` žije podle instanciace (message/flow/endpoint), nikoli jako Python global.
-Sdílené storage operace jsou jednotlivě atomické, ale jejich sekvence není
-transakce. Zápis do storage se nevrací zpět při pozdější chybě skriptu.
+`state` lives according to instancing (message/flow/endpoint), not as a Python
+global. Shared storage operations are individually atomic, but a sequence of
+operations is not a transaction. A later script failure does not roll back storage writes.
 
 <!-- example: counters fixture=h1 expect=unchanged -->
 ```python
@@ -325,7 +350,7 @@ shared.delete("last")
 return None
 ```
 
-## 10. Commit bez return nic nepublikuje
+## 10. Commit without return publishes nothing
 
 <!-- example: discard-draft fixture=h1 expect=unchanged -->
 ```python
@@ -335,10 +360,10 @@ draft.commit()
 return None
 ```
 
-## 11. Chyba: CRLF v H1 hlavičce
+## 11. Error: CRLF in an H1 header
 
-Engine odmítne vložení dalšího řádku přes hodnotu. Nezachycený CommitException
-znamená neúspěšný skript a žádnou replacement hodnotu, nikoli částečný přepis.
+The engine rejects inserting another line through a header value. An uncaught
+CommitException means script failure and no replacement, not a partial rewrite.
 
 <!-- example: bad-header fixture=h1 expect=CommitException -->
 ```python
@@ -347,7 +372,7 @@ draft.http1.set_header("X-Test", "value\r\nInjected: yes")
 return draft.commit()
 ```
 
-## 12. Zachycená chyba a oprava draftu
+## 12. Catch an error and repair the draft
 
 <!-- example: retry fixture=h1 expect=replace -->
 ```python
@@ -360,10 +385,10 @@ except CommitException:
     return draft.commit()
 ```
 
-## 13. Chyba: editace gzip body bez encoderu
+## 13. Error: editing a gzip body without an encoder
 
-Snapshot dovoluje původní zprávu beze změny, ale změna zakódovaného body není
-podporovaná. Totéž platí pro nepřepočitatelná integrity/range metadata.
+A snapshot permits the original message unchanged, but editing its encoded body
+is unsupported. The same applies to integrity/range metadata that cannot be recalculated.
 
 <!-- example: encoded-body fixture=gzip expect=CommitException -->
 ```python
@@ -372,22 +397,24 @@ draft.http1.body = b"plain text is not gzip"
 return draft.commit()
 ```
 
-## 14. Chyba: neúplná H1 zpráva bez holdu
+## 14. Error: incomplete H1 message without hold
 
 <!-- example: incomplete fixture=h1-partial expect=CommitException -->
 ```python
 return api.message.commit()
 ```
 
-## 15. Chyba: neplatný PING / HPACK pořadí
+## 15. Error: invalid PING / HPACK ordering
 
-PING musí mít přesně osm bajtů; table-size update nesmí následovat pole hlavičky.
+PING must contain exactly eight bytes; a table-size update must not follow a header field.
 
 <!-- example: ping-size fixture=h2 expect=CommitException -->
 ```python
 api.message.parts.append(api.http2.Ping(b"short"))
 return api.message.commit()
 ```
+
+
 
 <!-- example: table-order fixture=h2 expect=CommitException -->
 ```python
@@ -397,9 +424,9 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
-## 16. Chyba: stejný part ve výstupu dvakrát
+## 16. Error: the same part twice in the output
 
-Kopii vytvoř explicitně konstruktorem; nepřidávej stejný objekt podruhé.
+Construct a copy explicitly; do not append the same object twice.
 
 <!-- example: duplicate fixture=h2 expect=CommitException -->
 ```python
@@ -407,9 +434,9 @@ api.message.parts.append(api.message.parts[0])
 return api.message.commit()
 ```
 
-## 17. Chyba: neplatné sdílené počítadlo
+## 17. Error: invalid shared counter
 
-Storage obsahuje JSON hodnoty; increment není konverze textu na číslo.
+Storage contains JSON values; increment does not convert text to a number.
 
 <!-- example: bad-counter fixture=h1 expect=TypeError -->
 ```python
@@ -418,10 +445,10 @@ shared.set("bad-counter", "three")
 shared.increment("bad-counter")
 ```
 
-## 18. Chyba: hold v náhledu, nebo bez vrácení výsledku
+## 18. Error: hold in preview or without returning the result
 
-První ukázka běží jako Run on selected (bez flow deploymentu): commit lokálně
-vyrobí výsledek, ale worker odmítne transportní hold. Druhá nevrací commit vůbec.
+The first example runs as Run on selected (no flow deployment): commit creates
+a local result, but the worker rejects transport hold. The second never returns commit.
 
 <!-- example: hold-preview fixture=h1-partial expect=CommitException -->
 ```python
@@ -429,15 +456,17 @@ api.message.parts.hold_from(api.message.parts[0])
 return api.message.commit()
 ```
 
+
+
 <!-- example: hold-no-return fixture=h1-partial expect=CommitException -->
 ```python
 api.message.parts.hold_from(api.message.parts[0])
 return None
 ```
 
-## 19. Chyba: příliš velká náhrada
+## 19. Error: replacement too large
 
-Do 1 MiB se musí vejít celá náhrada včetně hlaviček, ne jen body.
+The entire replacement, including headers, must fit within 1 MiB, not just the body.
 
 <!-- example: too-large fixture=h1 expect=CommitException -->
 ```python
@@ -446,16 +475,16 @@ draft.http1.body = b"A" * (1024 * 1024)
 return draft.commit()
 ```
 
-## Další důležité hranice
+## Other important boundaries
 
-- H1 Parts zatím nejsou parser chunked/compressed/pipelined zpráv. Bez vhodných
-  anotací dostaneš Opaque, nikoli automaticky rozpoznané HTTP.
-- Neúplný H2 rámec může být zachovaný beze změny, ale nelze ho libovolně přepsat;
-  hold dnes potřebuje kompletní devítibajtovou frame header.
-- Unresolved HPACK index nemusí mít `name`/`value`; `set_header` pak může selhat.
-  Explicitní index může být serializovatelný a přesto nesmyslný pro peer.
-- Read-only dataclasses ani memoryviews nejsou editovatelné. Použij draft/Parts.
-- Smazaný či zdvojený hold boundary, příliš velký checkpoint, `return None`
-  po obnovení holdu nebo hold bez `return message.commit()` jsou chyby.
-- Storage může hlásit contention/infrastrukturní chybu `StorageBusy`;
-  sandbox blokuje síť a nepovolené soubory. To nejsou validační chyby payloadu.
+- H1 Parts do not yet parse chunked/compressed/pipelined messages. Without suitable
+  annotations, the result is Opaque, not automatically recognized HTTP.
+- An incomplete H2 frame can be preserved unchanged but not arbitrarily rewritten;
+  rewrite hold currently needs the complete nine-byte frame header.
+- An unresolved HPACK index may have no `name`/`value`; `set_header` may then fail.
+  An explicit index may be serializable yet meaningless to the peer.
+- Read-only dataclasses and memoryviews cannot be edited. Use drafts/Parts.
+- Removed/duplicated hold boundaries, oversized checkpoints, `return None` after
+  restored hold, or hold without `return message.commit()` are errors.
+- Storage may report contention/infrastructure failure as `StorageBusy`;
+  the sandbox blocks networking and unauthorized files. These are not payload validation errors.

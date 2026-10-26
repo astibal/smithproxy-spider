@@ -2,17 +2,17 @@
 
 ## Scripting
 
-- **Hold + fail-open (vědomě odloženo):** po `need-more` má dřívější bajty pouze
-  Spider. Výpadek Spideru/proxy, timeout, přetížení fronty či změna deploymentu
-  mohou pustit aktuální fragment bez zadrženého prefixu. Řešit ochranu pořadí
-  a úplnosti také pro HOLD/REWRITE, nejen TRANSLATE; zatím zachovat fail-open.
-  Navrhnout strict/drop řízení a obnovu/potvrzení vlastnictví dat, nikoli jen
-  ukládání bufferu na disk. Stejně dořešit disable/redeploy, změnu filtru,
-  automatické suspendování, idle expiry, limity a ukončení spojení s holdem.
-- Rozšířit živý hold z posledního zapnutého flow deploymentu na libovolnou
-  pozici v řetězci; vyřešit transakce prefixu a rollback mezi skripty.
-- Rozšířit H1 Parts na neúplné hlavičky, chunked, komprimované a pipelinované
-  zprávy. U H2 doplnit frame header rozdělený mezi callbacky (méně než 9 bajtů).
+- **Hold + fail-open (deliberately deferred):** after `need-more`, only Spider
+  owns earlier bytes. Spider/proxy failure, timeout, queue overload or deployment
+  changes can release the current fragment without the held prefix. Protect order
+  and completeness for HOLD/REWRITE as well as TRANSLATE; retain fail-open for now.
+  Design strict/drop control and data ownership recovery/acknowledgement, not just
+  disk-backed buffers. Also cover disable/redeploy, filter changes, automatic
+  suspension, idle expiry, limits and connection termination while holding data.
+- Extend live hold from the last enabled flow deployment to any position in the
+  chain; resolve prefix transactions and rollback between scripts.
+- Extend H1 Parts to incomplete headers, chunked, compressed and pipelined
+  messages. Add H2 frame headers split across callbacks (fewer than 9 bytes).
 
 - Stabilize a richer, typed Python API without exposing raw webhook JSON.
 - Add a browsable cookbook ranging from simple payload logging to stateful session analysis.
