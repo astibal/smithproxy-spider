@@ -31,6 +31,22 @@ expansion and permits shrink-to-zero to make progress without a receiver reply.
 The accounting unit is encoded DATA payload bytes, including padding, not the
 frame header or decompressed body size.
 
+Sender-facing input windows are tracked independently from refund obligations
+and recipient-facing output windows. Only original callback bytes advance the
+input cursor: restoring held Parts does not consume credit again. A complete
+nine-byte DATA header reserves its entire declared payload, even before the last
+payload byte arrives. The cursor persists through worker rotation and holds at
+most nine header bytes; it does not duplicate retained content.
+
+Only actually emitted SETTINGS and WINDOW_UPDATE change the sender-facing
+allowance. A reduced initial stream window permits bounded in-flight debt until
+the sender's SETTINGS ACK arrives. Connection windows do not change with SETTINGS.
+Input stream records have a separate 1024-record bound; each direction permits
+128 outstanding SETTINGS and 1024 compact input-reset ranges. Exceeding a window
+or quota fails the transaction atomically in both safety modes. An older active
+checkpoint without the input ledger requires reconnection rather than guessing
+how much credit has already been consumed.
+
 Output is split by available connection credit, stream credit and recipient
 frame size. END_STREAM remains on the last actual slice. Pending DATA can be
 released by an opposite-direction WINDOW_UPDATE through content-reverse, without
@@ -267,3 +283,30 @@ No native production code changed; the earlier native P3 remains separate eviden
 Fair scheduling and complete peer stream-lifecycle validation remain out of scope.
 Large retained bodies are addressed by the linked design proposal only; no early
 hold credit is enabled by this change.
+
+### Input-window accounting and socket GOAWAY
+
+The input ledger is the first prerequisite for bounded hold-credit advancement,
+not an early-credit API. Ordinary hold still cannot collect a body larger than
+its available sender window. Backend reservation admission, already-refunded
+provenance and early grants remain future work.
+
+Production regression cases exercise partial DATA headers and payloads, padded
+holds, release without duplicate debit/refund, connection oversend, stream-window
+reductions before/after ACK, retained SETTINGS, held END_STREAM and fresh workers.
+The real-socket `--goaway` fixture covers both safety modes: stream 1 drains its
+160,000-byte expanded body after GOAWAY, excluded streams 3/5 lose DATA but preserve
+ordered HPACK history, and a subsequent PING is still forwarded. An independent
+libnghttp2 decoder checks headers on the recipient side.
+
+Validation on 2026-10-26:
+
+- Full configured regression: **50/50 CTest suites**, zero failures, **191.73 s**.
+- A final refinement stops input-ledger stream recreation after a reset received
+  during hold. After rebuilding the embedded worker, all **7/7 targeted suites**
+  passed in **42.33 s**: production windows, holds, real fragmented headers,
+  windows Easy/Expert and GOAWAY Easy/Expert.
+- The final production window suite contains **64 tests** (32 per safety mode),
+  including the retained-reset regression and JSON state across fresh workers.
+- Generated API reference consistency and whitespace checks passed. Native code
+  and live SASlik configuration were unchanged; no new native full P3 was run.

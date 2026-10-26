@@ -1,6 +1,7 @@
 # Bounded credit advancement for retained H2 Parts
 
-Status: design proposal, not implemented and not a public API.
+Status: reservation/early-credit design proposal, not a public API. The separate
+sender input-window ledger and partial-frame accounting prerequisite are implemented.
 Date: 2026-10-26.
 
 The current `hold_from()` retains semantic Parts and grants no early DATA credit.
@@ -112,7 +113,8 @@ repair headers that were already sent.
 
 ## Implementation order and acceptance
 
-1. Add sender input-window and partial-frame accounting, with persisted provenance.
+1. Sender input-window and partial-frame accounting is implemented. Add explicit
+   already-refunded provenance when early grants become possible.
 2. Add backend admission/ownership for reservations within deployment quotas.
 3. Expose explicit opt-in reservation intent; keep ordinary hold unchanged.
 4. Connect early refunds, release, cancellation and pending-output ownership.
@@ -126,6 +128,6 @@ workers; failure/retry before publication; no duplicate grants after release;
 deployment admission races; strict teardown after state loss. Peer window checks
 and actual serialized-memory limits are separate assertions.
 
-This design deliberately stops before implementation: reservation ownership and
-partial-input accounting must land together. Adding early WINDOW_UPDATE to the
-existing hold loop alone would not satisfy these invariants.
+Early grants require both reservation ownership and partial-input accounting.
+The latter can be validated independently without granting extra credit. Adding
+early WINDOW_UPDATE to the existing hold loop alone would not satisfy these invariants.

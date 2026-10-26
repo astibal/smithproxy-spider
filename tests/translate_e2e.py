@@ -185,6 +185,91 @@ def windows_exchange(client, origin):
           'Content-Length repair, reverse-only progress, pending DATA reset and 1100 closed streams')
 
 
+def goaway_exchange(client, origin):
+    """Graceful shutdown on real sockets; keep decoding excluded HPACK blocks.
+
+    Raw peers are intentional: hyper-h2 closes its entire connection state on
+    GOAWAY and cannot model the RFC's continued processing of accepted streams.
+    Independent libnghttp2 decodes the destination's ordered header history.
+    """
+    preface = b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n'
+    settings = frame(b'', 4, 0, 0)
+    ack = frame(b'', 4, 1, 0)
+    client.sendall(preface + settings)
+    assert receive(origin, len(preface)) == preface
+    assert b''.join(receive_frame(origin)) == settings
+    origin.sendall(settings)
+    assert b''.join(receive_frame(client)) == settings
+    for sender, target in ((client, origin), (origin, client)):
+        sender.sendall(ack)
+        assert b''.join(receive_frame(target)) == ack
+
+    encoder = hpack.Encoder()
+    oracle = Oracle()
+    requests = bytearray()
+    expected = {}
+    for stream in (1, 3, 5):
+        value = b'secret' if stream == 1 else b'excluded'
+        fields = [(b':method', b'POST'), (b':scheme', b'http'),
+                  (b':authority', b'lab.test'), (b':path', b'/'),
+                  (b'content-length', str(len(value)).encode()),
+                  (b'x-history', b'accepted' if stream == 1 else b'excluded-index')]
+        expected[stream] = fields
+        requests.extend(frame(encoder.encode(fields), 1, 4, stream))
+        requests.extend(frame(value, 0, 1, stream))
+    client.sendall(requests)
+
+    received = bytearray()
+    headers = []
+    ended = 0
+
+    def consume():
+        nonlocal ended
+        head, data = receive_frame(origin)
+        kind, flags = head[3:5]
+        stream = int.from_bytes(head[5:9], 'big') & 0x7fffffff
+        if kind == 1:
+            assert flags & 4, 'Small fixture unexpectedly fragmented HEADERS'
+            fields = oracle.decode(data)
+            wanted = [(name, b'160000' if name == b'content-length' and stream == 1 else value)
+                      for name, value in expected[stream]]
+            assert fields == wanted, (stream, fields, wanted)
+            headers.append(stream)
+        elif kind == 0:
+            assert stream == 1, 'GOAWAY-excluded DATA reached the recipient'
+            received.extend(data)
+            ended += bool(flags & 1)
+        else:
+            raise AssertionError(f'Unexpected frame {kind} during GOAWAY drain')
+
+    while len(received) < 65535:
+        consume()
+    assert headers == [1] and len(received) == 65535 and ended == 0
+
+    goaway = frame((1).to_bytes(4, 'big') + b'\0' * 4, 7, 0, 0)
+    origin.sendall(goaway)
+    # Cancellation may refund connection credit alongside the forwarded GOAWAY.
+    while True:
+        head, data = receive_frame(client)
+        if head[3] == 7:
+            assert head + data == goaway
+            break
+        assert head[3] == 8
+
+    updates = b''.join(frame((200000).to_bytes(4, 'big'), 8, 0, stream) for stream in (0, 1))
+    origin.sendall(updates)
+    while ended != 1 or headers != [1, 3, 5]:
+        consume()
+    assert bytes(received) == b'z' * 160000
+
+    # A later callback still translates; there is no hidden drain or teardown.
+    ping = frame(b'goawayok', 6, 0, 0)
+    client.sendall(ping)
+    assert b''.join(receive_frame(origin)) == ping
+    print('PASS: real GOAWAY, accepted pending DATA drains, excluded DATA drops, '
+          'ordered HPACK history survives and subsequent control traffic continues')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--smithproxy-source', type=Path, required=True)
@@ -196,6 +281,7 @@ def main():
     parser.add_argument('--policy', action='store_true', help='Enforce zero capacity after handshake, including synthetic ACK consumption')
     parser.add_argument('--data', action='store_true', help='Rewrite padded same-length DATA in both directions')
     parser.add_argument('--windows', action='store_true', help='Real H2 peers with length-changing bodies and reverse credit')
+    parser.add_argument('--goaway', action='store_true', help='Graceful GOAWAY with queued DATA and HPACK on real sockets')
     parser.add_argument('--safety', choices=('easy', 'expert'), default='easy')
     args = parser.parse_args()
     source = args.smithproxy_source.resolve()
@@ -235,7 +321,7 @@ def main():
                       "    return\n" + SCRIPT)
             script = script.replace('return api.message.translate()',
                                     f'return api.message.translate(safety=Safety.{args.safety.title()})')
-            if args.windows:
+            if args.windows or args.goaway:
                 script = ("if api.phase == 'setup':\n"
                           "    api.connection.request_rewrite()\n    return\n"
                           "assert api.info['webhook_control']['content-reverse']\n"
@@ -287,8 +373,8 @@ def main():
                 with socks_connect(proxy_port, listener.getsockname()[1], ADDRESSES['ipv4-ip']) as client:
                     origin, _ = listener.accept()
                     with origin:
-                        if args.windows:
-                            windows_exchange(client, origin)
+                        if args.windows or args.goaway:
+                            (goaway_exchange if args.goaway else windows_exchange)(client, origin)
                             status = get_json(inspection, 'frontend-key')
                             state = status['chain'][0]
                             assert state['errors'] == 0, state

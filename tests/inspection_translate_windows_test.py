@@ -119,6 +119,115 @@ class WindowsTests(unittest.TestCase):
     def make_peers(self):
         return Peers(self.safety)
 
+    def input_bridge(self):
+        bridge = self.make_bridge()
+        bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
+        return bridge
+
+    def test_partial_input_reserves_once_and_release_refunds_once(self):
+        for side in ('L', 'R'):
+            bridge = self.input_bridge()
+            wire = frame(b'\x03abc\0\0\0', 0, 8, 1)
+            for byte in wire[:9]:
+                bridge.feed(side, bytes([byte]))
+            state = bridge.control['flow'][side]['input']
+            self.assertEqual(state['window'], 65535 - 7)
+            self.assertEqual(state['remaining'], 7)
+            for byte in wire[9:]:
+                bridge.feed(side, bytes([byte]), lambda m: m.parts.hold_from(m.parts[0]))
+            self.assertEqual(bridge.control['flow'][side]['input']['window'], 65535 - 7)
+            self.assertEqual(bridge.reverse, b'')
+            output, reverse = bridge.feed(side, b'')
+            self.assertEqual(output, wire)
+            self.assertEqual([int.from_bytes(item[3], 'big') for item in unpack(reverse)], [7, 7])
+            self.assertEqual(bridge.control['flow'][side]['input']['window'], 65535)
+            self.assertEqual(bridge.feed(side, b''), (b'', b''))
+
+    def test_input_connection_oversend_is_atomic_at_partial_header(self):
+        for side in ('L', 'R'):
+            bridge = self.input_bridge()
+            wire = b''.join(frame(b'x' * size, 0, 0, 1) for size in (16384, 16384, 16384, 16383))
+            bridge.feed(side, wire, lambda m: m.parts.hold_from(m.parts[0]))
+            self.assertEqual(bridge.control['flow'][side]['input']['window'], 0)
+            before = json.dumps(bridge.control)
+            with self.assertRaisesRegex(CommitException, 'input connection window'):
+                bridge.feed(side, frame(b'x', 0, 0, 3)[:9])
+            self.assertEqual(json.dumps(bridge.control), before)
+
+    def test_input_stream_shrink_allows_inflight_only_before_ack(self):
+        for side in ('L', 'R'):
+            peer = 'R' if side == 'L' else 'L'
+            bridge = self.input_bridge()
+            bridge.feed(side, frame(b'a', 0, 0, 1))
+            bridge.feed(peer, frame(b'\x00\x04\x00\x00\x00\x00', 4, 0, 0))
+            bridge.feed(side, frame(b'b', 0, 0, 1))
+            self.assertEqual(bridge.control['flow'][side]['input']['streams']['1']['window'], -1)
+            bridge.feed(side, frame(b'', 4, 1, 0))
+            before = json.dumps(bridge.control)
+            for stream in (1, 3):
+                with self.assertRaisesRegex(CommitException, 'input stream window'):
+                    bridge.feed(side, frame(b'c', 0, 0, stream))
+                self.assertEqual(json.dumps(bridge.control), before)
+
+    def test_held_settings_do_not_change_input_windows(self):
+        bridge = self.input_bridge()
+        bridge.feed('L', frame(b'a', 0, 0, 1))
+        bridge.feed('R', frame(b'\x00\x04\x00\x00\x00\x00', 4, 0, 0),
+                    lambda m: m.parts.hold_from(m.parts[0]))
+        self.assertEqual(bridge.control['flow']['L']['input']['initial'], 65535)
+        self.assertEqual(bridge.control['flow']['L']['input']['pending'], [])
+        bridge.feed('R', b'')
+        self.assertEqual(bridge.control['flow']['L']['input']['initial'], 0)
+        self.assertEqual(bridge.control['flow']['L']['input']['pending'], [0])
+
+    def test_input_end_stream_is_enforced_while_held(self):
+        bridge = self.input_bridge()
+        bridge.feed('L', frame(b'x', 0, 1, 1), lambda m: m.parts.hold_from(m.parts[0]))
+        with self.assertRaisesRegex(CommitException, 'stream termination'):
+            bridge.feed('L', frame(b'y', 0, 0, 1))
+
+    def test_missing_input_checkpoint_requires_reconnect(self):
+        bridge = self.input_bridge()
+        bridge.feed('L', frame(b'a', 0, 0, 1))
+        del bridge.control['flow']['L']['input']
+        with self.assertRaisesRegex(CommitException, 'checkpoint missing; reconnect'):
+            bridge.feed('L', frame(b'b', 0, 0, 1))
+
+    def test_reset_during_hold_keeps_only_connection_input_accounting(self):
+        bridge = self.input_bridge()
+        bridge.feed('L', frame(b'a', 0, 0, 1))
+        reset = frame(b'\0\0\0\x08', 3, 0, 1)
+        bridge.feed('R', reset, lambda m: m.parts.hold_from(m.parts[0]))
+        self.assertEqual(bridge.control['flow']['L']['input']['streams'], {})
+        # The peer may have sent these bytes before receiving the reset.
+        bridge.feed('L', frame(b'late', 0, 0, 1))
+        self.assertEqual(bridge.control['flow']['L']['input']['streams'], {})
+        self.assertEqual(bridge.control['flow']['L']['input']['window'], 65535)
+        bridge.feed('R', b'')
+        forward, reverse = bridge.feed('L', frame(b'later', 0, 0, 1))
+        self.assertEqual(forward, b'')
+        self.assertEqual(unpack(reverse), [(8, 0, 0, (5).to_bytes(4, 'big'))])
+
+    def test_fragmented_input_checkpoint_survives_fresh_workers(self):
+        from inspection_cookbook_test import run
+        from inspection_translate_worker_test import event
+        script = ('for part in api.message.parts:\n'
+                  '    if not part.complete:\n'
+                  '        api.message.parts.hold_from(part)\n        break\n'
+                  f'return api.message.translate(safety=Safety.{self.safety.title()})')
+        control, table, held = None, None, None
+        wire = frame(b'hello', 0, 0, 1)
+        for chunk in (wire[:9], wire[9:11], wire[11:]):
+            request = event(chunk, 'L')
+            request['details']['info']['webhook_control'] = {'content-reverse': True}
+            result = run(script, request, translate_allowed=control is None, translate_active=control is not None,
+                         translate_state=table, translate_control=control, held_parts=held,
+                         hold_allowed=True, instance={'mode': 'flow'})
+            self.assertTrue(result['ok'], result)
+            control, table, held = result['translate_control'], result['translate_state'], result.get('held_parts')
+        self.assertEqual(base64.b64decode(result['replacement']), wire)
+        self.assertEqual(control['flow']['L']['input']['window'], 65535)
+
     def test_retained_content_length_and_lazy_gzip_body(self):
         for compressed in (False, True):
             bridge = self.make_bridge()
@@ -155,13 +264,14 @@ class WindowsTests(unittest.TestCase):
         bridge.feed('L', frame(b'a' * 100, 0, 0, 1))
         bridge.feed('R', frame(b'\x00\x04\x00\x00\x00\x00', 4, 0, 0))
         self.assertEqual(bridge.control['flow']['L']['streams']['1']['output'], -100)
-        bridge.feed('L', frame(b'', 4, 1, 0))
+        # DATA sent before the SETTINGS ACK may still use the earlier window.
         output, _ = bridge.feed('L', frame(b'x', 0, 0, 1) + frame(b'y', 0, 0, 3))
         self.assertEqual(output, b'')
+        bridge.feed('L', frame(b'', 4, 1, 0))
         _, reverse = bridge.feed('R', frame((101).to_bytes(4, 'big'), 8, 0, 1))
         self.assertEqual(reverse, frame(b'x', 0, 0, 1))
         _, reverse = bridge.feed('R', frame((1).to_bytes(4, 'big'), 8, 0, 3))
-        self.assertEqual(reverse, frame(b'y', 0, 0, 3))
+        self.assertEqual(reverse, frame(b'y', 0, 0, 3) + frame(b'', 4, 1, 0))
 
     def test_reset_discards_pending_data_and_refunds_connection(self):
         bridge = self.make_bridge()

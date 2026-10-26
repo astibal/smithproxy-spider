@@ -13,6 +13,162 @@ except ImportError:
 _H2_PREFACE = b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n'
 
 
+class _TranslationInput:
+    """Sender windows, charged once from original callback bytes, before hold.
+
+    The incremental cursor owns only a frame header. DATA reserves its
+    entire declared payload as soon as its header is
+    available. Reassembled Parts never pass through this cursor a second time.
+    """
+    @staticmethod
+    def initial():
+        return {'window': 65535, 'initial': 65535, 'acknowledged': 65535,
+                'pending': [], 'streams': {}, 'header': [], 'remaining': 0,
+                'preface': None}
+
+    def __init__(self, flow):
+        self.flow = flow
+        for side in ('L', 'R'):
+            if 'input' not in flow.state[side]:
+                raise CommitException('Translate input-window checkpoint missing; reconnect')
+
+    def direction(self, side):
+        return self.flow.state[side]['input']
+
+    def cancelled(self, side, stream):
+        return (self.flow.cancelled(side, stream) or
+                self.flow._contains(self.flow.state[side].get('input_cancelled', {}), stream))
+
+    def stream(self, side, stream):
+        state = self.direction(side)
+        key = str(stream)
+        if key not in state['streams']:
+            if not stream or len(state['streams']) >= self.flow.MAX_STREAMS:
+                raise CommitException('Translate input stream quota exceeded or stream zero')
+            state['streams'][key] = {'window': state['initial'], 'ended': False}
+        return state['streams'][key]
+
+    def debit(self, side, stream, amount, end):
+        state = self.direction(side)
+        if not stream:
+            raise CommitException('DATA requires nonzero stream')
+        if amount > state['window']:
+            raise CommitException('Translate input connection window exceeded')
+        state['window'] -= amount
+        if self.cancelled(side, stream):
+            return
+        if self.flow.retired(side, stream):
+            raise CommitException('DATA after translated stream termination')
+        entry = self.stream(side, stream)
+        if entry['ended']:
+            raise CommitException('DATA after translated stream termination')
+        # Until ACK, bytes sent under an earlier initial window can be in
+        # flight. Account against the new window, allowing that bounded debt.
+        allowance = max([state['acknowledged'], state['initial']] + state['pending']) - state['initial']
+        if amount and amount > entry['window'] + allowance:
+            raise CommitException('Translate input stream window exceeded')
+        entry['window'] -= amount
+        entry['ended'] = end
+
+    def receive(self, side, data):
+        state = self.direction(side)
+        position = 0
+        while position < len(data):
+            # Raw frame fixtures may omit the preface. Once its first byte is
+            # seen, however, every fragmented byte must match the real preface.
+            if state['preface'] is None:
+                state['preface'] = 0 if side == 'L' and data[position] == 80 else len(_H2_PREFACE)
+            if state['preface'] < len(_H2_PREFACE):
+                if data[position] != _H2_PREFACE[state['preface']]:
+                    raise CommitException('Invalid H2 input preface')
+                state['preface'] += 1
+                position += 1
+                continue
+            if state['remaining']:
+                count = min(state['remaining'], len(data) - position)
+                state['remaining'] -= count
+                position += count
+                if state['remaining']:
+                    continue
+                self.complete(side)
+                continue
+            count = min(9 - len(state['header']), len(data) - position)
+            state['header'].extend(data[position:position + count])
+            position += count
+            if len(state['header']) < 9:
+                continue
+            header = bytes(state['header'])
+            length = int.from_bytes(header[:3], 'big')
+            kind, flags = header[3:5]
+            stream = int.from_bytes(header[5:9], 'big') & self.flow.MAX_WINDOW
+            if kind == 0:
+                self.debit(side, stream, length, bool(flags & 1))
+            elif kind == 1 and not (self.cancelled(side, stream) or self.flow.retired(side, stream)):
+                entry = self.stream(side, stream)
+                entry['ended'] = entry['ended'] or bool(flags & 1)
+            elif kind == 4 and flags & 1:
+                if length or stream or not state['pending']:
+                    raise CommitException('Unexpected input SETTINGS ACK')
+                state['acknowledged'] = state['pending'].pop(0)
+            state['remaining'] = length
+            if not length:
+                self.complete(side)
+
+    def complete(self, side):
+        state = self.direction(side)
+        # Remember terminal controls at receipt, even if the script holds
+        # them. This affects input policing only; forwarding remains explicit.
+        header = bytes(state['header'])
+        kind = header[3]
+        stream = int.from_bytes(header[5:9], 'big') & self.flow.MAX_WINDOW
+        if kind == 3 and stream and int.from_bytes(header[:3], 'big') == 4:
+            for direction in ('L', 'R'):
+                self.flow._remember(direction, 'input_cancelled', stream)
+        state['header'] = []
+
+    def sent(self, side, data):
+        """Observe only actual output: retained SETTINGS grant nothing yet."""
+        target = 'R' if side == 'L' else 'L'
+        state = self.direction(target)
+        position = len(_H2_PREFACE) if data.startswith(_H2_PREFACE) else 0
+        while position < len(data):
+            length = int.from_bytes(data[position:position + 3], 'big')
+            kind, flags = data[position + 3:position + 5]
+            stream = int.from_bytes(data[position + 5:position + 9], 'big') & self.flow.MAX_WINDOW
+            payload = data[position + 9:position + 9 + length]
+            position += 9 + length
+            if kind == 4 and not flags & 1:
+                for offset in range(0, length, 6):
+                    if int.from_bytes(payload[offset:offset + 2], 'big') != 4:
+                        continue
+                    initial = int.from_bytes(payload[offset + 2:offset + 6], 'big')
+                    delta = initial - state['initial']
+                    for entry in state['streams'].values():
+                        if entry['window'] + delta > self.flow.MAX_WINDOW:
+                            raise CommitException('Translate input window overflow after SETTINGS')
+                        entry['window'] += delta
+                    state['initial'] = initial
+                if len(state['pending']) >= 128:
+                    raise CommitException('Translate input SETTINGS quota exceeded')
+                state['pending'].append(state['initial'])
+            elif kind == 8:
+                increment = int.from_bytes(payload, 'big') & self.flow.MAX_WINDOW
+                if stream and (self.flow.retired(target, stream) or self.cancelled(target, stream)):
+                    continue
+                entry = self.stream(target, stream) if stream else state
+                if not increment or entry['window'] + increment > self.flow.MAX_WINDOW:
+                    raise CommitException('Translate input window grant overflow')
+                entry['window'] += increment
+
+    def finish(self):
+        for side in ('L', 'R'):
+            self.sent(side, bytes(self.flow.output[side]))
+            streams = self.direction(side)['streams']
+            for key in list(streams):
+                if self.flow.retired(side, int(key)) or self.cancelled(side, int(key)):
+                    del streams[key]
+
+
 class _TranslationFlow:
     """Two independent credit ledgers, advanced only by explicit translation.
 
@@ -30,8 +186,11 @@ class _TranslationFlow:
     def initial():
         def direction():
             return {'output': 65535, 'initial': 65535,
-                    'frame': 16384, 'streams': {}, 'queue': [], 'credit': 0}
-        return {'version': 1, 'L': direction(), 'R': direction()}
+                    'frame': 16384, 'streams': {}, 'queue': [], 'credit': 0,
+                    'input': _TranslationInput.initial()}
+        state = {'version': 1, 'L': direction(), 'R': direction()}
+        state['R']['input']['preface'] = len(_H2_PREFACE)
+        return state
 
     def __init__(self, state, side):
         import base64
@@ -906,6 +1065,9 @@ class _Translation:
         settings = _TranslationSettings(self.control_before, self.settings.side)
         flow = (_TranslationFlow(settings.state['flow'], settings.side)
                 if 'flow' in settings.state else None)
+        incoming = _TranslationInput(flow) if flow is not None else None
+        if incoming is not None:
+            incoming.receive(settings.side, message.bytes)
 
         emitted = message.parts[:cut]
         body_overrides = _encoded_h2_bodies(emitted)
@@ -968,6 +1130,7 @@ class _Translation:
         if flow is not None:
             flow.output[settings.side].extend(output)
             forward, reverse_output = flow.finish()
+            incoming.finish()
             output = bytearray(forward)
 
         if len(output) > 1024 * 1024:
