@@ -145,7 +145,10 @@ function defaultScript() {
   return defaultPythonScript;
 }
 
-const suggestedBackend = `${location.protocol}//${location.hostname}:18080`;
+const configuredBackendPath = document.querySelector('meta[name="spider-backend-path"]')?.content;
+const suggestedBackend = configuredBackendPath
+  ? new URL(configuredBackendPath, location.origin).toString().replace(/\/$/, '')
+  : `${location.protocol}//${location.hostname}:18080`;
 backend.value = localStorage.getItem('spider-backend') || suggestedBackend;
 token.value = sessionStorage.getItem('spider-token') || '';
 smithproxyUrl.value = localStorage.getItem('smithproxy-url') || smithproxyUrl.value;
@@ -177,7 +180,7 @@ async function redeemSaslikBootstrap() {
   const value = await response.json();
   if (!response.ok) throw new Error(value.error || `Bootstrap HTTP ${response.status}`);
 
-  const backendUrl = new URL(value.backend);
+  const backendUrl = new URL(value.backend, bootstrapUrl.origin);
   if (['127.0.0.1', 'localhost', '10.254.77.1', '10.254.77.2'].includes(backendUrl.hostname)) {
     backendUrl.hostname = bootstrapUrl.hostname;
   }
