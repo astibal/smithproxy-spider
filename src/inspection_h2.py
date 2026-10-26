@@ -242,10 +242,12 @@ class RewritePart:
     stream_id: int = documented('H2 stream identifier, or 1 for Opaque. Zero remains zero.', 'part.stream_id = 3', access='mutable rewrite draft')
     frame_type: int | None = documented('Numeric frame type; None for Opaque.', 'api.print(part.frame_type) ', access='mutable rewrite draft')
     flags: int = documented('Frame flags; END_HEADERS is rebuilt when a header block is edited.', 'part.flags |= 1  # END_STREAM on DATA/HEADERS', access='mutable rewrite draft')
-    complete: bool = documented('Complete frame or HEADERS/CONTINUATION block available. Hold incomplete parts to continue them in a later callback before assembly.', 'if part.complete:\n    api.print(part.get_bytes()[:16].hex())')
+    complete: bool = documented('Complete frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.', 'if part.complete:\n    api.print(part.get_bytes()[:16].hex())')
     content: PartContent = documented('Separate whole-content completeness, based on original callback parts.', 'api.print(part.complete, part.content.complete)')
-    headers: H2Headers | None = documented('HPACK instructions for a complete parseable block; None otherwise.', 'if part.headers is not None:\n    part.headers.set_header(b"x-test", b"yes")', access='mutable rewrite draft')
-    max_frame_size: int = documented('Output splitting limit, default 16384. Caller may set a known peer limit up to 16777215.', 'part.max_frame_size = 16384', access='mutable rewrite draft')
+    headers: H2Headers | None = documented('HPACK instructions for a complete parseable HEADERS or PUSH_PROMISE block; None otherwise. Active translate resolves logical names and values using the shared directional table.', 'if part.headers is not None:\n    part.headers.set_header(b"x-test", b"yes")', access='mutable rewrite draft')
+    max_frame_size: int = documented('Output splitting limit, default 16384. Caller may set a known peer limit up to 16777215.', 'part.max_frame_size = 16384', access='mutable rewrite draft',
+        easy='Commit accepts 16384..16777215 and rejects oversized control/unknown frames.',
+        expert='Commit accepts 1..16777215 for fragmentation and permits control/unknown frames above this limit. Positive frame capacity, wire representation and output quota remain mandatory.')
     http1: Http1Draft | None = documented('H1 header draft for an annotated Content-Length message; None on other parts. Edit the body through its Body part.', 'for part in api.message.parts:\n    if part.http1 is not None:\n        part.http1.set_header("X-Test", "held")', access='mutable rewrite draft')
 
     def __init__(self, wire=b'', frame_type=None, flags=0, stream_id=1, data=b'', complete=True):
@@ -281,17 +283,23 @@ class RewritePart:
     def set_bytes(self, value):
         self._pending = _h2_bytes(value)
 
-    @api_method('', 'bytes', 'Prepare this part without publishing or changing the original. Message commit handles cross-part dependencies.',
-                'wire = part.commit()\napi.print(len(wire))', availability='Unchanged or complete parts.', access='assemble private draft')
-    def commit(self):
+    @api_method('*, safety: str = Safety.Easy', 'bytes', 'Prepare this part without publishing or changing the original. Message commit handles cross-part dependencies.',
+                'wire = part.commit()\napi.print(len(wire))', availability='Unchanged or complete parts.', access='assemble private draft',
+                easy='Apply H1 semantic guards and H2 configured frame-size bounds. No-op preserves original bytes.',
+                expert='Allow H1 semantic inconsistencies and oversized H2 control frames; permit smaller fragmentation sizes when payload capacity is positive. Keep representation checks, quotas and complete-part requirements. Does not set the mode of a later message commit.')
+    def commit(self, *, safety=Safety.Easy):
         try:
-            return bytes(self._assemble())
+            _validate_safety(safety)
+            result = bytes(self._assemble(safety=safety))
+            if len(result) > 1024 * 1024:
+                raise CommitException('Replacement exceeds 1 MiB')
+            return result
         except CommitException:
             raise
         except (ValueError, TypeError, AttributeError, OverflowError) as error:
             raise CommitException(str(error)) from error
 
-    def _assemble(self, header_override=None):
+    def _assemble(self, header_override=None, *, safety=Safety.Easy):
         state = self.frame_type, self.flags, self.stream_id
         if self._wire and self._pending is None and self.headers is None and state == self._initial:
             return self._wire
@@ -314,8 +322,9 @@ class RewritePart:
         _h2_uint(self.frame_type, 8, 'Frame type')
         _h2_uint(self.flags, 8, 'Frame flags')
         _h2_uint(self.stream_id, 31, 'Stream id')
-        if type(self.max_frame_size) is not int or not 16384 <= self.max_frame_size <= 0xffffff:
-            raise CommitException('max_frame_size must be 16384..16777215')
+        minimum = 16384 if safety == Safety.Easy else 1
+        if type(self.max_frame_size) is not int or not minimum <= self.max_frame_size <= 0xffffff:
+            raise CommitException(f'max_frame_size must be {minimum}..16777215')
         if self.frame_type != self._initial[0]:
             raise CommitException('For a different frame type, replace the part with api.http2.Frame()')
         if (self.flags ^ self._initial[1]) & (0x28 if self.frame_type == 1 else 8 if self.frame_type in (0, 5) else 0):
@@ -323,13 +332,21 @@ class RewritePart:
 
         prefix, padding = self._prefix, self._padding
         if self.frame_type not in (0, 1, 5):
-            if len(data) > self.max_frame_size:
+            if len(data) > self.max_frame_size and safety == Safety.Easy:
                 raise CommitException('Control/unknown frame exceeds max_frame_size')
             return self._frame(self.frame_type, self.flags, data)
+
+        # Expert can request very small fragments; bound expansion before
+        # allocating a list of potentially hundreds of thousands of frames.
+        minimum_frames = max(1, (len(data) + self.max_frame_size - 1) // self.max_frame_size)
+        if len(data) + 9 * minimum_frames > 1024 * 1024:
+            raise CommitException('Replacement exceeds 1 MiB')
 
         output, cursor, first = [], 0, True
         while first or cursor < len(data):
             capacity = self.max_frame_size - len(prefix) - len(padding)
+            if capacity <= 0:
+                raise CommitException('Frame has no positive payload capacity after padding/priority')
             chunk = data[cursor:cursor + capacity]
             cursor += len(chunk)
             last = cursor == len(data)
@@ -359,9 +376,7 @@ def _h2_new_frame(typ, flags, stream_id, payload):
     payload = _h2_bytes(payload)
     wire = len(payload).to_bytes(3, 'big') + bytes([typ, flags]) + stream_id.to_bytes(4, 'big') + payload
     part = _h2_parse_part(wire, 0, len(wire), None)
-    # New parts must serialize, even when unchanged; validate actual wire size.
-    if len(payload) > 16384 and typ not in (0, 1, 5):
-        raise CommitException('New control frame exceeds default max_frame_size')
+    # Defer configured frame-size checks to commit, where safety is explicit.
     part._wire = b''
     return part
 
@@ -509,7 +524,7 @@ def _h2_length_overrides(message):
     return overrides
 
 
-def commit_rewrite_message(message, update_content_length=True):
+def commit_rewrite_message(message, update_content_length=True, *, safety=Safety.Easy):
     if type(update_content_length) is not bool:
         raise CommitException('update_content_length must be bool')
     if any(not isinstance(p, RewritePart) for p in message.parts):
@@ -521,7 +536,7 @@ def commit_rewrite_message(message, update_content_length=True):
     output = bytearray()
 
     for part in message.parts:
-        output.extend(part._assemble(overrides.get(id(part))))
+        output.extend(part._assemble(overrides.get(id(part)), safety=safety))
 
         if len(output) > 1024 * 1024:
             raise CommitException('Replacement exceeds 1 MiB')

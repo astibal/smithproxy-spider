@@ -7,16 +7,26 @@ podpora všech HTTP/2 spojení. Nepodporovaný stav se odmítá, neobchází.
 ## Spuštění
 
 1. Proxy musí obsahovat webhook control patch a posílat v content metadatech
-   `webhook_control: {version: 1, mode: "regular"|"strict", sequence: N}`.
+   `webhook_control: {version: 1, mode: "regular"|"strict", sequence: N, rewrite: true}`.
    `sequence` počítá content callbacky celého spojení, společně pro oba směry.
 2. Python worker potřebuje `python-hpack`. Bez něj dál funguje rewrite,
    ale translate vyvolá CommitException.
 3. Povol jediný deployment s instanciací `flow`. Scope a session filter určují
    přijetí nového spojení; aktivovat lze jen v prvním callbacku (`sequence == 1`).
-4. Vytvoř nové spojení. Skript musí v každém callbacku vrátit translate výsledek:
+4. V setup callbacku (`api.phase == 'setup'`) explicitně rezervuj rewrite a vrať
+   `None`. `api.message` zde není. Easy i Expert potřebují stejnou rezervaci;
+   vytvoř nové spojení, již běžící nerezervovanou session nelze později povýšit.
+   Výjimka pro stejně dlouhý raw replacement nezapíná Translate ani druhý
+   protokolový kontext a tuto rezervaci nenahrazuje.
+5. Skript musí v každém **content** callbacku vrátit translate výsledek.
+   Setup pouze rezervuje možnost přepisovat, neaktivuje vlastní Translate:
 
 <!-- translate-example: replace-header -->
 ```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+
 for part in api.message.parts:
     if part.type == PartType.Http2.Header:
         part.headers.set_header(b"x-lab", b"spider")
@@ -27,6 +37,10 @@ I když není co změnit:
 
 <!-- translate-example: unchanged -->
 ```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+
 return api.message.translate()
 ```
 
@@ -42,6 +56,10 @@ každý klientský callback obsahuje jeden HEADERS blok; obecně callback není 
 
 <!-- translate-example: indexed-once -->
 ```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+
 if api.side == "L":
     turn = api.state.get("client_callbacks", 0) + 1
     api.state["client_callbacks"] = turn
@@ -71,6 +89,10 @@ Následující skript je **záměrně špatně** pro již aktivní translate:
 
 <!-- translate-example: missing-translate -->
 ```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+
 return None
 ```
 
@@ -82,6 +104,10 @@ povinnost nenahrazuje; to je lokální rewrite, ne pokračování HPACK překlad
 
 <!-- translate-example: hold-incomplete -->
 ```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+
 for part in api.message.parts:
     if not part.complete:
         api.message.parts.hold_from(part)
@@ -159,6 +185,10 @@ jednoho DATA rámce. Nehledá přes hranice rámců a neprovádí dekompresi.
 
 <!-- translate-example: data-redaction -->
 ```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+
 api.connection.set_mode(Mode.Translate)
 for part in api.message.parts:
     if not part.complete:
@@ -228,9 +258,48 @@ zpracování. SETTINGS odeslané z R nastavují omezení pro L a naopak.
 Synchronizace vychází z [RFC 9113 §6.5.3](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.5.3)
 a změny HPACK kapacity z [RFC 7541 §4.2](https://www.rfc-editor.org/rfc/rfc7541.html#section-4.2).
 
+## PUSH_PROMISE
+
+Translate překládá také HPACK v PUSH_PROMISE. Part má typ
+`PartType.Http2.Header`, `frame_type == 5` a `stream_id` označuje původní
+klientský stream, nikoli slíbený stream. Slíbené ID a padding zůstávají
+zachované. Blok může pokračovat přes CONTINUATION i více callbacků; neúplný
+part musí skript explicitně podržet.
+
+```python
+for part in api.message.parts:
+    if not part.complete:
+        api.message.parts.hold_from(part)
+        break
+    if part.type == PartType.Http2.Header and part.frame_type == 5:
+        part.headers.set_header(b"x-lab", b"push-inspected")
+return api.message.translate()
+```
+
+**Easy i Expert:** stejný kontrakt. Překládají logické hlavičky, zachovávají
+typ, flags a stream ID; nepovolují raw HPACK ani změnu slíbeného ID. Vstup musí
+být ze serverového směru, na lichém nenulovém klientském streamu a slibovat
+sudý nenulový stream. Po ACK zákazu push je další PUSH_PROMISE odmítnut.
+Nejde o úplnou kontrolu životního cyklu streamů, unikátnosti slíbených ID ani
+HTTP sémantiky slíbeného requestu; tyto kontroly zůstávají na protějšcích.
+
+PUSH_PROMISE a HEADERS sdílejí HPACK kontext daného směru podle
+[RFC 9113 §4.3](https://www.rfc-editor.org/rfc/rfc9113.html#section-4.3).
+Změna slíbené hlavičky tak nerozbije další indexované hlavičky v tomto směru.
+Hold publikuje pouze stav emitovaného prefixu, nikoli spekulativně dekódovaného
+zbytku. Žádný překlad neprobíhá bez `message.translate()`.
+
+Ověření PUSH_PROMISE (2026-10-25): devět nových scénářů prošlo, včetně všech
+hranic fragmentace, paddingu, přenosu held draftu, emitovaného prefixu,
+navazujících indexovaných HEADERS, ACK zákazu push a čerstvých sandboxovaných
+workerů. Výstup ověřuje nezávislý libnghttp2 dekodér. Prošlo také 11/11
+vybraných regresních CTest sad (15,26 s) a existující skutečný E2E scénář
+Expert s DATA/SETTINGS/fragmentací (24,07 s). Tento E2E scénář zatím neposílá
+PUSH_PROMISE; nová push podpora je ověřená na API/worker úrovni, nikoli přes
+celou proxy. Build a generovaná reference prošly.
+
 ## Co tento první krok ještě neumí
 
-- PUSH_PROMISE;
 - změny délky DATA, jejich stream ID nebo flags; uživatelské změny control rámců,
   vložení/mazání/přeskládání Parts
   (výjimkou je explicitní SETTINGS politika výše);
@@ -261,7 +330,40 @@ ctest --test-dir build --output-on-failure
 ```
 
 Proxy control/sequence se zvlášť ověřuje jejími JSON a SXBN integračními testy.
-Žádné nasazení do lab1 se neprovádělo.
+První implementace se ověřovala izolovaně; následné nasazení lab1 je popsané níže.
+
+### Lab1: společný balík Easy/Expert a PUSH_PROMISE (2026-10-25)
+
+Nasazeno: Spider `6fbb860` + pracovní změny Easy/Expert/PUSH_PROMISE, proxy
+`ddb5ce1f` (strict/sequence). Původní čisté checkouty byly aktualizovány
+fast-forwardem; frontend i backend Spideru a proxy byly sestavené a restartované.
+Frontend hlásí `d7fa71541792`; všech 87 členů živého API schématu má Easy/Expert.
+
+`tests/lab_translate_smoke.py` používá běžící lab, jeho skutečnou registraci
+webhooku a dočasný deployment omezený filtrem na port lokálního origin serveru.
+Odmítne běžet vedle aktivních skriptů; deployment odstraní i při chybě.
+Nemění pravidla provozu. Není součástí automatického CTest: restart a živý lab
+vyžadují vědomé spuštění.
+
+```sh
+python3 tests/lab_translate_smoke.py --lab /home/astib/.local/share/saslik/instances/lab1
+python3 tests/lab_translate_smoke.py --lab /home/astib/.local/share/saslik/instances/lab1 \
+  --transport connect --proxy-address 127.0.0.1 --proxy-port 33128
+```
+
+Oba transporty prošly v Easy i Expert, tedy 4/4 scénáře. Každý ověřil 10
+callbacků: strict/sequence, handshake, fragmentovaný padded PUSH_PROMISE/hold,
+změnu hlavičky, navazující indexované HEADERS přes libnghttp2, stejně dlouhou
+náhradu DATA a záměrnou výjimku se zavřením spojení bez úniku aktuálních dat.
+H1 snapshot preview na živém backendu navíc odmítl Content-Digest/body změnu
+v Easy a povolil ji v Expert. Ze zdrojů labu prošlo 12 Easy, 12 Expert a devět
+PUSH_PROMISE testů.
+
+První CONNECT pokus těsně po restartu neprošel: testovací deployment měl nula
+běhů a provoz ještě nebyl zpracovaný skriptem. Přesná příčina nebyla určena;
+po ustálení labu prošly SOCKS i opakovaný CONNECT. Harness nyní kontroluje
+spuštění deploymentu už po prvním contentu, aby neaktivní webhook nezaměňoval
+s chybou holdu. Nejde o tvrzení, že se při startu labu nikdy neobjeví mezera.
 
 ### Skutečný end-to-end harness
 

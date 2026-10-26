@@ -18,6 +18,9 @@ def render():
         '`api` poskytuje callback. Příklady s `part` předpokládají vybraný H2',
         'HEADERS part s dekódovanými hlavičkami; `entry` je jeho HPACK položka.',
         'Nejde o jeden souvislý skript: každý blok je samostatná ukázka.', '',
+        'Výchozí commit používá `Safety.Easy`; `safety=Safety.Expert` je explicitní',
+        'volba pro jeden commit. Nenastavuje Rewrite/Translate ani režim dalšího callbacku.',
+        'U každého členu jsou níže samostatně uvedena pravidla Easy a Expert.', '',
     ]
     for name, definition in schema['types'].items():
         lines.extend([f'## {name}', '', definition['description'] or '', ''])
@@ -29,6 +32,7 @@ def render():
                 f"### {name}.{member['name']}", '', member['description'], '',
                 f"Dostupnost: {member['availability']}", '',
                 f"Přístup: {member['access']}; typ/výsledek: `{member['type']}`.", '',
+                f"Easy: {member['easy']}", '', f"Expert: {member['expert']}", '',
                 '```python', member['example'], '```', '',
             ])
     return '\n'.join(lines)

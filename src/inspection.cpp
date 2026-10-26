@@ -501,17 +501,19 @@ bool Inspection::translation_required(const nlohmann::json& event) const {
 }
 
 nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann::json& enrichments) {
+    const bool setup = event.value("action", "") == "connection-start";
+
     if (event.value("action", "") == "connection-stop") {
         clear_flow(event.value("id", ""));
         return nullptr;
     }
 
-    if (event.value("action", "") == "connection-start") {
+    if (setup) {
         std::scoped_lock lock(mutex_);
         const auto id = event.value("id", "");
         closed_flows_.erase(id);
-        return nullptr;
     }
+
     std::string script;
     std::shared_ptr<InspectionPool> legacy_pool;
     nlohmann::json chain;
@@ -529,7 +531,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
     {
         std::scoped_lock lock(mutex_);
 
-        if (event.value("action", "") != "connection-content") return nullptr;
+        if (!setup && event.value("action", "") != "connection-content") return nullptr;
 
         const auto pin = translations_.find(session);
         translate_active = pin != translations_.end();
@@ -555,7 +557,8 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             return translate_failure("Strict connection has no translate state (backend restart or lost flow)");
         }
 
-        translate_allowed = control.value("sequence", 0ULL) == 1 && !session.empty() &&
+        translate_allowed = !setup && control.value("rewrite", true) &&
+                            control.value("sequence", 0ULL) == 1 && !session.empty() &&
                             control.value("version", 0) == 1 && translations_.size() < 10000;
         const auto state = event.value("decision", nlohmann::json::object()).value("state", "");
         const bool bypassed = state == "passed" || state == "forgotten" || state == "auto-accepted";
@@ -579,6 +582,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         nlohmann::json result = nullptr;
         auto steps = nlohmann::json::array();
         nlohmann::json replacement = nullptr;
+        bool rewrite_requested = false;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         std::string last_enabled;
         for (const auto& entry : chain)
@@ -600,7 +604,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                 deadline - std::chrono::steady_clock::now()).count();
             result = remaining <= 0 ? capacity_failure("Inspection chain exceeded its 3 s budget") :
-                run_instance(item, current, annotations, static_cast<int>(remaining), item["id"] == last_enabled,
+                run_instance(item, current, annotations, static_cast<int>(remaining), !setup && item["id"] == last_enabled,
                              translate_allowed, translate_active);
             if (result.value("skipped", false) && !translate_active) continue;
             if (translate_active && (result.value("skipped", false) ||
@@ -638,6 +642,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             steps.push_back(step);
             // Fail open with the ORIGINAL payload, never a partially applied chain.
             if (!result.value("ok", false)) { result["replacement"] = nullptr; result["steps"] = steps; return result; }
+            rewrite_requested = rewrite_requested || result.value("rewrite_requested", false);
             if (!result["replacement"].is_null()) {
                 replacement = result["replacement"];
                 current["details"]["info"]["content"] = replacement;
@@ -650,7 +655,11 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
                 annotations = nlohmann::json::array();
             }
         }
-        if (!result.is_null()) { result["replacement"] = replacement; result["steps"] = steps; }
+        if (!result.is_null()) {
+            result["replacement"] = replacement;
+            result["steps"] = steps;
+            if (setup) result["rewrite_requested"] = rewrite_requested;
+        }
         return result;
     }
     auto result = run_request({{"script", script}, {"event", event}, {"enrichments", enrichments}}, legacy_pool);

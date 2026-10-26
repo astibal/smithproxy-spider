@@ -74,7 +74,7 @@ class _H1Group:
         self.content_part._data = self.body
         self.content_part._wire = self.body
 
-    def assemble(self):
+    def assemble(self, *, safety=Safety.Easy):
         if len(self.body) != self.expected:
             raise CommitException('Incomplete H1 content: hold from the header and await more data')
 
@@ -85,7 +85,7 @@ class _H1Group:
         snapshot.http1.headers = list(self.draft.headers)
         snapshot.http1.target = self.draft.target
         snapshot.http1.body = self.content_part.get_bytes()
-        wire = snapshot.commit()
+        wire = snapshot.commit(safety=safety)
         boundary = wire.index(b'\r\n\r\n') + 4
         return wire[:boundary], wire[boundary:]
 
@@ -98,10 +98,10 @@ class _H1Part(RewritePart):
         self.type = PartType.Http1.Header if header else PartType.Http1.Body
         self.http1 = group.draft if header else None
 
-    def _assemble(self, header_override=None):
+    def _assemble(self, header_override=None, *, safety=Safety.Easy):
         if self.is_header and self._pending is not None:
             raise CommitException('Use part.http1 for header edits, not raw header replacement')
-        return self.group.assemble()[0 if self.is_header else 1]
+        return self.group.assemble(safety=safety)[0 if self.is_header else 1]
 
 
 def _hold_ranges(info, size):
@@ -317,11 +317,11 @@ def resume_message(message, checkpoint, info, enrichments):
     object.__setattr__(message, '_body_sizes', sizes)
 
 
-def commit_message(message, update_content_length=True):
+def commit_message(message, update_content_length=True, *, safety=Safety.Easy):
     boundary = message.parts._held_from
 
     if boundary is None:
-        return commit_rewrite_message(message, update_content_length)
+        return commit_rewrite_message(message, update_content_length, safety=safety)
 
     positions = [i for i, part in enumerate(message.parts) if part is boundary]
 
@@ -342,7 +342,7 @@ def commit_message(message, update_content_length=True):
     prefix = object.__new__(Message)
     object.__setattr__(prefix, 'parts', message.parts[:cut])
     object.__setattr__(prefix, '_body_sizes', message._body_sizes)
-    wire = commit_rewrite_message(prefix, update_content_length)
+    wire = commit_rewrite_message(prefix, update_content_length, safety=safety)
     import json
 
     if len(json.dumps(checkpoint)) + (len(wire) + 2) // 3 * 4 > 1536 * 1024:

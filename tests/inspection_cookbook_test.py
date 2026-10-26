@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import unittest
+from worker_bootstrap import packed
 
 from inspection_h2_test import frame, literal, unpack, Oracle
 
@@ -18,6 +19,10 @@ WORKER = '\n'.join((ROOT / 'src' / name).read_text() for name in SOURCES)
 
 
 def fixture(name):
+    if name == 'setup':
+        return {'action': 'connection-start', 'id': 'cookbook', 'details': {'info': {
+            'phase': 'setup', 'webhook_control': {'version': 1, 'sequence': 0, 'rewrite': False},
+        }}}
     annotations = []
     if name == 'h2':
         head = frame(literal(b':method', b'POST') + literal(b'content-length', b'3'), 1, 4, 3)
@@ -34,15 +39,20 @@ def fixture(name):
         start_end = head.index(b'\r\n') + 2
         annotations = [[0, start_end, 'http1.start_line'], [start_end, len(head), 'http1.headers']]
         data = head + (body[:1] if name == 'h1-partial' else body)
-    return {'id': 'cookbook', 'details': {'info': {
+    event = {'id': 'cookbook', 'details': {'info': {
         'side': 'L', 'session': 'lab.test', 'payload_layer': 'tcp',
         'content': base64.b64encode(data).decode(), 'content_annotations': annotations,
     }}}
 
+    if name == 'h1-unreserved':
+        event['details']['info']['webhook_control'] = {'rewrite': False}
+
+    return event
+
 
 def run(script, event, **extra):
     request = {'script': script, 'event': event, **extra}
-    result = subprocess.run([sys.executable, '-c', WORKER], input=json.dumps(request),
+    result = subprocess.run([sys.executable, '-c', packed(WORKER)], input=json.dumps(request),
                             capture_output=True, text=True, timeout=10, check=True)
     return json.loads(result.stdout)
 
@@ -91,6 +101,10 @@ class CookbookTests(unittest.TestCase):
                     continue
 
                 self.assertTrue(result['ok'], result)
+                if expected == 'setup':
+                    self.assertTrue(result['rewrite_requested'])
+                    self.assertIsNone(result['replacement'])
+                    continue
                 if expected == 'unchanged':
                     self.assertIsNone(result['replacement'])
                     continue
@@ -111,6 +125,10 @@ class CookbookTests(unittest.TestCase):
                     self.assertTrue(wire.startswith(b'POST /lab/echo HTTP/1.1'))
                     self.assertNotIn(b'X-Old:', wire)
                     self.assertEqual(wire.count(b'X-Tag:'), 2)
+                elif name == 'expert-digest':
+                    self.assertIn(b'Digest: old-digest\r\n', wire)
+                    self.assertIn(b'Content-Length: 7\r\n', wire)
+                    self.assertTrue(wire.endswith(b'changed'))
                 elif name == 'h1-body':
                     self.assertTrue(wire.endswith(b'{"lab":true}'))
                     self.assertIn(b'Content-Length: 12\r\n', wire)

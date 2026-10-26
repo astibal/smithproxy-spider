@@ -20,8 +20,11 @@ class LanguageTests(unittest.TestCase):
         return {item['label'] for item in self.query(source)['items']}
 
     def test_alias_and_iteration(self):
+        self.assertIn('Expert', self.labels('Safety.'))
         self.assertIn('Translate', self.labels('Mode.'))
         self.assertIn('set_mode', self.labels('api.connection.'))
+        self.assertIn('request_rewrite', self.labels('api.connection.'))
+        self.assertIn('phase', self.labels('api.'))
         self.assertIn('enforce_header_table_limit', self.labels('h2 = api.connection.http2\nh2.'))
         self.assertIn('header_blocks', self.labels('h2 = api.http2\nh2.'))
         self.assertIn('stream_id', self.labels('for frame in api.http2.frames:\n    frame.'))
@@ -44,6 +47,10 @@ class LanguageTests(unittest.TestCase):
         self.assertIn('upper', self.labels('frame = api.http2.frames[0]\ndef f(frame: str):\n    frame.'))
 
     def test_help_and_signatures(self):
+        result = self.query('api.message.commit(', 'signature')
+        self.assertIn('safety', result['items'][0]['label'])
+        self.assertIn('Easy:', result['items'][0]['info'])
+        self.assertIn('Expert:', result['items'][0]['info'])
         result = self.query('for frame in api.http2.frames:\n    frame', 'hover')
         self.assertTrue(any('H2Frame' in item['detail'] for item in result['items']))
         result = self.query('h2 = api.http2\nh2.available', 'hover')

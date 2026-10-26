@@ -60,6 +60,58 @@ int main() {
     assert(std::chrono::steady_clock::now() - start < std::chrono::seconds(5));
     spider::SessionStore store;
     spider::DecisionBroker decisions;
+    // The setup callback reserves mutation before the proxy analyzes any input.
+    // The content callback remains explicit; setup never returns payload bytes.
+    json setup = event;
+    setup["action"] = "connection-start";
+    setup["details"]["info"].erase("content");
+    setup["details"]["info"].erase("side");
+    setup["details"]["info"]["webhook_control"] = {{"version", 1}, {"sequence", 0}, {"rewrite", false}};
+    runtime.configure({{"script", "if api.phase == 'setup':\n    api.connection.request_rewrite()\n    return\nreturn api.bytes.upper()"},
+                       {"enabled", true}, {"scope", "all"}});
+    auto setup_reply = spider::process_webhook(store, decisions, setup, std::nullopt, nullptr, &runtime);
+    assert(setup_reply.body["action"] == "accept");
+    assert(setup_reply.body["control"]["rewrite"] == true);
+    // Endpoint INSPECT rules must select the setup callback too. Setup must
+    // not produce a GUI ticket or increment a payload-match counter.
+    setup["details"]["info"]["session"] = "tcp_127.0.0.1:1234+tcp_127.0.0.2:80";
+    runtime.configure({{"script", "if api.phase == 'setup':\n    api.connection.request_rewrite()\n    return\nreturn None"},
+                       {"enabled", true}, {"scope", "rules"}});
+    (void)decisions.set_traffic_rules({{"rules", json::array({
+        {{"address", "127.0.0.2"}, {"mode", "inspect"}}
+    })}});
+    auto scoped = setup;
+    assert(!decisions.prepare(scoped));
+    assert(scoped["traffic_rule"]["mode"] == "inspect");
+    setup_reply = spider::process_webhook(store, decisions, setup, std::nullopt, nullptr, &runtime);
+    assert(setup_reply.body["control"]["rewrite"] == true);
+    (void)decisions.set_traffic_rules({{"rules", json::array()}});
+    setup_reply = spider::process_webhook(store, decisions, setup, std::nullopt, nullptr, &runtime);
+    assert(!setup_reply.body.contains("control"));
+    runtime.configure({{"script", "api.connection.request_rewrite()\nraise ValueError('abort setup')"},
+                       {"enabled", true}, {"scope", "all"}});
+    setup_reply = spider::process_webhook(store, decisions, setup, std::nullopt, nullptr, &runtime);
+    assert(setup_reply.body["control"]["rewrite"] == false);
+
+    // The complete backend path permits same-size raw edits without reserving
+    // an output context. It must not silently attach a late rewrite opt-in.
+    runtime.configure({{"script", "if api.phase == 'setup':\n    return\nreturn api.bytes.upper()"},
+                       {"enabled", true}, {"scope", "all"}});
+    setup_reply = spider::process_webhook(store, decisions, setup, std::nullopt, nullptr, &runtime);
+    assert(setup_reply.body["control"]["rewrite"] == false);
+    auto unreserved = event;
+    unreserved["details"]["info"]["webhook_control"] = {{"rewrite", false}};
+    const auto same_size = spider::process_webhook(store, decisions, unreserved, std::nullopt, nullptr, &runtime);
+    assert(same_size.body["action"] == "replace" && same_size.body["content"] == "QUJD");
+    assert(!same_size.body.contains("control"));
+
+    // Worker errors retain the normal rewrite fail-open policy; no oversized
+    // replacement reaches the proxy. Direct webhook violations are tested there.
+    runtime.configure({{"script", "return api.bytes + b'x'"}, {"enabled", true}, {"scope", "all"}});
+    const auto resized = spider::process_webhook(store, decisions, unreserved, std::nullopt, nullptr, &runtime);
+    assert(resized.body["action"] == "unchanged");
+    assert(!resized.body.contains("content"));
+
     runtime.configure({{"script", "return api.bytes.upper()"}, {"enabled", true}, {"scope", "all"}});
     auto reply = spider::process_webhook(store, decisions, event, std::nullopt, nullptr, &runtime);
     assert(reply.body["action"] == "replace" && reply.body["content"] == "QUJD");

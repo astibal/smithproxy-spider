@@ -399,7 +399,7 @@ def main():
                     assert schema['version'] == '0.6'
                     assert 'Http2' in schema['types']
                     assert [f['name'] for f in schema['types']['InspectionViews']['fields']] == [
-                        'message', 'metadata', 'http1', 'http2', 'state', 'storage', 'instance', 'connection']
+                'message', 'metadata', 'http1', 'http2', 'state', 'storage', 'instance', 'connection', 'phase']
                     assert schema['types']['Message']['fields'][0]['type'] == 'bytes'
                     language_request = {'script': 'h2 = api.http2\nh2.',
                                         'language_action': 'complete', 'line': 2, 'column': 3}

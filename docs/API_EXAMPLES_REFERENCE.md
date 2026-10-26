@@ -9,17 +9,25 @@ Tyto mikro-příklady pokrývají každý veřejný člen typovaného schematu.
 HEADERS part s dekódovanými hlavičkami; `entry` je jeho HPACK položka.
 Nejde o jeden souvislý skript: každý blok je samostatná ukázka.
 
+Výchozí commit používá `Safety.Easy`; `safety=Safety.Expert` je explicitní
+volba pro jeden commit. Nenastavuje Rewrite/Translate ani režim dalšího callbacku.
+U každého členu jsou níže samostatně uvedena pravidla Easy a Expert.
+
 ## InspectionViews
 
 Typed API v0.6. Read-only input views, editable Parts, H1 snapshots and explicit live H2 translation.
 
 ### InspectionViews.message
 
-Current content fragment.
+Current content fragment; None during connection-start setup.
 
-Dostupnost: Always available for a content callback.
+Dostupnost: Content callbacks and offline previews only; check api.phase before reading.
 
 Přístup: read-only snapshot; typ/výsledek: `Message`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 api.print(api.message.size)
@@ -33,6 +41,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `ContentMetadata`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.print(api.metadata.side)
 ```
@@ -44,6 +56,10 @@ HTTP/1 head supplied by backend enrichment.
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `Http1`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 if api.http1.available:
@@ -57,6 +73,10 @@ Read-only HTTP/2 frame slices and decoded HPACK blocks.
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `Http2`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 for block in api.http2.header_blocks:
@@ -72,6 +92,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable instance state; typ/výsledek: `dict[str, Any]`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.state["seen"] = api.state.get("seen", 0) + 1
 api.print(api.state["seen"])
@@ -84,6 +108,10 @@ Persistent shared JSON namespaces across scripts and versions. Writes commit per
 Dostupnost: Always available for a content callback.
 
 Přístup: shared persistent storage; typ/výsledek: `SharedStorage`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 shared = api.storage.namespace("stats")
@@ -98,6 +126,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `InstanceContext`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.print(api.instance.mode, api.instance.key, api.instance.version)
 ```
@@ -110,9 +142,29 @@ Dostupnost: Always available for a content callback.
 
 Přístup: staged connection policy; typ/výsledek: `Connection`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.connection.set_mode(Mode.Translate)
 return api.message.translate()
+```
+
+### InspectionViews.phase
+
+Callback phase: setup at connection-start, content for payloads and offline previews.
+
+Dostupnost: Every callback. Setup has metadata but no Message.
+
+Přístup: read-only snapshot; typ/výsledek: `str`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(api.phase)
 ```
 
 ## Message
@@ -127,6 +179,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `bytes`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 # Inspect a bounded prefix without assuming text or a complete message.
 api.print(api.message.bytes[:32].hex())
@@ -140,6 +196,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `int`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.print(api.message.size)
 ```
@@ -152,6 +212,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `PartList`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for part in api.message.parts:
     if part.headers is not None:
@@ -161,11 +225,15 @@ return api.message.commit()
 
 ### Message.commit
 
-Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.
+Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; update_content_length=False disables H2 repair only (H1 typed assembly always recalculates it). Incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.
 
 Dostupnost: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
 
 Přístup: assemble private draft; typ/výsledek: `bytes | HeldCommit`.
+
+Easy: Default. Repair supported H1 Content-Digest (sha-256/sha-512 without parameters) and apply remaining H1 metadata guards and H2 frame-size guards. This is not full protocol validation.
+
+Expert: Allow H1 encoding/integrity/range/signature inconsistency and representable oversized H2 control frames. Supported unencoded H1 Content-Digest and Content-Length are still repaired; unsupported digests remain unchanged. Keep quotas, atomicity and unambiguous framing.
 
 ```python
 return api.message.commit()
@@ -173,11 +241,15 @@ return api.message.commit()
 
 ### Message.translate
 
-Explicitly translate every callback of a pinned H2 flow. Header edits only; requires a capable strict-control proxy and python-hpack. Hold incomplete Parts with parts.hold_from(part); only the emitted prefix advances HPACK state. No silent background runs.
+Explicitly translate every callback of a pinned H2 flow. Header edits and same-length DATA; requires a capable strict-control proxy and python-hpack. Hold incomplete Parts with parts.hold_from(part); only the emitted prefix advances HPACK state. No silent background runs.
 
 Dostupnost: First observed content of a new flow, sole enabled deployment; every callback thereafter.
 
 Přístup: assemble translated output; typ/výsledek: `bytes | HeldCommit`.
+
+Easy: Require complete emitted frames, coherent HEADERS/PUSH_PROMISE HPACK state, unchanged header frame identity, explicit callbacks and same-length DATA. PUSH_PROMISE requires server direction and enabled push; full stream lifecycle validation is not provided.
+
+Expert: The same translate invariants apply. Expert does not disable strict control, HPACK synchronization or DATA flow-control restrictions; use rewrite for local state-breaking experiments.
 
 ```python
 if api.instance.mode == "flow":
@@ -191,6 +263,10 @@ Create an independent editable draft of this callback. No live bytes change unti
 Dostupnost: Always available; HTTP/1 editing requires one complete supported message.
 
 Přístup: create private draft; typ/výsledek: `MessageSnapshot`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 draft = api.message.snapshot()
@@ -209,6 +285,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `str`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.print(api.metadata.session_id)
 ```
@@ -220,6 +300,10 @@ Observed side: L (client), R (server), or empty when absent.
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `str`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 if api.metadata.side == "R":
@@ -233,6 +317,10 @@ Reported payload layer, without inferring a protocol.
 Dostupnost: None when webhook omits payload_layer.
 
 Přístup: read-only snapshot; typ/výsledek: `str | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 if api.metadata.payload_layer is None:
@@ -253,6 +341,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `bool`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 if api.http1.available:
     api.print("Decoded head; body may still be incomplete")
@@ -268,6 +360,10 @@ Dostupnost: None for responses or unavailable heads.
 
 Přístup: read-only snapshot; typ/výsledek: `str | None`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.print(api.http1.method)
 ```
@@ -279,6 +375,10 @@ Request target as decoded by Spider; may contain escaped non-printable bytes.
 Dostupnost: None for responses or unavailable heads.
 
 Přístup: read-only snapshot; typ/výsledek: `str | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 if api.http1.target is not None:
@@ -293,6 +393,10 @@ Dostupnost: None for requests or unavailable heads.
 
 Přístup: read-only snapshot; typ/výsledek: `int | None`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 if api.http1.status is not None and api.http1.status >= 400:
     api.print("HTTP error", api.http1.status)
@@ -305,6 +409,10 @@ Ordered headers including duplicates. Empty means no fields or unavailable; chec
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `tuple[Header, ...]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 for header in api.http1.headers:
@@ -323,6 +431,10 @@ Dostupnost: Only on an existing Header; shared by HTTP/1 and HTTP/2.
 
 Přístup: read-only snapshot; typ/výsledek: `str`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for header in api.http1.headers:
     if header.name.lower() == "content-type":
@@ -336,6 +448,10 @@ Decoded display value from Spider; non-printable bytes may appear as \xNN.
 Dostupnost: Only on an existing Header; shared by HTTP/1 and HTTP/2.
 
 Přístup: read-only snapshot; typ/výsledek: `str`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 # Iterate instead of converting to a dict: duplicate fields are preserved.
@@ -355,6 +471,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `bool`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 if api.http2.available and not api.http2.header_blocks:
     api.print("H2 observed, but no complete decoded header block in this callback")
@@ -368,6 +488,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `tuple[H2Frame, ...]`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for frame in api.http2.frames:
     api.print(frame.stream_id, frame.type, frame.complete)
@@ -380,6 +504,10 @@ All complete HPACK enrichments emitted for this callback, in backend order.
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `tuple[H2HeaderBlock, ...]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 for block in api.http2.header_blocks:
@@ -396,6 +524,10 @@ Dostupnost: Backend scripts, including Run on selected, use persistent storage. 
 
 Přístup: create private draft; typ/výsledek: `HpackField`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 part.headers.entries.append(api.http2.Header(b"x-test", b"yes"))
 ```
@@ -407,6 +539,10 @@ Create an explicit HPACK field reference. Existence in the peer table is the scr
 Dostupnost: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
 
 Přístup: create private draft; typ/výsledek: `HpackField`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 part.headers.entries.append(api.http2.HeaderIndex(62))
@@ -420,6 +556,10 @@ Dostupnost: Backend scripts, including Run on selected, use persistent storage. 
 
 Přístup: create private draft; typ/výsledek: `HpackField`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 part.headers.entries.insert(0, api.http2.TableSize(4096))
 ```
@@ -432,6 +572,10 @@ Dostupnost: Backend scripts, including Run on selected, use persistent storage. 
 
 Přístup: create private draft; typ/výsledek: `RewritePart`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.message.parts.append(api.http2.Frame(0, 1, 3, b"body"))
 ```
@@ -443,6 +587,10 @@ Construct a connection-level PING with exactly eight opaque bytes.
 Dostupnost: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
 
 Přístup: create private draft; typ/výsledek: `RewritePart`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 api.message.parts.append(api.http2.Ping())
@@ -460,6 +608,10 @@ Dostupnost: When frames is non-empty.
 
 Přístup: read-only snapshot; typ/výsledek: `int`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for frame in api.http2.frames:
     header = api.message.bytes[frame.offset:frame.offset + 9]
@@ -474,6 +626,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `int`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for frame in api.http2.frames:
     api.print("Declared", frame.length, "available", len(frame.payload))
@@ -486,6 +642,10 @@ Numeric HTTP/2 frame type; unknown types are preserved.
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 for frame in api.http2.frames:
@@ -501,6 +661,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `int`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for frame in api.http2.frames:
     if frame.type in (0, 1) and frame.flags & 0x01:  # END_STREAM, not SETTINGS ACK
@@ -515,6 +679,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `int`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for frame in api.http2.frames:
     api.print(frame.stream_id)
@@ -527,6 +695,10 @@ Entire declared frame payload is present in this callback. Does not imply a comp
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `bool`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 for frame in api.http2.frames:
@@ -542,6 +714,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `memoryview`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for frame in api.http2.frames:
     prefix = bytes(frame.payload[:16])  # Explicitly copy only this prefix.
@@ -555,6 +731,10 @@ Unpadded DATA bytes only for a complete, valid DATA frame; otherwise None. Still
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `memoryview | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 for frame in api.http2.frames:
@@ -574,6 +754,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `int`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for block in api.http2.header_blocks:
     api.print(block.stream_id)
@@ -587,6 +771,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `str`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for block in api.http2.header_blocks:
     api.print(block.stream_id, block.kind)
@@ -599,6 +787,10 @@ Parent stream for PUSH_PROMISE, otherwise None.
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `int | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 for block in api.http2.header_blocks:
@@ -614,6 +806,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `bool`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 for block in api.http2.header_blocks:
     if block.spans_previous_envelopes:
@@ -627,6 +823,10 @@ Ordered decoded fields, including pseudo-headers and duplicates.
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `tuple[Header, ...]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 for block in api.http2.header_blocks:
@@ -646,6 +846,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `str`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.print(api.instance.mode)
 ```
@@ -657,6 +861,10 @@ Selected flow/endpoint key; empty for message mode.
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `str`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 api.print(api.instance.key)
@@ -670,6 +878,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `str`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.print(api.instance.deployment_id)
 ```
@@ -681,6 +893,10 @@ Deployed version; zero for ad-hoc runs. New versions have new state.
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 api.print(api.instance.version)
@@ -697,6 +913,10 @@ Select an explicitly named shared namespace. Names are database keys, never file
 Dostupnost: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
 
 Přístup: shared storage operation; typ/výsledek: `StorageNamespace`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 shared = api.storage.namespace("inspection-stats")
@@ -715,6 +935,10 @@ Dostupnost: Backend scripts, including Run on selected, use persistent storage. 
 
 Přístup: shared storage operation; typ/výsledek: `Any`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 shared = api.storage.namespace("stats")
 api.print(shared.get("responses", 0))
@@ -727,6 +951,10 @@ Atomically replace one JSON value. Independent of script success.
 Dostupnost: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
 
 Přístup: shared storage operation; typ/výsledek: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 shared = api.storage.namespace("example")
@@ -741,6 +969,10 @@ Dostupnost: Backend scripts, including Run on selected, use persistent storage. 
 
 Přístup: shared storage operation; typ/výsledek: `bool`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 shared = api.storage.namespace("example")
 api.print(shared.delete("last_status"))
@@ -753,6 +985,10 @@ Atomic read-modify-write counter; missing key starts at zero. Use instead of get
 Dostupnost: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
 
 Přístup: shared storage operation; typ/výsledek: `int | float`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 shared = api.storage.namespace("stats")
@@ -770,6 +1006,10 @@ Editable HTTP/1 view. Unsupported or incomplete fragments remain available as un
 Dostupnost: Always available for a content callback.
 
 Přístup: mutable private draft; typ/výsledek: `Http1Draft`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 draft = api.message.snapshot()
@@ -789,6 +1029,10 @@ Validate and rebuild a single HTTP/1 message, recalculating Content-Length. Retu
 Dostupnost: On a message snapshot. H2, chunked, partial and pipelined edits are rejected.
 
 Přístup: assemble private draft; typ/výsledek: `bytes`.
+
+Easy: Repair changed or newly set Content-Digest using sha-256/sha-512 byte sequences without parameters on unencoded H1 content. Reject unsupported digest dictionaries and remaining encoding, integrity, range or signature dependencies; require Host and bodyless-status semantics.
+
+Expert: Repair supported Content-Digest and Content-Length; preserve unsupported digest dictionaries unchanged. Allow other semantic inconsistencies, including missing Host and a body on a bodyless status. No automatic compression, signing, or chunked encoder. Syntax, known input framing and quotas remain mandatory.
 
 ```python
 draft = api.message.snapshot()
@@ -813,6 +1057,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `bool`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 draft = api.message.snapshot()
 api.print(draft.http1.available)
@@ -825,6 +1073,10 @@ Ordered draft headers. Duplicates are preserved except Content-Length, which com
 Dostupnost: Always available for a content callback.
 
 Přístup: mutable private draft; typ/výsledek: `list[Header]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 draft = api.message.snapshot()
@@ -839,11 +1091,15 @@ if draft.http1.available:
 
 ### Http1Draft.body
 
-Complete wire body. Assign bytes; commit recalculates Content-Length. Encoded bodies and bodies with known integrity metadata cannot be changed in this version.
+Complete wire body. Assign bytes; commit recalculates Content-Length and supported Content-Digest on unencoded content. No automatic compression or signature recomputation.
 
 Dostupnost: Always available for a content callback.
 
 Přístup: mutable private draft; typ/výsledek: `bytes`.
+
+Easy: Commit repairs sha-256/sha-512 Content-Digest without parameters; rejects other encoding, integrity or range dependencies that cannot be rebuilt.
+
+Expert: Commit repairs supported Content-Digest and Content-Length. Unsupported digest dictionaries and other metadata may remain inconsistent; supply appropriate wire bytes yourself.
 
 ```python
 draft = api.message.snapshot()
@@ -859,6 +1115,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable private draft; typ/výsledek: `str | None`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 draft = api.message.snapshot()
 if draft.http1.available and draft.http1.target is not None:
@@ -872,6 +1132,10 @@ Replace all case-insensitive occurrences at the first occurrence, or append a ne
 Dostupnost: On a private HTTP/1 draft.
 
 Přístup: edit private draft; typ/výsledek: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 draft = api.message.snapshot()
@@ -891,6 +1155,10 @@ Remove every case-insensitive occurrence. Removing Content-Length does not disab
 Dostupnost: On a private HTTP/1 draft.
 
 Přístup: edit private draft; typ/výsledek: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 draft = api.message.snapshot()
@@ -916,6 +1184,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `str`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 if part.type == PartType.Http2.Data:
     part.set_bytes(b"new body")
@@ -929,6 +1201,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `int`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 part.stream_id = 3
 ```
@@ -940,6 +1216,10 @@ Numeric frame type; None for Opaque.
 Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `int | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 api.print(part.frame_type) 
@@ -953,17 +1233,25 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `int`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 part.flags |= 1  # END_STREAM on DATA/HEADERS
 ```
 
 ### RewritePart.complete
 
-Complete frame or HEADERS/CONTINUATION block available. Hold incomplete parts to continue them in a later callback before assembly.
+Complete frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.
 
 Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `bool`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 if part.complete:
@@ -978,17 +1266,25 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `PartContent`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.print(part.complete, part.content.complete)
 ```
 
 ### RewritePart.headers
 
-HPACK instructions for a complete parseable block; None otherwise.
+HPACK instructions for a complete parseable HEADERS or PUSH_PROMISE block; None otherwise. Active translate resolves logical names and values using the shared directional table.
 
 Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `H2Headers | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 if part.headers is not None:
@@ -1003,6 +1299,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `int`.
 
+Easy: Commit accepts 16384..16777215 and rejects oversized control/unknown frames.
+
+Expert: Commit accepts 1..16777215 for fragmentation and permits control/unknown frames above this limit. Positive frame capacity, wire representation and output quota remain mandatory.
+
 ```python
 part.max_frame_size = 16384
 ```
@@ -1014,6 +1314,10 @@ H1 header draft for an annotated Content-Length message; None on other parts. Ed
 Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `Http1Draft | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 for part in api.message.parts:
@@ -1029,6 +1333,10 @@ Dostupnost: All rewrite parts.
 
 Přístup: read-only; typ/výsledek: `bool`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 if part.is_a(PartType.Http2.Part):
     api.print(part.stream_id)
@@ -1042,6 +1350,10 @@ Dostupnost: All rewrite parts.
 
 Přístup: read-only; typ/výsledek: `bytes`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.print(part.get_bytes()[:32].hex())
 ```
@@ -1054,6 +1366,10 @@ Dostupnost: Complete parts only for a changed commit.
 
 Přístup: mutable rewrite draft; typ/výsledek: `None`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 part.set_bytes(b"changed")
 ```
@@ -1065,6 +1381,10 @@ Prepare this part without publishing or changing the original. Message commit ha
 Dostupnost: Unchanged or complete parts.
 
 Přístup: assemble private draft; typ/výsledek: `bytes`.
+
+Easy: Apply H1 semantic guards and H2 configured frame-size bounds. No-op preserves original bytes.
+
+Expert: Allow H1 semantic inconsistencies and oversized H2 control frames; permit smaller fragmentation sizes when payload capacity is positive. Keep representation checks, quotas and complete-part requirements. Does not set the mode of a later message commit.
 
 ```python
 wire = part.commit()
@@ -1083,6 +1403,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: read-only snapshot; typ/výsledek: `bool | None`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 if part.content.complete is not True:
     api.print("Whole content is not available")
@@ -1100,6 +1424,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `list[HpackField]`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 part.headers.entries.append(api.http2.Header(b"x-test", b"yes", "incremental"))
 ```
@@ -1111,6 +1439,10 @@ Replace matching fields with one literal; fails if any field name is unresolved.
 Dostupnost: Complete decoded H2 header block.
 
 Přístup: mutable rewrite draft; typ/výsledek: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 part.headers.set_header(b"x-test", b"yes")
@@ -1133,6 +1465,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `bytes | None`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 entry.name = b"x-test"
 ```
@@ -1144,6 +1480,10 @@ Logical value, None when unresolved.
 Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `bytes | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 entry.value = b"changed"
@@ -1157,6 +1497,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `str`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 entry.indexing = "incremental"
 ```
@@ -1169,6 +1513,10 @@ Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `int`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 entry.index = 62
 ```
@@ -1180,6 +1528,10 @@ Name-only reference for literal fields; zero encodes the name bytes.
 Dostupnost: Always available for a content callback.
 
 Přístup: mutable rewrite draft; typ/výsledek: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 entry.name_index = 0
@@ -1196,6 +1548,10 @@ Hold this part and everything after it. Return message.commit() in rewrite or me
 Dostupnost: Live flow deployment at the end of the enabled chain.
 
 Přístup: mutable hold boundary; typ/výsledek: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 if api.message.parts:
@@ -1221,10 +1577,33 @@ Dostupnost: Always available for a content callback.
 
 Přístup: staged connection policy; typ/výsledek: `ConnectionHttp2`.
 
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
 ```python
 api.connection.set_mode(Mode.Translate)
 api.connection.http2.enforce_header_table_limit(0)
 return api.message.translate()
+```
+
+### Connection.request_rewrite
+
+Reserve rewrite capability before the first payload. Does not modify bytes or activate Translate. Repeated calls are harmless.
+
+Dostupnost: Connection-start setup callback only. Easy and Expert require this permission for length changes, hold and Translate. Same-size raw replacements need no reservation and leave protocol consistency to the script.
+
+Přístup: staged setup permission; typ/výsledek: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+return api.message.commit()
 ```
 
 ### Connection.set_mode
@@ -1234,6 +1613,10 @@ Request Mode.Translate explicitly. Requires flow instantiation and a live eligib
 Dostupnost: Live flow deployment. The returned translate result activates the mode atomically.
 
 Přístup: staged connection mode; typ/výsledek: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 api.connection.set_mode(Mode.Translate)
@@ -1251,6 +1634,10 @@ Enforce a maximum HPACK table capacity in both directions. Idempotent; never inc
 Dostupnost: Live H2 flow deployment; requires Translate mode. Each direction is updated on its next eligible callback, after its first SETTINGS.
 
 Přístup: staged connection policy; typ/výsledek: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
 api.connection.set_mode(Mode.Translate)

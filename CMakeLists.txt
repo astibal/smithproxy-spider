@@ -18,14 +18,19 @@ if(NOT nlohmann_json_FOUND)
 endif()
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_worker.py" INSPECTION_WORKER_SOURCE)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py" INSPECTION_API_SOURCE)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_h2.py" INSPECTION_H2_SOURCE)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_hold.py" INSPECTION_HOLD_SOURCE)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_translate.py" INSPECTION_TRANSLATE_SOURCE)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_language.py" INSPECTION_LANGUAGE_SOURCE)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_sandbox.py" INSPECTION_SANDBOX_SOURCE)
-set(INSPECTION_WORKER_SOURCE "${INSPECTION_API_SOURCE}\n${INSPECTION_H2_SOURCE}\n${INSPECTION_HOLD_SOURCE}\n${INSPECTION_TRANSLATE_SOURCE}\n${INSPECTION_LANGUAGE_SOURCE}\n${INSPECTION_SANDBOX_SOURCE}\n${INSPECTION_WORKER_SOURCE}")
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/pack-inspection-worker.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_h2.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_hold.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_translate.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_language.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_sandbox.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_worker.py"
+    OUTPUT_VARIABLE INSPECTION_WORKER_SOURCE RESULT_VARIABLE WORKER_PACK_RESULT)
+if(NOT WORKER_PACK_RESULT EQUAL 0)
+    message(FATAL_ERROR "Cannot package inspection worker")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tools/pack-inspection-worker.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_translate.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_hold.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_h2.py)
@@ -115,6 +120,9 @@ if(BUILD_TESTING)
         add_test(NAME inspection_translate_data_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_data_test.py)
         set_tests_properties(inspection_translate_data_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_translate_push_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_push_test.py)
+        set_tests_properties(inspection_translate_push_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
         set(SPIDER_E2E_SMITHPROXY_SOURCE "" CACHE PATH "Smithproxy source for optional real translate E2E")
         set(SPIDER_E2E_SMITHPROXY_BINARY "" CACHE FILEPATH "Built Smithproxy with webhook control/sequence support")
         if(SPIDER_E2E_SMITHPROXY_SOURCE AND SPIDER_E2E_SMITHPROXY_BINARY)
@@ -155,10 +163,26 @@ if(BUILD_TESTING)
                     --spider $<TARGET_FILE:smithproxy-spider> --fragmented --data)
             set_tests_properties(inspection_translate_e2e_data
                 PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+            add_test(NAME inspection_translate_e2e_expert
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                    --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                    --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                    --spider $<TARGET_FILE:smithproxy-spider> --fragmented --data --settings --safety expert)
+            set_tests_properties(inspection_translate_e2e_expert
+                PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
         endif()
     endif()
     add_test(NAME inspection_parts_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_parts_test.py)
+    foreach(safety easy expert)
+        add_test(NAME inspection_safety_${safety}_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_safety_test.py ${safety})
+        set_tests_properties(inspection_safety_${safety}_tests PROPERTIES TIMEOUT 45)
+    endforeach()
+    add_test(NAME inspection_worker_bootstrap_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_bootstrap_test.py)
+    add_test(NAME inspection_digest_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_digest_test.py)
     add_test(NAME inspection_h2_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_test.py)
     add_test(NAME inspection_hold_tests
@@ -176,6 +200,8 @@ if(BUILD_TESTING)
     set_tests_properties(inspection_hold_live_tests PROPERTIES TIMEOUT 30)
     add_test(NAME inspection_language_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_language_test.py)
+    add_test(NAME inspection_setup_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_setup_test.py)
     add_test(NAME inspection_storage_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_storage_test.py)
     add_test(NAME inspection_sandbox_tests

@@ -2,7 +2,8 @@
 
 def language_prelude():
     import json
-    lines = ['from typing import Any', 'class Mode:', '    Rewrite: str', '    Translate: str',
+    lines = ['from typing import Any', 'class Safety:', '    Easy: str', '    Expert: str',
+             'class Mode:', '    Rewrite: str', '    Translate: str',
              'class PartType:', '    Opaque: str',
              '    class Http2:', '        Part: str', '        Header: str',
              '        Data: str', '        Frame: str',
@@ -14,10 +15,12 @@ def language_prelude():
             # Properties give Jedi both a return type and a docstring for aliases.
             lines += ['    @property', f'    def {field["name"]}(self) -> {field["type"]}:',
                 '        ' + json.dumps(field['description'] + '\n\n' + field['availability'] +
+                    '\n\nEasy: ' + field['easy'] + '\nExpert: ' + field['expert'] +
                     '\n\nExample:\n' + field['example']), '        ...']
         for method in definition.get('methods', []):
             lines += [f'    def {method["name"]}(self, {method["parameters"]}) -> {method["type"]}:',
-                      '        ' + json.dumps(method['description'] + '\n\nExample:\n' + method['example']), '        ...']
+                      '        ' + json.dumps(method['description'] + '\n\nEasy: ' + method['easy'] +
+                          '\nExpert: ' + method['expert'] + '\n\nExample:\n' + method['example']), '        ...']
     lines += ['class SpiderApi(InspectionViews):',
         '    bytes: bytes', '    text: str', '    side: str', '    session_id: str',
         '    session_label: str', '    event: dict[str, Any]', '    info: dict[str, Any]',

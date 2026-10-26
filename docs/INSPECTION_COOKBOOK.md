@@ -1,5 +1,103 @@
 # Inspection cookbook
 
+## Setup před živým přepisem
+
+Živý skript nyní dostane také `connection-start`: `api.phase == 'setup'`,
+`api.message is None`, metadata jsou v `api.info`. V této fázi musí explicitně
+zavolat `api.connection.request_rewrite()` a vrátit `None`, pokud bude později
+měnit délku nebo používat hold/Translate. Bez opt-in smí vrátit `None` nebo
+replacement **přesně stejné délky v bajtech jako vstup daného callbacku**,
+v Easy **i** Expert. Pozdní opt-in vyvolá `CommitException`; pouhé zapnutí Expert
+rezervaci neudělí.
+
+Stejně dlouhý raw replacement tiše projde, i když mění hlavičky nebo stavová pole.
+Proxy zůstane u jediného vstupního kontextu: nic nepřepočítává pro druhý pohled,
+nezapíná Translate ani dodatečný fork. Správnost protokolu, obsah, digesty a
+případné rozbití dalších zpráv jsou odpovědnost skriptu. Kontroly typed `commit()`
+v Easy/Expert tím neměníme; raw výstup žádnou takovou kontrolu neslibuje.
+Počítá se výsledná délka celého replacementu, ne počet znaků, base64 délka ani
+jen délka upraveného body. Změna délky bez rezervace skončí `CommitException` ve
+workeru; přímou nepovolenou webhookovou odpověď proxy odmítne zavřením spojení.
+
+<!-- example: same-size-without-reservation fixture=h1-unreserved expect=replace -->
+```python
+if api.phase == 'setup':
+    return  # Žádná rezervace druhého kontextu.
+# Jednoduchý raw přepis; délka se nezmění, parserovou konzistenci nehlídáme.
+return api.bytes.replace(b'abc', b'xyz')
+```
+
+Před následující payloadové příklady proto při živém deploymentu přidej tento
+guard. Náhledy nad uloženými vzorky mají `api.phase == 'content'` a rezervaci
+nepotřebují. Setup samo nezapíná Translate: obsah dál vyžaduje explicitní
+`return api.message.translate()` v každém jeho callbacku.
+
+<!-- example: reserve-rewrite fixture=setup expect=setup -->
+```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+# Zde pokračuje vlastní payloadový příklad.
+return None
+```
+
+Rezervace platí pro spojení; změna deploymentu uprostřed již běžící nerezervované
+session ji nemůže dodatečně udělit. Filtr i scope se vyhodnocují už při setupu,
+takže mohou používat jen metadata dostupná v tuto chvíli, nikoli budoucí L7
+anotace. Chyba setupu nepublikuje rezervaci. Ve flow instanci se úspěšně
+uložené `api.state` přenese ze setupu do prvního content callbacku.
+
+## Easy a Expert
+
+Výchozí je `Safety.Easy`. Volba `commit(safety=Safety.Expert)` platí jen pro toto
+volání; samostatný `part.commit()` ani hold ji nepřenese do dalšího commitu.
+Stejný parametr podporuje snapshot, message i translate. Je nezávislý na
+`Mode.Rewrite` / `Mode.Translate`, instanciaci i scope deploymentu.
+
+| Oblast | Easy | Expert |
+|---|---|---|
+| H1 podporovaný Content-Digest | Přepočítá | Přepočítá |
+| H1 změna těla s nepodporovanými encoding/digest/range/signature metadaty | Odmítne | Ponechá metadata na odpovědnosti skriptu |
+| H1 Host a bodyless status | Kontroluje sémantiku při změně | Povolí nesoulad |
+| Známé Content-Length | Přepočítá | Přepočítá stejně; Expert není implicitní vypnutí oprav |
+| H2 control nad nastaveným max_frame_size | Odmítne při commitu; limit lze nastavit předem | Povolí v mezích fyzické reprezentace a kvóty |
+| H2 fragmentace pod 16384 | Odmítne | Povolí, má-li rámec kladnou kapacitu pro data |
+| Neúplný editovaný part, konfliktní raw/typed zápis, kvóta, duplicitní objekt | Odmítne | Odmítne |
+| Translate HPACK/strict/flow-control podmínky | Zachová | Zachová; nejde o implicitní přechod do rewrite |
+
+`message.commit(False, safety=Safety.Expert)` vypíná pouze známý přepočet H2
+Content-Length. H1 typed assembly přepočítává délku vždy. Komprimované H1 Parts,
+chunked, trailers, upgrade a nejednoznačné vstupní framing zůstávají nepodporované
+v obou režimech; Expert je neimplementuje a neprovádí automatickou kompresi.
+
+Easy znamená existující sémantické ochrany, **ne úplný protokolový validátor**.
+Například H2 rewrite ani v Easy neudržuje stav vzdálené HPACK tabulky; nezměněné
+bajty včetně neznámých rámců zachovává. Typované hodnoty dál vyžadují jednoznačné
+kódování (například header name bez CR/LF nebo kladný HPACK index); explicitní
+raw výstup není bezpečnostní filtr. Stejně tak storage operace, čtení a settery
+nejsou závislé na safety commitu. Přesná pravidla **každého** pole a metody jsou
+v [generované referenci](API_EXAMPLES_REFERENCE.md), browser API Reference a
+editorové nápovědě. Automatický fallback z Easy do Expert neexistuje.
+
+Stejná změna s neplatným digestem: Easy ji odmítne, Expert sestaví záměrně
+nekonzistentní zprávu. Ostatní příklady bez parametru `safety` používají Easy.
+
+<!-- example: easy-digest fixture=h1 expect=CommitException -->
+```python
+draft = api.message.snapshot()
+draft.http1.set_header("Digest", "old-digest")
+draft.http1.body = b"changed"
+return draft.commit(safety=Safety.Easy)
+```
+
+<!-- example: expert-digest fixture=h1 expect=replace -->
+```python
+draft = api.message.snapshot()
+draft.http1.set_header("Digest", "old-digest")
+draft.http1.body = b"changed"
+return draft.commit(safety=Safety.Expert)
+```
+
 Živé spojení má také `api.connection`: explicitní režim přes `set_mode(Mode.Translate)`
 a trvalou H2 politiku přes `http2.enforce_header_table_limit(0)`. Praktický kontrakt
 a příklad jsou v [H2 translate](H2_TRANSLATE_LIVE.md); vyžadují živou flow instanci,
@@ -9,6 +107,36 @@ Krátké scénáře pro vlastní lab a autorizované testování. Každý blok v
 samostatný skript. Nejde o skripty, které se mají spustit všechny za sebou.
 Test `inspection_cookbook_tests` spouští všechny zdejší Python bloky ve skutečném
 workeru nad označenými fixture payloady, včetně očekávaných chyb.
+
+## H1 změna obsahu s Content-Digest
+
+Úplné nekomprimované H1 tělo lze změnit přes snapshot i Body part. Commit
+přepočítá Content-Length a existující nebo nově nastavený Content-Digest.
+Podporujeme `sha-256` a `sha-512`, včetně obou současně a více řádků hlavičky
+(výstup se sjednotí do jednoho řádku). Jde o byte-sequence dictionary podle
+[RFC 9530 §2](https://www.rfc-editor.org/rfc/rfc9530.html#section-2).
+
+<!-- example: content-digest-repair fixture=h1 expect=replace -->
+```python
+draft = api.message.snapshot()
+draft.http1.body = b"changed"
+# Prázdná byte sequence je vstup pro sestavení, commit doplní skutečný hash.
+draft.http1.set_header("Content-Digest", "sha-256=::, sha-512=::")
+return draft.commit()
+```
+
+Easy i Expert opravují podporované digests. Expert není vypínač přepočtu.
+Neznámé algoritmy, parametry členů, opakované algoritmy a neplatná syntaxe
+jsou zatím nepodporované: Easy vyvolá CommitException, Expert zachová celý
+slovník beze změny (žádná částečná oprava). Úplný no-op zachová původní bajty;
+nezměněné digests se neověřují. Samotné čtení snapshotu tedy není validace integrity.
+Odstranění Content-Digest je explicitní odstranění tohoto tvrzení o integritě.
+
+Repr-Digest, ETag, podpisy, Content-Range, chunked/trailers a komprese zůstávají
+mimo tento krok. Easy dál odmítne změnu těla, pokud má takovou neřešitelnou
+závislost. Hlavičku s digestem nelze odeslat před jeho výpočtem: u neúplných
+Parts podrž celou H1 zprávu od Header partu a commitni až po dosbírání těla.
+Draft se přepočtem nemění a neúspěšný commit nic nepublikuje.
 
 ## Co znamená 100% pokrytí
 

@@ -109,6 +109,7 @@ def main():
     parser.add_argument('--settings', action='store_true', help='Exercise acknowledged table eviction and growth in both directions')
     parser.add_argument('--policy', action='store_true', help='Enforce zero capacity after handshake, including synthetic ACK consumption')
     parser.add_argument('--data', action='store_true', help='Rewrite padded same-length DATA in both directions')
+    parser.add_argument('--safety', choices=('easy', 'expert'), default='easy')
     args = parser.parse_args()
     source = args.smithproxy_source.resolve()
     sys.path.insert(0, str(source / 'tests/tls'))
@@ -142,7 +143,11 @@ def main():
             wait_until(lambda: Handler.callback and get_json(base + '/api/health'), processes)
             inspection = base + '/api/inspection'
             state = get_json(inspection, 'frontend-key')
-            script = SCRIPT
+            script = ("if api.phase == 'setup':\n"
+                      "    api.connection.request_rewrite()\n"
+                      "    return\n" + SCRIPT)
+            script = script.replace('return api.message.translate()',
+                                    f'return api.message.translate(safety=Safety.{args.safety.title()})')
             if args.data:
                 script = script.replace('    if part.type != PartType.Http2.Header:',
                     '    if part.type == PartType.Http2.Data:\n'
@@ -211,7 +216,7 @@ def main():
                             # The synthetic ACK disappears; only opposite SETTINGS arrives.
                             assert b''.join(receive_frame(client)) == zero
                             client.sendall(ack)
-                            wait_until(lambda: get_json(inspection, 'frontend-key')['chain'][0]['runs'] == 7,
+                            wait_until(lambda: get_json(inspection, 'frontend-key')['chain'][0]['runs'] == 8,
                                        processes)
                             for encoder in encoders:
                                 encoder.header_table_size = 0
@@ -301,7 +306,7 @@ def main():
                         assert b''.join(receive_frame(client)) == pong
                         state = get_json(inspection, 'frontend-key')['chain'][0]
                         expected_runs = 4 + header_callbacks + settings_callbacks + 2 + (8 if args.data else 0)
-                        assert state['runs'] == expected_runs, state
+                        assert state['runs'] == expected_runs + 1, state  # Plus setup.
                         assert state['errors'] == 0, state
                         assert state['last_result']['logs'] == [f'R {expected_runs}'], state
 
@@ -317,7 +322,7 @@ def main():
                         assert leaked == b'', f'Failed callback leaked {leaked!r}'
                         state = get_json(inspection, 'frontend-key')
                         assert state['chain'][0]['errors'] == 1
-                        assert state['chain'][0]['runs'] == expected_runs + 1
+                        assert state['chain'][0]['runs'] == expected_runs + 2
                         print(f'PASS: bidirectional indices, {expected_runs} explicit callbacks, strict {args.failure} with no leak')
         except BaseException:
             for name, log in logs:

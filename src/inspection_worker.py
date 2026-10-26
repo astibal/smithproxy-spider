@@ -36,6 +36,7 @@ class Api:
         info = event.get('details', {}).get('info', {})
         self.event = event
         self.info = info
+        self.phase = 'setup' if event.get('action') == 'connection-start' else 'content'
         self.bytes = base64.b64decode(info.get('content', ''), validate=True)
         self.text = self.bytes.decode('utf-8', errors='replace')
         self.side = info.get('side', '')
@@ -46,10 +47,11 @@ class Api:
         for item in self.enrichments:
             item['bytes'] = base64.b64decode(item.get('content', ''), validate=True)
         views = make_views(event, self.bytes, self.enrichments)
-        self.message = views.message
+        self.message = None if self.phase == 'setup' else views.message
         if request.get('held_parts') and not request.get('translate_active'):
             resume_message(self.message, request['held_parts'], info, self.enrichments)
-        _prepare_translation(self.message, request)
+        if self.message is not None:
+            _prepare_translation(self.message, request)
         self.metadata = views.metadata
         self.http1 = views.http1
         self.http2 = views.http2
@@ -58,7 +60,8 @@ class Api:
         identity = request.get('instance', {})
         self.instance = InstanceContext(identity.get('mode', 'message'), identity.get('key', ''),
                                         identity.get('deployment_id', ''), identity.get('version', 0))
-        self.connection = Connection(self.message, request.get('translate_active', False), self.instance.mode)
+        self.connection = Connection(self.message, request.get('translate_active', False),
+                                     self.instance.mode, self.phase)
         starts, ends = info.get('L7_payload_start', []), info.get('L7_payload_end', [])
         self.l7_state = 'unavailable'
         self.l7_ranges = []
@@ -103,13 +106,14 @@ def script_error():
 def invoke_script(current, compiled):
     output = Output()
     response = {'ok': False, 'replacement': None}
-    namespace = {'CommitException': CommitException, 'Header': Header, 'PartType': PartType, 'Mode': Mode}
+    namespace = {'CommitException': CommitException, 'Header': Header, 'PartType': PartType, 'Mode': Mode, 'Safety': Safety}
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             # Fresh script globals and API objects; imports/native module caches
             # remain private to this deployment's worker, not to a flow instance.
             exec(compiled, namespace)
             api = None if current.get('validate_only') else Api(current)
+            input_size = len(api.bytes) if api is not None else 0
             result = None if api is None else namespace['__spider_script'](api)
             translation = getattr(api.message, '_translation', None) if api is not None else None
             requested = api is not None and api.connection._requested
@@ -127,7 +131,7 @@ def invoke_script(current, compiled):
                 response['hold'] = {'state': 'holding', 'parts': result.count}
                 result = result.prefix
                 response['need_more'] = not result
-            elif api is not None and api.message.parts._held_from is not None:
+            elif api is not None and api.message is not None and api.message.parts._held_from is not None:
                 raise CommitException('Return message.commit() to publish the requested hold')
             elif current.get('held_parts'):
                 if result is None:
@@ -137,8 +141,30 @@ def invoke_script(current, compiled):
                 result = result.encode()
             if result is not None and not isinstance(result, (bytes, bytearray, memoryview)):
                 raise TypeError('script must return None, str, bytes, bytearray, or memoryview')
+
+            # Normalize before measuring: memoryview length can count elements
+            # rather than bytes, while str has already been encoded above.
+            if result is not None:
+                result = bytes(result)
+
             if result is not None and len(result) > 1024 * 1024:
                 raise ValueError('replacement exceeds 1 MiB')
+
+            if api is not None and api.phase == 'setup' and result is not None:
+                raise CommitException('Setup has no payload; return None after requesting rewrite')
+
+            # A new proxy explicitly reports the negotiated capability. Older
+            # proxies and offline/manual runs do not carry this field. A plain
+            # same-size replacement needs no reservation and does not activate
+            # an output context. Protocol consequences belong to the script.
+            control = api.info.get('webhook_control', {}) if api is not None else {}
+            if control.get('rewrite') is False:
+                if held is not None or current.get('held_parts') or response.get('translated'):
+                    raise CommitException('Hold and Translate require rewrite reservation at connection-start')
+
+                if result is not None and len(result) != input_size:
+                    raise CommitException('Length-changing rewrite was not reserved at connection-start')
+
             if api is not None:
                 if not isinstance(api.state, dict):
                     raise TypeError('api.state must remain a JSON object')
@@ -147,6 +173,8 @@ def invoke_script(current, compiled):
                     raise ValueError('api.state exceeds 64 KiB')
                 response['instance_state'] = json.loads(encoded_state)
             response.update(ok=True, replacement=None if result is None else base64.b64encode(result).decode())
+            if api is not None and api.phase == 'setup':
+                response['rewrite_requested'] = api.connection._rewrite_requested
             response['held_parts'] = held
     except BaseException:
         response = script_error()

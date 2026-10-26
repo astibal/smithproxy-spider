@@ -238,7 +238,8 @@ class RewriteTests(unittest.TestCase):
                 '    if part.is_a(PartType.Http2.Part) and part.headers is not None:\n'
                 '        part.headers.set_header(b"x", b"changed")\n'
                 + ('return api.message.commit()' if publish else 'api.message.commit()\nreturn None'))
-            run = subprocess.run([sys.executable, '-I', '-c', source], input=json.dumps(request),
+            from worker_bootstrap import packed
+            run = subprocess.run([sys.executable, '-I', '-c', packed(source)], input=json.dumps(request),
                                  text=True, capture_output=True, timeout=10, check=True)
             result = json.loads(run.stdout)
             self.assertTrue(result['ok'], result)

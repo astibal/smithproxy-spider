@@ -106,6 +106,7 @@ function completeApi(context) {
       label: field.name, type: field.parameters === undefined ? 'property' : 'method',
       detail: field.parameters === undefined ? field.type : `(${field.parameters}) → ${field.type}`,
       info: [field.description, field.availability, field.access,
+        field.easy ? `Easy: ${field.easy}` : '', field.expert ? `Expert: ${field.expert}` : '',
         field.example ? `Example:\n${field.example}` : ''].filter(Boolean).join('\n\n'),
     })),
     validFor: /^\w*$/,

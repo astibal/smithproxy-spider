@@ -17,7 +17,8 @@ class SandboxTests(unittest.TestCase):
     def run_script(self, script, worker_source=SOURCE, **extra):
         request = {'script': script, 'event': {'details': {'info': {
             'content': base64.b64encode(b'hello').decode()}}}, **extra}
-        result = subprocess.run([sys.executable, '-I', '-c', worker_source],
+        from worker_bootstrap import packed
+        result = subprocess.run([sys.executable, '-I', '-c', packed(worker_source)],
                                 input=json.dumps(request), capture_output=True,
                                 text=True, timeout=8, env={'PATH': '/usr/bin:/bin'})
         self.assertEqual(result.returncode, 0, result.stderr)

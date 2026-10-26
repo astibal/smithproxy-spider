@@ -161,7 +161,8 @@ class HoldTests(unittest.TestCase):
                 request = {'script': script, 'hold_allowed': allowed, 'held_parts': previous,
                     'instance': {'mode': mode}, 'event': {'id': 'guard', 'details': {'info': {
                         'side': 'L', 'content': base64.b64encode(b'new').decode()}}}}
-                run = subprocess.run([sys.executable, '-I', '-c', source], input=json.dumps(request),
+                from worker_bootstrap import packed
+                run = subprocess.run([sys.executable, '-I', '-c', packed(source)], input=json.dumps(request),
                     text=True, capture_output=True, check=True, timeout=10)
                 result = json.loads(run.stdout)
                 self.assertFalse(result['ok'], result)
@@ -185,7 +186,8 @@ class HoldTests(unittest.TestCase):
             request = {'script': script, 'hold_allowed': True, 'held_parts': held,
                 'instance': {'mode': 'flow'}, 'event': {'id': 'test', 'details': {'info': {
                     **info, 'side': 'L', 'content': base64.b64encode(data).decode()}}}}
-            run = subprocess.run([sys.executable, '-I', '-c', source], input=json.dumps(request),
+            from worker_bootstrap import packed
+            run = subprocess.run([sys.executable, '-I', '-c', packed(source)], input=json.dumps(request),
                 text=True, capture_output=True, check=True, timeout=10)
             result = json.loads(run.stdout)
             self.assertTrue(result['ok'], result)

@@ -20,7 +20,7 @@
     const query = document.getElementById('api-search').value.toLowerCase();
     for (const [type, definition] of Object.entries(schema.types)) {
       const matching = [...definition.fields, ...(definition.methods || [])].filter(f =>
-        (type + ' ' + f.name + ' ' + f.description).toLowerCase().includes(query));
+        (type + ' ' + f.name + ' ' + f.description + ' ' + (f.easy || '') + ' ' + (f.expert || '')).toLowerCase().includes(query));
       if (!matching.length) continue;
       const section = document.createElement('section');
       const heading = document.createElement('h3'); heading.textContent = type;
@@ -32,6 +32,9 @@
         summary.textContent = field.name + (field.parameters !== undefined ? '(' + field.parameters + ')' : '') + ': ' + field.type;
         const desc = document.createElement('p');
         desc.textContent = field.description + ' ' + field.availability + ' Access: ' + field.access + '.';
+        const safety = document.createElement('p');
+        safety.textContent = 'Easy: ' + (field.easy || 'Not documented by this backend.') +
+          ' Expert: ' + (field.expert || 'Not documented by this backend.');
         const example = document.createElement('pre'); example.textContent = field.example;
         const insert = document.createElement('button'); insert.textContent = 'Insert example into editor';
         insert.onclick = () => {
@@ -40,7 +43,7 @@
           editor.dispatchEvent(new Event('input', {bubbles: true}));
           showTab('inspection-tab'); editor.focus();
         };
-        row.append(summary, desc, example, insert); section.append(row);
+        row.append(summary, desc, safety, example, insert); section.append(row);
       }
       target.append(section);
     }

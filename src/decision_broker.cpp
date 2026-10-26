@@ -9,7 +9,10 @@ namespace spider {
 DecisionBroker::DecisionBroker(const std::chrono::milliseconds timeout) : timeout_(timeout) {}
 
 std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& event) {
-    if (event.value("action", "") != "connection-content") return {};
+    const bool setup = event.value("action", "") == "connection-start";
+
+    if (!setup && event.value("action", "") != "connection-content") return {};
+
     event.erase("collections"); // only backend rules may select capture destinations
     const auto session = event.value("id", "");
     std::scoped_lock lock(mutex_);
@@ -42,6 +45,7 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
             : rule.filter && rule.filter->matches(event);
         if (matches) {
             if (rule.mode == "collect") {
+                if (setup) continue; // Setup has no sample bytes to collect.
                 ++rule.matches;
                 if (!event.contains("collections")) event["collections"] = nlohmann::json::array();
                 event["collections"].push_back({{"id", rule.id}, {"endpoint", rule.value}});
@@ -49,7 +53,7 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
             }
             if (matched) continue;
             matched = &rule;
-            ++rule.matches;
+            if (!setup) ++rule.matches;
         }
     }
     if (bypass_all_) {
@@ -70,6 +74,9 @@ std::shared_ptr<DecisionBroker::Ticket> DecisionBroker::prepare(nlohmann::json& 
     }
     const auto inspect = matched && matched->mode == "inspect";
     if (matched) event["traffic_rule"] = {{"mode", matched->mode}, {"address", matched->address}};
+    // Resolve the same endpoint scope at setup, but never create a GUI payload
+    // decision or wait for an editor that has no payload to display yet.
+    if (setup) return {};
     if ((!enabled_ && !(inspect && script_available_)) || session.empty() ||
         (accepted_sessions_.contains(session) && !inspect)) return {};
     for (auto& rule : auto_accept_rules_) {

@@ -104,7 +104,8 @@ class WriteTests(unittest.TestCase):
         def run(script):
             request = {'script': script, 'event': {'details': {'info': {
                 'content': base64.b64encode(self.request).decode()}}}}
-            result = subprocess.run([sys.executable, '-c', worker], input=json.dumps(request),
+            from worker_bootstrap import packed
+            result = subprocess.run([sys.executable, '-c', packed(worker)], input=json.dumps(request),
                                     text=True, capture_output=True, timeout=5, check=True)
             return json.loads(result.stdout)
         prefix = 'draft = api.message.snapshot()\ndraft.http1.body = b"longer"\n'
@@ -199,7 +200,14 @@ class Http2Tests(unittest.TestCase):
                         scope = {'Mode': Mode}
                         source = 'def example(api, part, entry, PartType):\n' + indent(field['example'], '    ')
                         exec(compile(source, '<api-example>', 'exec'), scope)
-                        if name in ('Connection', 'ConnectionHttp2') or field['name'] == 'connection':
+                        if name == 'Connection' and field['name'] == 'request_rewrite':
+                            from inspection_api import Connection
+                            api.phase = 'setup'
+                            api.message = None
+                            api.connection = Connection(phase='setup')
+                            scope['example'](api, part, part.headers.entries[0], PartType)
+                            self.assertTrue(api.connection._rewrite_requested)
+                        elif name in ('Connection', 'ConnectionHttp2') or field['name'] == 'connection':
                             # Offline views cannot activate live connection policy.
                             with self.assertRaisesRegex(CommitException, 'flow instantiation'):
                                 scope['example'](api, part, part.headers.entries[0], PartType)

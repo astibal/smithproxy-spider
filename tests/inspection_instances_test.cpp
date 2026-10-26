@@ -31,6 +31,32 @@ int main() {
         {"details", {{"info", {{"content", "YWJj"}, {"side", "L"},
             {"session", "tcp_10.0.0.1:1234+tcp_10.0.0.2:443"}}}}}};
     auto run = [&]() { return engine.automatic(event, json::array()); };
+    // A single deployment and flow instance receives setup before content.
+    auto setup = event;
+    setup["action"] = "connection-start";
+    setup["details"]["info"].erase("content");
+    setup["details"]["info"].erase("side");
+    deploy("flow", "if api.phase == 'setup':\n    api.state['ready'] = True\n"
+                   "    api.connection.request_rewrite()\n    return\n"
+                   "assert api.state['ready']\nreturn None");
+    const auto ready = engine.automatic(setup, json::array());
+    assert(ready["ok"] == true && ready["rewrite_requested"] == true);
+    assert(run()["ok"] == true);
+    assert(engine.status()["chain"][0]["instances"] == 1);
+    auto added = configure({{"operation", "deploy"}, {"name", "observer"},
+                            {"script", "return None"}, {"scope", "all"}});
+    const auto observer = added["chain"][1]["id"];
+    configure({{"operation", "enable"}, {"id", observer}, {"enabled", true}});
+    auto reserved = engine.automatic(setup, json::array());
+    assert(reserved["ok"] == true && reserved["rewrite_requested"] == true);
+    assert(reserved["steps"].size() == 2); // A later observer does not erase opt-in.
+    configure({{"operation", "deploy"}, {"id", observer}, {"name", "broken observer"},
+               {"script", "raise ValueError('setup aborted')"}, {"scope", "all"}});
+    configure({{"operation", "enable"}, {"id", observer}, {"enabled", true}});
+    reserved = engine.automatic(setup, json::array());
+    assert(reserved["ok"] == false && !reserved.value("rewrite_requested", false));
+    deploy("flow", "api.connection.request_rewrite()", {{"filter", "dst port 80"}});
+    assert(engine.automatic(setup, json::array()).is_null()); // Current destination is 443.
     deploy("message", counter);
     assert(run()["logs"][0] == "1" && run()["logs"][0] == "1");
     assert(engine.status()["chain"][0]["instances"] == 0);

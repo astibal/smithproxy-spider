@@ -136,6 +136,12 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     }
     if (action == "access-request") return {200, {{"access-response", "accept"}}};
     if (!script_result.is_null()) {
+        if (action == "connection-start") {
+            const bool rewrite = script_result.value("ok", false) &&
+                                 script_result.value("rewrite_requested", false);
+            return {200, {{"action", "accept"}, {"control", {{"rewrite", rewrite}}}}};
+        }
+
         if (script_result.value("translate_failed", false))
             return {503, {{"error", "Translate callback failed; strict connection must close"}}};
         if (script_result.value("translated", false) && script_result.value("ok", false)) {

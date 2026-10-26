@@ -3,20 +3,37 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
 import re
+import base64
+import hashlib
 
 
-def documented(description, example, availability='Always available for a content callback.', *, access='read-only snapshot'):
+class Safety:
+    """Commit safety, independent of Rewrite/Translate and never persisted implicitly."""
+    Easy = 'easy'
+    Expert = 'expert'
+
+
+def _validate_safety(safety):
+    if safety not in (Safety.Easy, Safety.Expert) or not isinstance(safety, str):
+        raise CommitException('Expected Safety.Easy or Safety.Expert')
+
+
+_SAME_SAFETY = 'This member has the same behavior in both modes. It does not select or persist commit safety.'
+
+
+def documented(description, example, availability='Always available for a content callback.', *, access='read-only snapshot',
+               easy=_SAME_SAFETY, expert=_SAME_SAFETY):
     return field(metadata={'description': description, 'example': example,
-                           'availability': availability, 'access': access})
+                           'availability': availability, 'access': access, 'easy': easy, 'expert': expert})
 
 
 def api_method(parameters, returns, description, example, *,
                availability='Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.',
-               access='shared storage operation'):
+               access='shared storage operation', easy=_SAME_SAFETY, expert=_SAME_SAFETY):
     def decorate(method):
         method.__api_doc__ = {'name': method.__name__, 'type': returns, 'parameters': parameters,
             'description': description, 'example': example, 'availability': availability,
-            'access': access}
+            'access': access, 'easy': easy, 'expert': expert}
         return method
     return decorate
 
@@ -159,23 +176,29 @@ class Message:
                  for group in _h2_content_groups(parts)}
         object.__setattr__(self, '_body_sizes', sizes)
 
-    @api_method('update_content_length: bool = True', 'bytes | HeldCommit',
-                'Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.',
-                'return api.message.commit()', access='assemble private draft')
-    def commit(self, update_content_length=True):
+    @api_method('update_content_length: bool = True, *, safety: str = Safety.Easy', 'bytes | HeldCommit',
+                'Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; update_content_length=False disables H2 repair only (H1 typed assembly always recalculates it). Incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.',
+                'return api.message.commit()', access='assemble private draft',
+                easy='Default. Repair supported H1 Content-Digest (sha-256/sha-512 without parameters) and apply remaining H1 metadata guards and H2 frame-size guards. This is not full protocol validation.',
+                expert='Allow H1 encoding/integrity/range/signature inconsistency and representable oversized H2 control frames. Supported unencoded H1 Content-Digest and Content-Length are still repaired; unsupported digests remain unchanged. Keep quotas, atomicity and unambiguous framing.')
+    def commit(self, update_content_length=True, *, safety=Safety.Easy):
         try:
-            return commit_message(self, update_content_length)
+            _validate_safety(safety)
+            return commit_message(self, update_content_length, safety=safety)
         except CommitException:
             raise
         except (ValueError, TypeError, AttributeError, OverflowError) as error:
             raise CommitException(str(error)) from error
 
-    @api_method('', 'bytes | HeldCommit',
-                'Explicitly translate every callback of a pinned H2 flow. Header edits only; requires a capable strict-control proxy and python-hpack. Hold incomplete Parts with parts.hold_from(part); only the emitted prefix advances HPACK state. No silent background runs.',
+    @api_method('*, safety: str = Safety.Easy', 'bytes | HeldCommit',
+                'Explicitly translate every callback of a pinned H2 flow. Header edits and same-length DATA; requires a capable strict-control proxy and python-hpack. Hold incomplete Parts with parts.hold_from(part); only the emitted prefix advances HPACK state. No silent background runs.',
                 'if api.instance.mode == "flow":\n    return api.message.translate()',
                 availability='First observed content of a new flow, sole enabled deployment; every callback thereafter.',
-                access='assemble translated output')
-    def translate(self):
+                access='assemble translated output',
+                easy='Require complete emitted frames, coherent HEADERS/PUSH_PROMISE HPACK state, unchanged header frame identity, explicit callbacks and same-length DATA. PUSH_PROMISE requires server direction and enabled push; full stream lifecycle validation is not provided.',
+                expert='The same translate invariants apply. Expert does not disable strict control, HPACK synchronization or DATA flow-control restrictions; use rewrite for local state-breaking experiments.')
+    def translate(self, *, safety=Safety.Easy):
+        _validate_safety(safety)
         transaction = getattr(self, '_translation', None)
         if transaction is None:
             raise CommitException(getattr(self, '_translation_error',
@@ -224,8 +247,10 @@ class Http1Draft:
         'draft = api.message.snapshot()\napi.print(draft.http1.available)')
     headers: list[Header] = documented('Ordered draft headers. Duplicates are preserved except Content-Length, which commit manages. Use set_header/remove_header for convenient edits.',
         _DRAFT_EXAMPLE, access='mutable private draft')
-    body: bytes = documented('Complete wire body. Assign bytes; commit recalculates Content-Length. Encoded bodies and bodies with known integrity metadata cannot be changed in this version.',
-        'draft = api.message.snapshot()\nif draft.http1.available:\n    api.print(len(draft.http1.body))', access='mutable private draft')
+    body: bytes = documented('Complete wire body. Assign bytes; commit recalculates Content-Length and supported Content-Digest on unencoded content. No automatic compression or signature recomputation.',
+        'draft = api.message.snapshot()\nif draft.http1.available:\n    api.print(len(draft.http1.body))', access='mutable private draft',
+        easy='Commit repairs sha-256/sha-512 Content-Digest without parameters; rejects other encoding, integrity or range dependencies that cannot be rebuilt.',
+        expert='Commit repairs supported Content-Digest and Content-Length. Unsupported digest dictionaries and other metadata may remain inconsistent; supply appropriate wire bytes yourself.')
     target: str | None = documented('Request target, or None for a response. May change length. Whitespace and control bytes are forbidden.',
         'draft = api.message.snapshot()\nif draft.http1.available and draft.http1.target is not None:\n    draft.http1.target = "/inspection"', access='mutable private draft')
 
@@ -333,13 +358,16 @@ class MessageSnapshot:
         self.http1, self._start, self._error = _draft_http1(self._original)
         self._initial = (tuple(self.http1.headers), self.http1.body, self.http1.target)
 
-    @api_method('', 'bytes', 'Validate and rebuild a single HTTP/1 message, recalculating Content-Length. Returns at most 1 MiB. No-op preserves exact original bytes. Raises CommitException for unsupported framing or invalid edits; catch it in the script. No partial publication.',
-        _DRAFT_EXAMPLE, availability='On a message snapshot. H2, chunked, partial and pipelined edits are rejected.', access='assemble private draft')
-    def commit(self) -> bytes:
+    @api_method('*, safety: str = Safety.Easy', 'bytes', 'Validate and rebuild a single HTTP/1 message, recalculating Content-Length. Returns at most 1 MiB. No-op preserves exact original bytes. Raises CommitException for unsupported framing or invalid edits; catch it in the script. No partial publication.',
+        _DRAFT_EXAMPLE, availability='On a message snapshot. H2, chunked, partial and pipelined edits are rejected.', access='assemble private draft',
+        easy='Repair changed or newly set Content-Digest using sha-256/sha-512 byte sequences without parameters on unencoded H1 content. Reject unsupported digest dictionaries and remaining encoding, integrity, range or signature dependencies; require Host and bodyless-status semantics.',
+        expert='Repair supported Content-Digest and Content-Length; preserve unsupported digest dictionaries unchanged. Allow other semantic inconsistencies, including missing Host and a body on a bodyless status. No automatic compression, signing, or chunked encoder. Syntax, known input framing and quotas remain mandatory.')
+    def commit(self, *, safety=Safety.Easy) -> bytes:
         try:
+            _validate_safety(safety)
             self._validate_draft()
             unchanged = (tuple(self.http1.headers), self.http1.body, self.http1.target) == self._initial
-            result = self._original if unchanged else self._assemble()
+            result = self._original if unchanged else self._assemble(safety=safety)
             if len(result) > _MAX_REPLACEMENT_BYTES:
                 raise CommitException('Replacement exceeds 1 MiB')
             return result
@@ -359,7 +387,7 @@ class MessageSnapshot:
         if len(draft.body) > _MAX_REPLACEMENT_BYTES:
             raise CommitException('Replacement body exceeds 1 MiB')
 
-    def _validate_edits(self):
+    def _validate_edits(self, safety=Safety.Easy):
         """Reject changes whose dependent metadata we cannot rebuild."""
         if self._error:
             raise CommitException(self._error)
@@ -389,13 +417,16 @@ class MessageSnapshot:
                 'Cannot change framing to chunked, trailers or upgrade'
             )
 
+        if safety == Safety.Expert:
+            return  # Raw body/header metadata is the researcher's responsibility.
+
         encodings = _header_values(headers, 'content-encoding')
         original_encodings = _header_values(original_headers, 'content-encoding')
 
         if encodings != original_encodings:
             raise CommitException('Content-Encoding changes require an encoder')
 
-        if self.http1.body != original_body and all_names & _BODY_METADATA:
+        if self.http1.body != original_body and all_names & (_BODY_METADATA - {'content-digest'}):
             raise CommitException(
                 'Body has encoding, integrity or range metadata '
                 'that cannot be recalculated yet'
@@ -404,7 +435,7 @@ class MessageSnapshot:
         if all_names & _SIGNATURE_METADATA:
             raise CommitException('Signed messages require signature recomputation')
 
-    def _edited_start_line(self):
+    def _edited_start_line(self, safety=Safety.Easy):
         if self._initial[2] is None:
             if self.http1.target is not None:
                 raise CommitException('A response has no request target')
@@ -419,12 +450,12 @@ class MessageSnapshot:
         method, _, version = self._start.split(' ')
         hosts = _header_values(self.http1.headers, 'host')
 
-        if version == 'HTTP/1.1' and (len(hosts) != 1 or not hosts[0]):
+        if safety == Safety.Easy and version == 'HTTP/1.1' and (len(hosts) != 1 or not hosts[0]):
             raise CommitException('HTTP/1.1 request requires exactly one nonempty Host')
 
         return f'{method} {target} {version}'
 
-    def _framed_headers(self):
+    def _framed_headers(self, safety=Safety.Easy):
         """Compute framing on a copy; even successful commits leave the draft alone."""
         headers = list(self.http1.headers)
         original_headers, _, original_target = self._initial
@@ -433,6 +464,10 @@ class MessageSnapshot:
         status = int(self._start.split(' ')[1]) if original_target is None else None
 
         if _bodyless_status(status):
+            if safety == Safety.Expert and not self.http1.body:
+                return headers
+
+        if _bodyless_status(status) and safety == Safety.Easy:
             if self.http1.body:
                 raise CommitException('This status forbids a response body')
 
@@ -466,10 +501,66 @@ class MessageSnapshot:
 
         return headers
 
-    def _assemble(self):
-        self._validate_edits()
-        start = self._edited_start_line()
-        headers = self._framed_headers()
+    def _digest_headers(self, headers, safety):
+        """Repair a supported dictionary atomically, without mutating the draft.
+
+        This intentionally supports only SHA-256/SHA-512 byte-sequence members
+        without parameters. Unsupported dictionaries stay untouched in Expert;
+        Easy rejects them rather than silently dropping an integrity claim.
+        """
+        values = _header_values(headers, 'content-digest')
+        original_headers, original_body, _ = self._initial
+        original_values = _header_values(original_headers, 'content-digest')
+
+        if not values or (self.http1.body == original_body and values == original_values):
+            return headers
+
+        try:
+            all_headers = list(original_headers) + headers
+
+            if _header_values(all_headers, 'content-encoding'):
+                raise CommitException('Content-Digest repair requires unencoded H1 content')
+
+            algorithms = []
+            for member in ','.join(values).split(','):
+                match = re.fullmatch(r'(sha-256|sha-512)=:([A-Za-z0-9+/]*={0,2}):', member.strip())
+
+                if match is None or match[1] in algorithms:
+                    raise CommitException('Unsupported Content-Digest: expected unique sha-256/sha-512 byte sequences without parameters')
+
+                try:
+                    base64.b64decode(match[2], validate=True)
+                except ValueError as error:
+                    raise CommitException('Invalid Content-Digest base64') from error
+
+                algorithms.append(match[1])
+
+            digests = []
+            for algorithm in algorithms:
+                digest = hashlib.new(algorithm.replace('-', ''), self.http1.body).digest()
+                encoded = base64.b64encode(digest).decode('ascii')
+                digests.append(f'{algorithm}=:{encoded}:')
+
+        except CommitException:
+            if safety == Safety.Expert:
+                return headers
+            raise
+
+        result = []
+        for header in headers:
+            if header.name.lower() != 'content-digest':
+                result.append(header)
+            elif digests:
+                result.append(Header(header.name, ', '.join(digests)))
+                digests = []
+
+        return result
+
+    def _assemble(self, *, safety=Safety.Easy):
+        self._validate_edits(safety)
+        start = self._edited_start_line(safety)
+        headers = self._framed_headers(safety)
+        headers = self._digest_headers(headers, safety)
 
         header_lines = ''.join(f'{h.name}: {h.value}\r\n' for h in headers)
         head = start + '\r\n' + header_lines + '\r\n'
@@ -478,7 +569,7 @@ class MessageSnapshot:
         # Apply the same framing gate to input and output; no second interpretation.
         _, _, error = _draft_http1(result)
 
-        if error:
+        if error and safety == Safety.Easy:
             raise CommitException(error)
 
         return result
@@ -592,7 +683,8 @@ def make_http2(info, payload, enrichments):
 @dataclass(frozen=True)
 class InspectionViews:
     """Typed API v0.6. Read-only input views, editable Parts, H1 snapshots and explicit live H2 translation."""
-    message: Message = documented('Current content fragment.', 'api.print(api.message.size)')
+    message: Message = documented('Current content fragment; None during connection-start setup.', 'api.print(api.message.size)',
+        availability='Content callbacks and offline previews only; check api.phase before reading.')
     metadata: ContentMetadata = documented('Metadata of the current content callback.', 'api.print(api.metadata.side)')
     http1: Http1 = documented('HTTP/1 head supplied by backend enrichment.', 'if api.http1.available:\n    api.print(api.http1.target)')
     http2: Http2 = documented('Read-only HTTP/2 frame slices and decoded HPACK blocks.', 'for block in api.http2.header_blocks:\n    for header in block.headers:\n        api.print(block.stream_id, header.name, header.value)')
@@ -603,6 +695,8 @@ class InspectionViews:
     instance: InstanceContext = documented('Identity and lifecycle mode of this invocation.', 'api.print(api.instance.mode, api.instance.key, api.instance.version)')
     connection: Connection = documented('Explicit live connection mode and HTTP/2 policy.',
         'api.connection.set_mode(Mode.Translate)\nreturn api.message.translate()', access='staged connection policy')
+    phase: str = documented('Callback phase: setup at connection-start, content for payloads and offline previews.',
+        'api.print(api.phase)', availability='Every callback. Setup has metadata but no Message.')
 
 
 def make_views(event, payload, enrichments):
@@ -616,7 +710,8 @@ def make_views(event, payload, enrichments):
         ContentMetadata(event.get('id', ''), info.get('side', ''), info.get('payload_layer')),
         Http1(bool(head), head.get('method'), head.get('target'), head.get('status'),
               tuple(Header(h['name'], h['value']) for h in head.get('headers', []))),
-        make_http2(info, payload, enrichments), {}, SharedStorage(), InstanceContext('message', '', '', 0), Connection())
+        make_http2(info, payload, enrichments), {}, SharedStorage(), InstanceContext('message', '', '', 0), Connection(),
+        'setup' if event.get('action') == 'connection-start' else 'content')
 
 
 def api_schema():

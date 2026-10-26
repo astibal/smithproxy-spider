@@ -49,11 +49,24 @@ class Connection:
         'api.connection.set_mode(Mode.Translate)\napi.connection.http2.enforce_header_table_limit(0)\nreturn api.message.translate()',
         access='staged connection policy')
 
-    def __init__(self, message=None, active=False, instance_mode='message'):
+    def __init__(self, message=None, active=False, instance_mode='message', phase='content'):
         self._message = message
         self._requested = active
         self._instance_mode = instance_mode
+        self._phase = phase
+        self._rewrite_requested = False
         self.http2 = ConnectionHttp2(self)
+
+    @api_method('', 'None',
+                'Reserve rewrite capability before the first payload. Does not modify bytes or activate Translate. Repeated calls are harmless.',
+                "if api.phase == 'setup':\n    api.connection.request_rewrite()\n    return\nreturn api.message.commit()",
+                availability='Connection-start setup callback only. Easy and Expert require this permission for length changes, hold and Translate. Same-size raw replacements need no reservation and leave protocol consistency to the script.',
+                access='staged setup permission')
+    def request_rewrite(self):
+        if self._phase != 'setup':
+            raise CommitException('request_rewrite() is only allowed during connection-start setup')
+
+        self._rewrite_requested = True
 
     def _transaction(self):
         transaction = getattr(self._message, '_translation', None)
@@ -134,7 +147,7 @@ class _TranslationSettings:
             if changes.get('synthetic'):
                 self.forward_wire = b''  # This ACK belongs to our injected SETTINGS.
 
-            for key in ('table', 'frame'):
+            for key in ('table', 'frame', 'push'):
                 if key in changes:
                     self.limits[key] = changes[key]
 
@@ -164,8 +177,10 @@ class _TranslationSettings:
                 if not 16384 <= value <= 0xffffff:
                     raise CommitException('SETTINGS_MAX_FRAME_SIZE must be 16384..16777215')
                 changes['frame'] = value
-            elif key == 2 and (value not in (0, 1) or (self.side == 'R' and value == 1)):
-                raise CommitException('Invalid SETTINGS_ENABLE_PUSH')
+            elif key == 2:
+                if value not in (0, 1) or (self.side == 'R' and value == 1):
+                    raise CommitException('Invalid SETTINGS_ENABLE_PUSH')
+                changes['push'] = value
             elif key == 4 and value > 0x7fffffff:
                 raise CommitException('Invalid SETTINGS_INITIAL_WINDOW_SIZE')
 
@@ -462,17 +477,29 @@ class _Translation:
                 continue
             if part.frame_type == 9:
                 raise CommitException('Orphan CONTINUATION frame')
-            if part.frame_type == 5:
-                raise CommitException('PUSH_PROMISE translation is not supported yet')
             if part.frame_type == 4:
                 _translate_decoder_settings(self.decoder, self.settings.process(part))
-            if part.frame_type == 1:
+            if part.frame_type == 5:
+                self._validate_push(part)
+            if part.frame_type in (1, 5):
+                # PUSH_PROMISE shares this direction's HPACK context with
+                # HEADERS, including responses on the promised stream.
                 self._decode_headers(part, active)
 
         object.__setattr__(message, '_body_sizes', {
             id(group[0]): sum(len(p._data) for p in group if p.frame_type == 0)
             for group in _h2_content_groups(message.parts)
         })
+
+    def _validate_push(self, part):
+        """Check push envelope, without pretending to track every stream state."""
+        promised = int.from_bytes(part._prefix[-4:], 'big') & 0x7fffffff
+
+        if self.settings.side != 'R' or not self.settings.limits.get('push', 1):
+            raise CommitException('PUSH_PROMISE requires server direction and enabled push')
+
+        if not part.stream_id or not part.stream_id & 1 or not promised or promised & 1:
+            raise CommitException('PUSH_PROMISE requires a client stream and an even nonzero promised stream')
 
     def _decode_headers(self, part, active):
         """Resolve source indices without changing the receiver's table."""
@@ -590,7 +617,7 @@ class _Translation:
 
             if part._initial[0] == 0:
                 output.extend(self._translate_data(part, original))
-            elif part.frame_type != 1:
+            elif part._initial[0] not in (1, 5):
                 if part.commit() != original:
                     raise CommitException('Translate supports header edits and same-length DATA only')
 
@@ -601,6 +628,9 @@ class _Translation:
                     output.extend(original)
 
             else:
+                if (part.frame_type, part.flags, part.stream_id) != part._initial:
+                    raise CommitException('Translate headers must preserve frame type, flags and stream id')
+
                 fields = self._header_fields(part)
                 previous_size = part.max_frame_size
 
@@ -634,7 +664,7 @@ class _Translation:
                 if part.frame_type == 4:
                     _translate_decoder_settings(decoder, replay_settings.process(part))
 
-                if part.frame_type == 1:
+                if part.frame_type in (1, 5):
                     _translate_decode(decoder, part._data)
 
         checkpoint = {
@@ -661,7 +691,7 @@ class _Translation:
                             (part.frame_type, part.flags, part.stream_id) != part._initial):
                         raise CommitException('Cannot hold an edited incomplete H2 part')
 
-                    if part.complete and part.frame_type == 1:
+                    if part.complete and part.frame_type in (1, 5):
                         # Normalize only the checkpoint, never the user's live draft.
                         fields = self._header_fields(part)
                         saved.append((part, part.headers, getattr(part, '_translate_draft', None)))
