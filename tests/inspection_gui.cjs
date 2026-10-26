@@ -311,8 +311,15 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     await page.getByRole('button', {name: 'Insert example into editor'}).first().click();
     assert.match(await editor.innerText(), /api\.print/);
     await editor.fill('return None');
+
+    // Seed the authoritative backend, then let the normal poll update the GUI.
+    // A GUI-only rule can be erased by a poll between opening the menu and clicking.
+    state.traffic_rules.rules = [
+      {id: 'address:192.0.2.2', kind: 'address', value: '192.0.2.2', mode: 'focus'},
+    ];
+    await page.waitForFunction(() => trafficRules.some(rule =>
+      rule.value === '192.0.2.2' && rule.mode === 'focus'));
     await page.evaluate(() => {
-      trafficRules = [{id: 'address:192.0.2.2', kind: 'address', value: '192.0.2.2', mode: 'focus'}];
       observedDestinations.set('192.0.2.2', {count: 1, lastSeenAt: Date.now()});
       renderEndpointBuilder();
     });
@@ -383,19 +390,26 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     // action first so this measures the Human toggle, not automation's scrolling.
     await flow.locator('[data-flow-human]').scrollIntoViewIfNeeded();
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    const scrollState = () => flow.evaluate(panel => {
-      const result = [];
+    const toolbarState = () => flow.evaluate(panel => {
+      const scroll = [];
       for (let node = panel; node; node = node.parentElement) {
-        result.push({id: node.id, top: node.scrollTop, height: node.scrollHeight});
+        scroll.push({id: node.id, top: node.scrollTop, height: node.scrollHeight});
       }
-      return result;
+      const layout = [...document.querySelectorAll(
+        'body > header, main, .workspace, .tabs, .flow-follow-panel:not([hidden]) .flow-follow-head, ' +
+        '.flow-follow-panel:not([hidden]) .flow-follow-controls')].map(node => {
+        const box = node.getBoundingClientRect();
+        return {element: node.id || node.className || node.tagName,
+          x: box.x, y: box.y, width: box.width, height: box.height, text: node.innerText.slice(0, 300)};
+      });
+      const controls = panel.querySelector('[data-flow-view="chunks"]').getBoundingClientRect().toJSON();
+      return {controls, scroll, layout};
     });
-    const scrollBefore = await scrollState();
-    const controlsBefore = await flow.locator('[data-flow-view="chunks"]').boundingBox();
+    const beforeToggle = await toolbarState();
     await flow.locator('[data-flow-human]').click();
-    const controlsAfter = await flow.locator('[data-flow-view="chunks"]').boundingBox();
-    assert.equal(controlsBefore.x, controlsAfter.x);
-    assert.equal(controlsBefore.y, controlsAfter.y, JSON.stringify({scrollBefore, scrollAfter: await scrollState()}));
+    const afterToggle = await toolbarState();
+    assert.equal(beforeToggle.controls.x, afterToggle.controls.x, JSON.stringify({beforeToggle, afterToggle}));
+    assert.equal(beforeToggle.controls.y, afterToggle.controls.y, JSON.stringify({beforeToggle, afterToggle}));
     await flow.locator('[data-flow-human]').click();
     assert.equal(await flow.locator('.derived-payload').count(), 1);
     await flow.locator('.enrichment-marker').click();

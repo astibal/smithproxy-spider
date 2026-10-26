@@ -1,0 +1,232 @@
+FC-API CONTRACT AUDIT -- 2026-10-26
+=================================
+
+Scope
+-----
+Spider: 20a754196be2b72127ef1ade182bfce358823458.
+Smithproxy product code: 274f73a5f224aa4b5ba690270aaf96326e08986c.
+Smithproxy test evidence committed separately as dcb56f0.
+Socle: unchanged decc93fe2957f89f2cf508fe90118710ab224729.
+
+This is a source/documentation/test consistency review, not a new protocol
+implementation, complete security audit or cross-version integration matrix.
+No product code was changed. No merge or push was performed.
+
+Conclusion
+----------
+Follow-up: documentation and regression tests now address findings 1-4.
+README H1 snapshot, H2 rewrite and H1 hold examples include setup reservation;
+their exact snippets run through setup/content (and hold/resume) in the real
+sandboxed worker. Missing rewrite metadata remains the explicit legacy policy,
+covered alongside false/true by inspection_setup_tests. No runtime restriction
+was changed. The findings below retain the original audit evidence and line
+numbers; they describe the audited baseline, not the corrected documentation.
+Follow-up validation: all 41 Spider CTest suites passed in an isolated network
+namespace (147.26 seconds), including the expanded README and legacy permission
+tests. API example generation --check and git diff --check also passed.
+Logs and JUnit XML: /tmp/fc-api-contract-docs-20261026/ (with a durable copy in
+the workspace p3-runs/fc-api-274f73a-20261026/contract-followup directory).
+
+The existing test gate is green. Findings 1-4 are now addressed in the working
+tree: the bounded implementation and its public contract agree on the reviewed
+boundaries. The original audit found stale live examples, failure semantics and
+undocumented legacy capability behavior; those findings did not invalidate the
+successful full P3 run. This closes that documentation follow-up, not every
+deferred protocol feature or an independent security review.
+
+English-only follow-up: translated repository documentation, generated reference,
+headings, links and example comments. All 42 Python blocks in the four design/API
+documents retain identical ASTs; heading links resolve. Unicode fixtures still
+exercise non-ASCII bytes without Czech prose. All 41 Spider CTest suites passed
+again (147.29 seconds), including seven real-proxy Translate E2E variants.
+Evidence: /tmp/fc-api-english-20261026/spider-all.{log,xml}.
+
+Upstream reconciliation (fresh fetch on 2026-10-26)
+-------------------------------------------------
+Spider origin/main: d2492ec; fc-api contains it (35 commits ahead, none behind).
+Smithproxy origin/master: 3de21bd; fc-api contains it (4 ahead, none behind).
+No integration merge is currently needed. Counts exclude uncommitted follow-up.
+Spider external/lmhpp is clean at 415d290 and contained in its origin/main ref.
+Smithproxy Socle is clean at decc93f with no net change from origin/master.
+The tested product revisions remain unchanged; pending edits are documentation,
+tests/fixtures, a documentation generator and one translated JA4 comment.
+
+Browser follow-up and accepted non-blocking issue
+------------------------------------------------
+Three isolated Chromium passes were requested, using a temporary profile,
+ephemeral frontend and mocked backend. No running lab or user tab was touched.
+The first run passed twice, then failed the Focus-preservation assertion after
+Collection activation. The fixture set only GUI trafficRules while its backend
+still advertised no rules; polling could erase the fixture. The test now seeds
+the authoritative backend and waits for normal polling to install the rule.
+Both Focus and Collection assertions remain unchanged.
+
+After that fix, two passes succeeded, then the exact toolbar-position assertion
+failed during the Human toggle: y=206 before, y=222 after, with no scroll change.
+This is a separate unresolved intermittent layout/timing failure. Added ancestor
+layout diagnostics without relaxing coordinate equality. The diagnostic run then
+passed 3/3; that does not explain or close the earlier failure. Do not label this
+browser gate consistently green or merge solely on the successful retry.
+
+Logs: /tmp/fc-api-english-20261026/browser-smoke.log,
+browser-smoke-fixed.log and browser-smoke-layout.log.
+Next investigation: reproduce the 16 px movement with the new geometry evidence
+and distinguish a product layout regression from asynchronous test preparation.
+
+Toolbar reproduction follow-up
+------------------------------
+Ten additional complete isolated browser smoke runs passed with the existing
+layout diagnostics. To avoid diagnostic calls changing the timing of the test,
+toolbar coordinates, ancestor geometry and scroll state are now captured in one
+synchronous browser evaluation before and after the real Playwright click.
+Both x and y still require exact equality; no sleeps, coordinate tolerances or
+automatic retries were added to the assertion. Ten more full browser smoke runs
+passed with this atomic measurement (20/20 additional runs in total).
+
+The original 16 px failure has not reproduced in these runs. Its cause remains
+unconfirmed; no production CSS or JavaScript fix is claimed. Keep the earlier
+failure evidence and capture geometry if it recurs rather than treating repeated
+success as proof of a fix.
+Logs: /tmp/fc-api-english-20261026/browser-toolbar-repro.log and
+/tmp/fc-api-english-20261026/browser-toolbar-atomic.log.
+
+Findings to close before merge
+-----------------------------
+1. Public documents contradict the implemented Translate/strict support.
+
+   README.md:596 says TRANSLATE and strict are future work; :639 repeats that
+   assumption. docs/FIRST_CLASS_API_DESIGN.md:300 and :323-329 make the same
+   claim in the binding design document. Yet README's introduction and
+   docs/H2_TRANSLATE_LIVE.md describe implemented live Translate, and backend
+   routing, strict control and real-proxy tests implement it.
+
+   Required correction: distinguish the current bounded H2 Translate support
+   from deferred general translation, compression and HOLD/REWRITE failure
+   protection. Preserve historical POC descriptions as explicitly historical.
+
+2. README live rewrite examples omit the connection-start guard/reservation.
+
+   The H2 example at README.md:564 iterates api.message.parts unconditionally.
+   In setup, api.message is None. The H1 snapshot and live hold examples have
+   the same setup issue. Unlike the cookbook, README has no request_rewrite()
+   guard explaining the required live deployment setup.
+
+   Reproduced by extracting the exact H2 README Python block and invoking the
+   real sandboxed worker through tests/inspection_cookbook_test.py::run:
+     fixture('setup'):
+       AttributeError: 'NoneType' object has no attribute 'parts'
+     fixture('h2'), webhook_control.rewrite=false:
+       CommitException: Length-changing rewrite was not reserved at connection-start
+
+   Required correction: make live examples self-contained or label them as
+   content-only fragments with an unavoidable setup prerequisite. Add tests
+   executing README live examples through setup and content, not only fixtures
+   with absent capability metadata. Existing cookbook tests do not cover README.
+
+3. General failure wording incorrectly includes active Translate.
+
+   docs/INSPECTION_COOKBOOK.md:170-171 says script failures are fail-open and
+   strict/drop remain TODO. This is true of ordinary Rewrite hold failure
+   protection, not of an already active Translate connection.
+
+   Actual boundary:
+   - before successful Translate activation, ordinary script failure can leave
+     the original callback unchanged under regular policy;
+   - after activation, the backend pins deployment/version, requires strict
+     mode and consecutive sequence, and returns HTTP 503 on failure;
+   - strict proxy closes instead of forwarding unprocessed current content;
+   - ordinary Rewrite hold remains deliberately fail-open on loss/failure.
+
+   Evidence: src/inspection.cpp:539-562, :610-625; src/webhook.cpp:145-152;
+   Smithproxy src/proxy/mitmproxy.cpp:1450; docs/H2_TRANSLATE_LIVE.md:153-173.
+   Required correction: describe first activation separately from active mode;
+   do not promise universal reset or universal fail-open.
+
+4. Missing rewrite metadata is legacy permission, not explicit denial.
+
+   src/inspection_worker.py:161 gates only an explicit JSON false. Length-
+   changing output is accepted when rewrite is absent. src/inspection.cpp:560
+   also uses control.value("rewrite", true) for Translate eligibility; version 1
+   and sequence 1 remain mandatory. This supports older strict-control peers
+   without setup reservation, whereas H2_TRANSLATE_LIVE.md:9-18 describes
+   rewrite=true plus setup as mandatory without naming this compatibility path.
+
+   Worker reproduction with identical H1 input and `return api.bytes + b'x'`:
+     {version: 1, sequence: 1}                  -> ok=true
+     {version: 1, sequence: 1, rewrite: false}  -> CommitException
+
+   Existing tests/inspection_translate_live_test.cpp:51-52 deliberately sends
+   version/sequence/mode without rewrite and accepts Translate in that fixture.
+   This is not evidence that every old proxy build supports the whole contract.
+
+   Recommendation: keep ordinary legacy Rewrite compatibility if intended,
+   document absent/false/true distinctly, and explicitly choose whether legacy
+   strict-control Translate is supported or requires the new reservation.
+   No silent tightening was made during this audit.
+
+Reviewed contract / evidence map
+--------------------------------
+Setup and permission:
+  Connection.request_rewrite() is setup-only, idempotent and staged.
+  Worker rejects setup byte results. Failed setup does not publish permission.
+  New proxy gates before input analysis; same-size raw replacement is an
+  intentional exception and does not allocate an output context.
+  tests/inspection_setup_test.py; proxy need_more_integration setup scenarios.
+
+Easy versus Expert:
+  Easy is the commit default; Expert is per call and does not survive hold.
+  Expert relaxes specified semantic guards, not quotas, physical framing or
+  Translate invariants. Supported Content-Digest and Content-Length repairs
+  remain enabled. Raw script output is not a typed semantic safety boundary.
+  tests/inspection_safety_test.py (separate Easy/Expert CTest registrations).
+
+Commit atomicity:
+  Snapshot and message assembly return private results; publication requires
+  returning the result from the script. Failed commits can be corrected/retried.
+  Translate stages encoder/settings/checkpoints and publishes only after checks.
+  This is not rollback of storage writes or earlier successful script states
+  across a chain; README.md:90-96 explicitly excludes those transactions.
+  tests/inspection_api_test.py::test_failure_retry_and_injection;
+  tests/inspection_h2_test.py::test_interleaved_streams_and_atomic_retry;
+  tests/inspection_translate_worker_test.py::test_failed_assembly_retry_keeps_output_table_atomic.
+
+Hold and lifecycle:
+  Last enabled live flow deployment only; direction-specific backend checkpoints.
+  Empty emitted prefix -> need-more; nonempty prefix -> replace. Worker restart
+  is not backend restart. Stop/expiry/redeploy can discard ordinary held data.
+  A resumed callback must return an explicit result. Ordinary hold failure and
+  ordering protection remain acknowledged limitations, not newly discovered bugs.
+  src/inspection_hold.py:320; src/inspection.cpp:306-328, :394-450;
+  tests/inspection_hold_test.py; tests/inspection_hold_live_test.cpp.
+
+Translate:
+  First content callback, sole enabled flow deployment, explicit returned result
+  for every callback. Active pin bypasses ordinary scope/filter selection, not
+  the script. Input/output HPACK states and both directions remain distinct.
+  Header translation and same-length DATA are supported; arbitrary length-
+  changing DATA and general flow-control translation are not implemented.
+  tests/inspection_translate_worker_test.py; tests/inspection_translate_live_test.cpp;
+  tests/translate_e2e.py; docs/H2_TRANSLATE_LIVE.md.
+
+Verification during this audit
+------------------------------
+PASS: 7/7 focused CTest suites, 12.69 seconds:
+  inspection_setup_tests, inspection_cookbook_tests, inspection_api_tests,
+  inspection_safety_easy_tests, inspection_safety_expert_tests,
+  inspection_hold_tests, inspection_translate_worker_tests.
+The two README failures above are intentional reproductions of documentation
+defects, not unexpected failures of the registered regression suites.
+Earlier full gate: 43/43 P3 sections, 43/43 native suites, 41/41 Spider suites
+and 94 setup scenarios; see Smithproxy tests/docs/fc-api-full-p3-20261026.txt.
+
+Merge decision
+--------------
+The maintainer explicitly accepted the intermittent approximately 16 px toolbar
+shift as a non-blocking UX issue. Its cause remains unconfirmed; keep the exact
+geometry assertions and diagnostic evidence. This is risk acceptance, not a claim
+that the successful retries fixed the issue.
+
+A fresh upstream fetch before the approved merge found no new main/master commits
+outside fc-api in either repository. Proceed with English follow-up commits and
+the main/master merges. Deferred Rewrite hold failure protection remains visibly
+documented; it was not implemented here.
