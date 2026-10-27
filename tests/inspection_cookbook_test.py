@@ -13,7 +13,7 @@ from worker_bootstrap import packed
 from inspection_h2_test import frame, literal, unpack, Oracle
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SOURCES = ('inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_translate.py',
+SOURCES = ('inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_chunked.py', 'inspection_translate.py',
            'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py')
 WORKER = '\n'.join((ROOT / 'src' / name).read_text() for name in SOURCES)
 
@@ -31,11 +31,22 @@ def fixture(name):
     elif name == 'opaque':
         data = b'\x01\x02custom'
     else:
-        body = gzip.compress(b'abc', mtime=0) if name == 'gzip' else b'abc'
+        import zlib
+        body = b'abc'
+        if name == 'gzip':
+            body = gzip.compress(body, mtime=0)
+        elif name == 'deflate':
+            body = zlib.compress(body)
         head = b'POST / HTTP/1.1\r\nHost: lab.test\r\nX-Old: yes\r\n'
         if name == 'gzip':
             head += b'Content-Encoding: gzip\r\n'
-        head += b'Content-Length: ' + str(len(body)).encode() + b'\r\n\r\n'
+        if name == 'deflate':
+            head += b'Content-Encoding: deflate\r\n'
+        if name == 'h1-chunked':
+            head += b'Transfer-Encoding: chunked\r\n\r\n'
+            body = b'3\r\nabc\r\n0\r\n\r\n'
+        else:
+            head += b'Content-Length: ' + str(len(body)).encode() + b'\r\n\r\n'
         start_end = head.index(b'\r\n') + 2
         annotations = [[0, start_end, 'http1.start_line'], [start_end, len(head), 'http1.headers']]
         data = head + (body[:1] if name == 'h1-partial' else body)
@@ -150,6 +161,9 @@ class CookbookTests(unittest.TestCase):
             with self.subTest(example=name):
                 event = fixture(kind)
                 options = {}
+                if expected == 'translate':
+                    options = {'translate_allowed': True, 'hold_allowed': True, 'instance': {'mode': 'flow'}}
+                    event['details']['info']['webhook_control'] = {'content-reverse': True}
                 if expected == 'hold-resume':
                     options = {'hold_allowed': True, 'instance': {'mode': 'flow'}}
                 result = run(script, event, **options)
@@ -192,6 +206,15 @@ class CookbookTests(unittest.TestCase):
                 elif name == 'h1-body':
                     self.assertTrue(wire.endswith(b'{"lab":true}'))
                     self.assertIn(b'Content-Length: 12\r\n', wire)
+                elif name in ('body-gzip', 'body-deflate'):
+                    import zlib
+                    encoded = wire.split(b'\r\n\r\n', 1)[1]
+                    plain = gzip.decompress(encoded) if name == 'body-gzip' else zlib.decompress(encoded)
+                    self.assertEqual(plain, b'abc-checked')
+                    self.assertIn(f'Content-Length: {len(encoded)}\r\n'.encode(), wire)
+                elif name in ('h1-chunked-body', 'h1-chunked-chunk'):
+                    self.assertNotIn(b'Content-Length:', wire)
+                    self.assertTrue(wire.endswith(b'7\r\nchanged\r\n0\r\n\r\n'))
                 elif name == 'h1-hold':
                     self.assertTrue(wire.endswith(b'abc-checked'))
                     self.assertIn(b'Content-Length: 11\r\n', wire)
@@ -201,6 +224,15 @@ class CookbookTests(unittest.TestCase):
                     frames = unpack(wire)
                     self.assertIn((b'content-length', b'20000'), Oracle().decode(frames[0][3]))
                     self.assertEqual(b''.join(f[3] for f in frames if f[0] == 0), b'A' * 20000)
+                elif name == 'h2-streaming':
+                    frames = unpack(wire)
+                    self.assertIn((b'content-length', b'3'), Oracle().decode(frames[0][3]))
+                    self.assertEqual(b''.join(f[3] for f in frames if f[0] == 0), b'Abc')
+                    self.assertFalse(result.get('hold_credit_reservation'))
+                elif name == 'h2-logical-body':
+                    frames = unpack(wire)
+                    self.assertIn((b'content-length', b'7'), Oracle().decode(frames[0][3]))
+                    self.assertEqual(b''.join(f[3] for f in frames if f[0] == 0), b'changed')
                 elif name == 'h2-construct':
                     frames = unpack(wire)
                     self.assertEqual(Oracle().decode(frames[0][3]), [

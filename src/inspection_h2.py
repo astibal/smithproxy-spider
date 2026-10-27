@@ -13,9 +13,11 @@ class PartType:
         Part = 'http1'
         Header = 'http1.header'
         Body = 'http1.body'
+        Chunk = 'http1.chunk'
 
     class Http2:
         Part = 'http2'
+        Body = 'http2.body'
         Header = 'http2.header'
         Data = 'http2.data'
         Frame = 'http2.frame'
@@ -248,7 +250,11 @@ class RewritePart:
     max_frame_size: int = documented('Output splitting limit, default 16384. Caller may set a known peer limit up to 16777215.', 'part.max_frame_size = 16384', access='mutable rewrite draft',
         easy='Commit accepts 16384..16777215 and rejects oversized control/unknown frames.',
         expert='Commit accepts 1..16777215 for fragmentation and permits control/unknown frames above this limit. Positive frame capacity, wire representation and output quota remain mandatory.')
-    http1: Http1Draft | None = documented('H1 header draft for an annotated Content-Length message; None on other parts. Edit the body through its Body part.', 'for part in api.message.parts:\n    if part.http1 is not None:\n        part.http1.set_header("X-Test", "held")', access='mutable rewrite draft')
+    http1: Http1Draft | None = documented('H1 header draft for an annotated Content-Length or chunked message; None on other parts. Edit the body through its Body part.', 'for part in api.message.parts:\n    if part.http1 is not None:\n        part.http1.set_header("X-Test", "held")', access='mutable rewrite draft')
+    chunks: tuple[RewritePart, ...] = documented('Physical data-chunk views owned by a chunked H1 Body; empty on other parts. Edit chunk bytes or the whole Body, never both. Do not emit these views separately or reorder them.',
+        'for chunk in part.chunks:\n    api.print(chunk.get_bytes().hex())', access='read-only tuple of editable views',
+        easy='Rebuild changed chunk sizes. Body edits with trailers are rejected until trailer dependencies can be repaired.',
+        expert='Rebuild changed chunk sizes and preserve trailers unchanged; their meaning is the caller responsibility. Framing, completeness and quotas remain enforced.')
 
     def __init__(self, wire=b'', frame_type=None, flags=0, stream_id=1, data=b'', complete=True):
         self.type = (PartType.Opaque if frame_type is None else PartType.Http2.Header
@@ -257,6 +263,7 @@ class RewritePart:
         self.complete, self.content = complete, PartContent(None)
         self.headers, self.max_frame_size = None, 16384
         self.http1 = None
+        self.chunks = ()
         self._wire, self._data = wire, data
         self._pending, self._prefix, self._padding = None, b'', b''
         self._initial = (frame_type, flags, stream_id)
@@ -266,7 +273,7 @@ class RewritePart:
     def is_a(self, kind):
         return self.type == kind or self.type.startswith(kind + '.')
 
-    @api_method('', 'bytes', 'Materialize representation: unpadded DATA, HPACK block, raw control-frame payload, or Opaque bytes. No gzip inflation.',
+    @api_method('', 'bytes', 'Materialize representation: unpadded DATA, HPACK block, raw control-frame payload, or Opaque bytes. H1 Body lazily decodes a complete gzip/zlib-deflate content; physical chunks and DATA remain encoded. Decoded limit is 1 MiB.',
                 'api.print(part.get_bytes()[:32].hex())', availability='All rewrite parts.', access='read-only')
     def get_bytes(self):
         if self._pending is not None:
@@ -278,7 +285,7 @@ class RewritePart:
             self._data = self._data.tobytes()
         return self._data
 
-    @api_method('value: bytes', 'None', 'Replace the representation, not the nine-byte frame header. Rewrite supports unknown frame types; translate permits same-length DATA edits while preserving stream ID, flags and padding.',
+    @api_method('value: bytes', 'None', 'Replace the representation, not the nine-byte frame header. H1 Body accepts plaintext and encodes gzip/deflate during commit; its physical chunks remain encoded. Translate permits DATA resizing with negotiated content-reverse support; frame identity remains fixed and padding can be removed during reframing.',
                 'part.set_bytes(b"changed")', availability='Complete parts only for a changed commit.', access='mutable rewrite draft')
     def set_bytes(self, value):
         self._pending = _h2_bytes(value)
@@ -457,9 +464,12 @@ def _h2_content_groups(parts):
     active, groups = {}, []
     for part in parts:
         if not part.type.startswith('http1.'):
-            part.content = PartContent(None)
+            part.content = PartContent(True if part.complete and getattr(part, '_translate_cancelled', False) else None)
 
     for part in parts:
+        if getattr(part, '_translate_cancelled', False):
+            active.pop(part.stream_id, None)
+            continue
         # Unknown bytes may hide a boundary or data. Never claim completeness
         # through a gap we cannot interpret. RST_STREAM is not END_STREAM.
         if part.frame_type is None:
@@ -467,8 +477,15 @@ def _h2_content_groups(parts):
         elif part.frame_type == 3:
             active.pop(part.stream_id, None)
 
-        if part.frame_type == 1 and part.headers is not None:
-            if any(e.name in (b':method', b':status') for e in part.headers.entries):
+        if part.frame_type == 1:
+            if part.headers is None:
+                # END_STREAM on HEADERS does not complete content until the
+                # entire header block (including CONTINUATION) is available.
+                if part.stream_id in active and not part.complete:
+                    active[part.stream_id].append(part)
+                else:
+                    active.pop(part.stream_id, None)
+            elif any(e.name in (b':method', b':status') for e in part.headers.entries):
                 active[part.stream_id] = [part]
                 groups.append(active[part.stream_id])
             elif part.stream_id in active:
@@ -484,6 +501,108 @@ def _h2_content_groups(parts):
         for part in group:
             part.content = PartContent(False)
     return groups
+
+
+@dataclass(init=False)
+class H2Body:
+    """Logical view, not an additional wire part. DATA retain their physical order."""
+    type: str = documented('Always PartType.Http2.Body.', 'api.print(body.type)')
+    stream_id: int = documented('Stream owning these DATA parts.', 'api.print(body.stream_id)')
+    complete: bool = documented('Whole content is known only after complete END_STREAM DATA or trailers; unknown after gaps/reset.', 'api.print(body.complete)')
+    content: PartContent = documented('Whole-content completeness; unlike a DATA part, Body itself spans the whole content.', 'api.print(body.content.complete)')
+    chunks: tuple[RewritePart, ...] = documented('Existing DATA parts, including incomplete frames. Read or edit these instead of replacing the whole body; do not emit them again.', 'for chunk in body.chunks:\n    api.print(chunk.complete)', access='tuple of mutable drafts')
+
+    def __init__(self, group):
+        self._head = group[0]
+        self.type = PartType.Http2.Body
+        self.stream_id = group[0].stream_id
+        self.content = group[0].content
+        self.complete = self.content.complete is True
+        self.chunks = tuple(part for part in group if part.frame_type == 0)
+
+    @api_method('', 'bytes', 'Concatenate unpadded DATA and lazily decode complete gzip/zlib-deflate content. Cache successful reads without dirtying wire bytes. Incomplete frames/content, corrupt coding, stacked codings and decoded content above 1 MiB raise CommitException. Physical DATA remain encoded.',
+                'api.print(body.get_bytes().hex())', access='read-only')
+    def get_bytes(self):
+        if any(not part.complete for part in self.chunks):
+            raise CommitException('Incomplete DATA frame: hold and await its remaining bytes')
+
+        if hasattr(self._head, '_body_plain'):
+            return self._head._body_plain
+
+        wire = b''.join(part.get_bytes() for part in self.chunks)
+        return _decode_body(self._head, wire, self._encoding(), self.complete)
+
+    def _encoding(self):
+        return _body_encoding([
+            field.value.decode('ascii', errors='replace')
+            for field in self._head.headers.entries
+            if field.name == b'content-encoding' and isinstance(field.value, bytes)
+        ])
+
+    @api_method('value: bytes', 'None', 'Replace complete logical content. Compressed content is encoded only during commit/translate. Keep original DATA capacities except the last DATA, which receives the remainder. Keep padding, flags and interleaved frame order; no new stream or implicit flow-control translation.',
+                'body.set_bytes(body.get_bytes())', access='mutable draft',
+                easy='Require complete content and no prior DATA edits; final assembly repairs known retained Content-Length. Translate resizing requires negotiated content-reverse support.',
+                expert='Same view guards. Rewrite may resize DATA; connection-wide correctness remains the caller responsibility. Translate does not allow resizing.')
+    def set_bytes(self, value):
+        value = _h2_bytes(value)
+
+        if not self.complete or any(not part.complete for part in self.chunks):
+            raise CommitException('Incomplete H2 body: hold from its header and await END_STREAM')
+
+        if any(part._pending is not None for part in self.chunks):
+            raise CommitException('Cannot combine whole-body replacement with existing DATA edits')
+
+        if not self.chunks:
+            if value:
+                raise CommitException('Body has no DATA slots; construct explicit frames to add content')
+            return
+
+        encoding = self._encoding()
+        if encoding and encoding != 'identity':
+            # Store logical bytes on the held header, not on this ephemeral view.
+            # Compression is deferred to assembly; the checkpoint remains data-only.
+            self._head._body_plain = value
+            self._head._body_encoding = encoding
+            return
+
+        # Prepare all slices before touching the drafts. Empty DATA stay in place
+        # so END_STREAM and trailer ordering cannot move to another stream.
+        replacements, offset = [], 0
+        for index, part in enumerate(self.chunks):
+            end = len(value) if index == len(self.chunks) - 1 else min(len(value), offset + len(part._data))
+            replacements.append(value[offset:end])
+            offset = end
+
+        for part, data in zip(self.chunks, replacements):
+            part.set_bytes(data)
+
+
+def _encoded_h2_bodies(parts):
+    """Private DATA copies: failed commits leave physical drafts untouched."""
+    import copy
+    overrides = {}
+    for group in _h2_content_groups(parts):
+        body = H2Body(group)
+        head = group[0]
+        if not hasattr(head, '_body_plain'):
+            continue
+
+        if body._encoding() != head._body_encoding:
+            raise CommitException('Content-Encoding changed after logical body replacement')
+        if any(part._pending is not None for part in body.chunks):
+            raise CommitException('Cannot combine compressed Body replacement with DATA edits')
+
+        wire = b''.join(bytes(part._data) for part in body.chunks)
+        encoded = _encode_body(head, wire, head._body_plain, head._body_encoding, body.complete)
+        offset = 0
+        for index, part in enumerate(body.chunks):
+            end = len(encoded) if index == len(body.chunks) - 1 else min(len(encoded), offset + len(part._data))
+            draft = copy.copy(part)
+            draft.set_bytes(encoded[offset:end])
+            overrides[id(part)] = draft
+            offset = end
+
+    return overrides
 
 
 def _h2_length_overrides(message):
@@ -531,6 +650,16 @@ def commit_rewrite_message(message, update_content_length=True, *, safety=Safety
         raise CommitException('Expected RewritePart in message.parts')
     if len({id(p) for p in message.parts}) != len(message.parts):
         raise CommitException('A part cannot be emitted twice; construct an explicit copy')
+
+    if any(p.type == PartType.Http1.Chunk for p in message.parts):
+        raise CommitException('Chunk views belong to their Body; do not append them to message.parts')
+
+    encoded = _encoded_h2_bodies(message.parts)
+    if encoded:
+        draft = object.__new__(Message)
+        object.__setattr__(draft, 'parts', [encoded.get(id(p), p) for p in message.parts])
+        object.__setattr__(draft, '_body_sizes', message._body_sizes)
+        message = draft
 
     overrides = _h2_length_overrides(message) if update_content_length else {}
     output = bytearray()

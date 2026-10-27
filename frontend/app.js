@@ -84,6 +84,9 @@ if (localStorage.getItem('spider-session-layout') !== 'natural-order-v1') {
   }));
 }
 let trafficRules = [];
+let trafficRulesWriteQueue = Promise.resolve();
+let trafficRulesWritesPending = 0;
+let trafficRulesWriteSerial = 0;
 try {
   const savedRules = JSON.parse(localStorage.getItem('spider-traffic-rules') || '[]');
   if (Array.isArray(savedRules)) trafficRules = savedRules.map(rule => ({
@@ -414,9 +417,33 @@ function expandedTrafficRules() {
 function syncTrafficRules() {
   localStorage.setItem('spider-traffic-rules', JSON.stringify(trafficRules));
   localStorage.setItem('spider-bypass-all', String(bypassAll));
-  socketSend({type: 'traffic-rules', bypass_all: bypassAll, rules: expandedTrafficRules()});
+  const serial = ++trafficRulesWriteSerial;
+  const request = {bypass_all: bypassAll, rules: expandedTrafficRules()};
+  let failed = false;
+  ++trafficRulesWritesPending;
+  trafficRulesWriteQueue = trafficRulesWriteQueue.catch(() => {}).then(async () => {
+    const response = await inspectionRequest('/rules', request);
+    if (response.errors?.length) throw new Error(JSON.stringify(response.errors));
+    if (serial === trafficRulesWriteSerial) {
+      trafficRules = restoreTrafficRules(response.rules || []);
+      bypassAll = Boolean(response.bypass_all);
+      localStorage.setItem('spider-traffic-rules', JSON.stringify(trafficRules));
+      localStorage.setItem('spider-bypass-all', String(bypassAll));
+      renderTrafficRules();
+      renderEndpointBuilder();
+    }
+  }).catch(error => {
+    if (serial === trafficRulesWriteSerial) {
+      failed = true;
+      addActivity('system', 'RULE UPDATE FAILED', 'Traffic rules were not saved', error.message, 'error');
+    }
+  }).finally(() => {
+    --trafficRulesWritesPending;
+    if (failed && trafficRulesWritesPending === 0) refreshBackendInspection();
+  });
   renderTrafficRules();
   renderEndpointBuilder();
+  return trafficRulesWriteQueue;
 }
 
 function renderTrafficRules() {
@@ -734,7 +761,7 @@ function trafficRuleFor(address) {
 function restoreTrafficRules(rules) {
   const normalized = rules.map(rule => ({
     ...rule, kind: rule.kind || 'address', value: rule.value || rule.address,
-  }));
+  })).filter(rule => typeof rule.value === 'string' && rule.value);
   // The backend stores expanded IP rules; recover their GUI aggregate identity
   // only when every child agrees. Never resurrect a locally saved stale mode.
   for (const aggregate of endpointAggregates) {
@@ -745,7 +772,23 @@ function restoreTrafficRules(rules) {
     normalized.push({...aggregate, mode: children[0].mode,
       matches: children.reduce((sum, rule) => sum + (rule.matches || 0), 0)});
   }
-  return normalized;
+  const restored = [];
+  const identities = new Map();
+  for (const rule of normalized) {
+    const behavior = rule.mode === 'collect' ? 'collect' : 'traffic';
+    const identity = `${behavior}:${rule.kind}:${rule.value}`;
+    const existing = identities.get(identity);
+    if (existing) {
+      existing.matches = Number(existing.matches || 0) + Number(rule.matches || 0);
+      continue;
+    }
+    const canonical = {...rule};
+    if (rule.kind === 'address') canonical.id = rule.mode === 'collect'
+      ? `collect:address:${rule.value}` : `address:${rule.value}`;
+    identities.set(identity, canonical);
+    restored.push(canonical);
+  }
+  return restored;
 }
 
 function collectionBadge(button, target) {
@@ -776,8 +819,11 @@ function compareEndpoints(a, b) {
 function classifyEndpoint(target, mode) {
   if (!target) return;
   const id = target.id || `address:${target.value}`;
-  const previous = trafficRules.find(rule => rule.id === id);
-  trafficRules = trafficRules.filter(rule => rule.id !== id);
+  const sameTarget = rule => rule.mode !== 'collect' &&
+    ((rule.kind || 'address') === (target.kind || 'address')) &&
+    (rule.value || rule.address) === target.value;
+  const previous = trafficRules.find(sameTarget);
+  trafficRules = trafficRules.filter(rule => !sameTarget(rule));
   if (mode !== 'clear') {
     const rule = {id, kind: target.kind || 'address', value: target.value, mode, matches: 0};
     trafficRules.push(rule);
@@ -4324,9 +4370,11 @@ async function refreshBackendInspection() {
   inspectionPollInFlight = true;
   try {
     const state = await inspectionRequest();
-    if (state.traffic_rules) {
+    if (state.traffic_rules && trafficRulesWritesPending === 0) {
       trafficRules = restoreTrafficRules(state.traffic_rules.rules);
       bypassAll = state.traffic_rules.bypass_all;
+      localStorage.setItem('spider-traffic-rules', JSON.stringify(trafficRules));
+      localStorage.setItem('spider-bypass-all', String(bypassAll));
     }
     window.dispatchEvent(new CustomEvent('inspection-state', {detail: state}));
     inspectionRuns.completed = state.runs;
@@ -4631,14 +4679,21 @@ function connectEventSocket() {
     }
     if (data.type === 'subscribed') revision = Math.max(revision, Number(data.revision) || 0);
     if (data.type === 'traffic-rules-status') {
-      const counts = new Map();
-      for (const item of data.rules || []) {
-        const parent = String(item.id || '').split('@')[0];
-        counts.set(parent, (counts.get(parent) || 0) + (Number(item.matches) || 0));
+      if (trafficRulesWritesPending === 0) {
+        trafficRules = restoreTrafficRules(data.rules || []);
+        bypassAll = Boolean(data.bypass_all);
+        localStorage.setItem('spider-traffic-rules', JSON.stringify(trafficRules));
+        localStorage.setItem('spider-bypass-all', String(bypassAll));
+      } else {
+        const counts = new Map();
+        for (const item of data.rules || []) {
+          const parent = String(item.id || '').split('@')[0];
+          counts.set(parent, (counts.get(parent) || 0) + (Number(item.matches) || 0));
+        }
+        for (const rule of trafficRules) rule.matches = counts.get(rule.id) || 0;
       }
-      for (const rule of trafficRules) rule.matches = counts.get(rule.id) || 0;
-      bypassAll = Boolean(data.bypass_all);
       renderTrafficRules();
+      renderEndpointBuilder();
     }
     if (data.type === 'gap') {
       ++frontendDiagnostics.wsGaps;

@@ -153,8 +153,10 @@ whole dictionary unchanged (no partial repair). A complete no-op preserves
 original bytes; unchanged digests are not verified. Reading a snapshot is not an
 integrity check. Removing Content-Digest explicitly removes that integrity claim.
 
-Repr-Digest, ETag, signatures, Content-Range, chunked/trailers and compression are
-outside this step. Easy still rejects body edits with such unresolved dependencies.
+Repr-Digest, ETag, signatures and Content-Range remain unresolved dependencies;
+Easy rejects affected edits. Snapshot compression is outside this step. Parts
+can repair Content-Digest over their managed encoded content (see section 22).
+Digest trailers are not repaired.
 A digest header cannot be sent before the digest is calculated: for incomplete
 Parts, hold the entire H1 message from its Header part until the body is complete.
 Recalculation does not mutate the draft, and failed commit publishes nothing.
@@ -475,9 +477,189 @@ draft.http1.body = b"A" * (1024 * 1024)
 return draft.commit()
 ```
 
+## 20. Chunked H1: one body, two views
+
+An annotated complete HTTP/1.1 head with `Transfer-Encoding: chunked` produces
+Header and Body parts. The Body owns its physical `chunks`; they are nested
+views, not additional top-level parts to emit. `get_bytes()` returns dechunked
+content (completed chunks only while input is incomplete). `content.complete`
+becomes true only after the zero chunk and the final trailer-section CRLF.
+
+Replace the whole logical body; commit rebuilds chunk sizes and does not emit
+Content-Length. This works in Easy and Expert, including empty replacements.
+
+<!-- example: h1-chunked-body fixture=h1-chunked expect=replace -->
+```python
+for part in api.message.parts:
+    if part.type == PartType.Http1.Body:
+        part.set_bytes(b"changed")
+return api.message.commit()
+```
+
+Alternatively, edit a physical chunk. An empty replacement removes that data
+chunk, not the final sentinel. Untouched chunks retain exact original bytes,
+including extensions. Changed chunks lose their extensions, which might depend
+on the old data. Whole-body replacement emits one data chunk and preserves the
+original terminal chunk and trailers. No-op preserves the entire wire message.
+
+<!-- example: h1-chunked-chunk fixture=h1-chunked expect=replace -->
+```python
+for part in api.message.parts:
+    if part.chunks:
+        part.chunks[0].set_bytes(b"changed")
+return api.message.commit()
+```
+
+Do not combine body replacement with edits to its chunk views in one transaction:
+
+<!-- example: h1-chunked-conflict fixture=h1-chunked expect=CommitException -->
+```python
+body = api.message.parts[1]
+body.chunks[0].set_bytes(b"chunk edit")
+body.set_bytes(b"whole body edit")
+return api.message.commit()
+```
+
+Hold from the Header until `body.content.complete`, exactly as in the H1 hold
+example. Chunk size lines, data, CRLF and trailers can span callbacks. The initial
+HTTP head still needs complete supplied annotations. Content coding is handled
+by the lazy Body layer described in section 22, above chunk framing.
+
+Easy rejects body changes when trailers exist: their integrity dependencies are
+not repaired yet. Expert preserves trailers unchanged and leaves their meaning
+to the caller. Both modes require complete, unambiguous chunk framing, reject
+Content-Length alongside chunked encoding and conflicting body/chunk edits, and
+enforce the 1 MiB wire limit, hold budget and 8192-data-chunk limit. Chunk tuple
+removal/reordering and Trailer-declaration edits are not supported in this phase.
+Snapshots remain Content-Length-only; use Parts for chunked content.
+
+## 21. H2 body views over interleaved DATA
+
+`message.parts` remains the physical sequence. `message.bodies()` returns H1
+Body parts and logical H2 Body views in header order. H2 views reference the
+existing DATA parts through `body.chunks`; they are not additional wire parts.
+Do not append a Body view to `message.parts`. Reacquire views after changing
+the parts list or frame flags; views describe the grouping at acquisition time.
+
+A complete DATA frame has `part.complete == True` even when the body continues.
+A logical Body is complete only after a complete END_STREAM DATA frame or
+trailing HEADERS block. An opaque gap or reset prevents proof of completeness.
+The initial request/response HEADERS must be available and understood; a bare
+DATA tail does not establish a whole-body boundary. Hold from the initial header
+to retain that context across callbacks. See section 22 for lazy content coding.
+
+<!-- example: h2-logical-body fixture=h2 expect=replace -->
+```python
+for body in api.message.bodies():
+    if body.type == PartType.Http2.Body and body.complete:
+        body.set_bytes(b"changed")
+return api.message.commit()
+```
+
+This scatters replacement bytes through the original DATA slots, retaining each
+original capacity except the last slot, which receives the remainder. Empty
+slots remain valid empty DATA frames. Padding, END_STREAM and interleaved streams
+stay in place. Commit splits oversized DATA and repairs known Content-Length.
+`set_bytes()` rejects existing DATA edits; subsequent explicit DATA edits operate
+on the prepared draft. A body with no DATA slots accepts only an empty replacement.
+
+Easy and Expert both require complete content for this helper. Rewrite can
+resize it; Translate supports bounded resizing with negotiated content-reverse
+and retained Content-Length headers. See [flow control](H2_TRANSLATE_FLOW_CONTROL.md).
+The helper does not repair H2 content digests/trailers. Those remain the script's
+responsibility. An incomplete physical DATA frame is visible in `body.chunks`,
+but `body.get_bytes()` rejects it because padding cannot yet be safely stripped.
+
+## 22. Lazy gzip and deflate Body content
+
+H1 Content-Length, H1 chunked and H2 Body views decode `Content-Encoding: gzip`
+or `deflate` only when `get_bytes()` is requested. Deflate means the zlib-wrapped
+format, not guessed raw DEFLATE. `body.chunks` remain physical, encoded views;
+one compressor can span many chunks or DATA frames.
+
+Reading caches plaintext but never marks the body dirty. A no-op commit does
+not decode at all and preserves original wire bytes, even for an unsupported
+or corrupt coding. Setting the same decoded bytes preserves the original gzip
+header, timestamp, compressed bytes and framing. Cache data is omitted from hold
+checkpoints; logical edits are retained.
+
+<!-- example: body-gzip fixture=gzip expect=replace -->
+```python
+body = api.message.bodies()[0]
+body.set_bytes(body.get_bytes() + b"-checked")
+return api.message.commit()
+```
+
+Exactly the same code works for zlib-wrapped deflate:
+
+<!-- example: body-deflate fixture=deflate expect=replace -->
+```python
+body = api.message.bodies()[0]
+body.set_bytes(body.get_bytes() + b"-checked")
+return api.message.commit()
+```
+
+`set_bytes()` stages plaintext. Commit encodes changed content first, then repairs
+Content-Length/chunk lengths/DATA framing. H2 uses private DATA copies, so failed
+assembly or Translate does not overwrite physical drafts. H1 Parts repair supported
+Content-Digest over the encoded message content, not the plaintext or chunk syntax
+([RFC 9530, section 2](https://www.rfc-editor.org/rfc/rfc9530.html#section-2)).
+H2 digest/trailer repair is still outside this helper's contract.
+
+Easy and Expert both enforce complete compressed content, a 1 MiB decoded/plaintext
+limit, the existing wire/checkpoint budgets, valid coding and unchanged Content-Encoding
+for a staged logical rewrite. Unsupported coding stacks, raw deflate, multiple gzip
+members, trailing junk, truncated streams and checksum errors raise CommitException
+on logical access or changed commit. No read verifies Content-Digest automatically.
+H1 Easy retains its signature/range/integrity guards and trailer restrictions;
+Expert preserves unsupported metadata at the script's responsibility.
+
+Translate with negotiated content-reverse supports bounded encoded DATA resizing;
+legacy peers still require the original encoded lengths. Hold incomplete content
+from its initial Header before reading or replacing compressed Body content.
+Bodies larger than the sender window additionally require explicit
+`api.connection.http2.reserve_body(header, max_bytes)`; the limit counts encoded
+input including padding. See [bounded hold credit](H2_TRANSLATE_HOLD_CREDIT_DESIGN.md)
+for the complete deployment pattern and admission/failure limits. Snapshot APIs
+remain wire-level drafts; automatic coding belongs to Parts/Body only.
+
+## Incremental H2 DATA beyond the whole-body limit
+
+The 256 KiB reservation limit applies to collecting whole encoded bodies, not
+to the lifetime size of a streamed message. For a transformation that is local
+to each DATA payload, process complete frames and hold only incomplete frames:
+
+<!-- example: h2-streaming fixture=h2 expect=translate -->
+```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+
+for part in api.message.parts:
+    if not part.complete:
+        api.message.parts.hold_from(part)
+        break
+    if part.type == PartType.Http2.Data:
+        part.set_bytes(part.get_bytes().replace(b'a', b'A'))
+return api.message.translate()
+```
+
+This example assumes an uncompressed body whose application format permits this
+byte substitution. DATA is encoded application content, not lazily decoded Body
+content. The same-length example preserves Content-Length; resizing a stream is
+also supported when no Content-Length has already been emitted. Digests and
+signatures still need an application-specific policy. A pattern spanning DATA
+boundaries requires explicit bounded carry state; JSON and gzip cannot be safely
+rewritten by treating each frame as an independent document.
+
+There is no automatic fallback from `reserve_body()` to this pattern. The script
+chooses incremental processing before releasing headers. Regression tests stream
+2 MiB input to 4 MiB output in both directions through independent hyper-h2 peers,
+checking that no body reservation or whole-body hold is created.
+
 ## Other important boundaries
 
-- H1 Parts do not yet parse chunked/compressed/pipelined messages. Without suitable
+- H1 Parts do not yet split pipelined messages into separate typed messages. Without suitable
   annotations, the result is Opaque, not automatically recognized HTTP.
 - An incomplete H2 frame can be preserved unchanged but not arbitrarily rewritten;
   rewrite hold currently needs the complete nine-byte frame header.

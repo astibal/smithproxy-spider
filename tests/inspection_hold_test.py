@@ -146,7 +146,7 @@ class HoldTests(unittest.TestCase):
 
     def test_return_contract_and_instancing_guards(self):
         source = '\n'.join((ROOT / 'src' / name).read_text() for name in (
-            'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_translate.py',
+            'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_chunked.py', 'inspection_translate.py',
             'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
         msg = Message(b'old', 3)
         held = checkpoint(msg)
@@ -172,7 +172,7 @@ class HoldTests(unittest.TestCase):
 
     def test_real_fresh_workers_need_more_then_replace(self):
         source = '\n'.join((ROOT / 'src' / name).read_text() for name in (
-            'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_translate.py',
+            'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_chunked.py', 'inspection_translate.py',
             'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
         script = ('for part in api.message.parts:\n'
             '    if part.type == PartType.Http1.Body:\n'

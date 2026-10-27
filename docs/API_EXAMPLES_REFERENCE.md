@@ -223,6 +223,24 @@ for part in api.message.parts:
 return api.message.commit()
 ```
 
+### Message.bodies
+
+Return H1 Body parts and logical H2 body views in header order. H2 views reference existing DATA parts; never append them to message.parts. Reacquire views after changing the parts list.
+
+Availability: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
+
+Access: views of mutable drafts; type/result: `tuple[RewritePart | H2Body, ...]`.
+
+Easy: H2 whole-body edits require complete known content and unedited DATA drafts. Commit repairs known Content-Length.
+
+Expert: The same view rules apply. Translate resizing requires negotiated content-reverse support and retained Content-Length headers, in both safety modes.
+
+```python
+for body in api.message.bodies():
+    if body.complete:
+        api.print(body.stream_id, len(body.get_bytes()))
+```
+
 ### Message.commit
 
 Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; update_content_length=False disables H2 repair only (H1 typed assembly always recalculates it). Incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.
@@ -233,7 +251,7 @@ Access: assemble private draft; type/result: `bytes | HeldCommit`.
 
 Easy: Default. Repair supported H1 Content-Digest (sha-256/sha-512 without parameters) and apply remaining H1 metadata guards and H2 frame-size guards. This is not full protocol validation.
 
-Expert: Allow H1 encoding/integrity/range/signature inconsistency and representable oversized H2 control frames. Supported unencoded H1 Content-Digest and Content-Length are still repaired; unsupported digests remain unchanged. Keep quotas, atomicity and unambiguous framing.
+Expert: Allow H1 integrity/range/signature inconsistency and representable oversized H2 control frames. Supported H1 Content-Digest and Content-Length are still repaired, including managed Body coding; unsupported digests remain unchanged. Keep coding guards, quotas, atomicity and unambiguous framing.
 
 ```python
 return api.message.commit()
@@ -241,15 +259,15 @@ return api.message.commit()
 
 ### Message.translate
 
-Explicitly translate every callback of a pinned H2 flow. Header edits and same-length DATA; requires a capable strict-control proxy and python-hpack. Hold incomplete Parts with parts.hold_from(part); only the emitted prefix advances HPACK state. No silent background runs.
+Explicitly translate every callback of a pinned H2 flow. With content-reverse capability from activation, DATA resizing uses bounded directional queues and independent flow-control windows; legacy peers allow same-length DATA only. Hold incomplete Parts explicitly. No silent background runs.
 
 Availability: First observed content of a new flow, sole enabled deployment; every callback thereafter.
 
 Access: assemble translated output; type/result: `bytes | HeldCommit`.
 
-Easy: Require complete emitted frames, coherent HEADERS/PUSH_PROMISE HPACK state, unchanged header frame identity, explicit callbacks and same-length DATA. PUSH_PROMISE requires server direction and enabled push; full stream lifecycle validation is not provided.
+Easy: Require complete emitted frames, coherent HPACK state, unchanged frame identity and explicit callbacks. Resizing repairs retained Content-Length for complete content; already emitted lengths cannot be repaired. Pending output is limited to 384 KiB and 1024 live stream records per direction. Closed IDs use bounded compressed ranges. Full lifecycle and H2 digest repair are not provided.
 
-Expert: The same translate invariants apply. Expert does not disable strict control, HPACK synchronization or DATA flow-control restrictions; use rewrite for local state-breaking experiments.
+Expert: The same Translate invariants and quotas apply. Expert cannot bypass credit, retained Content-Length or capability requirements. RST_STREAM and GOAWAY cancel affected queued DATA while preserving encoded headers and HPACK ordering; use Rewrite for state-breaking experiments.
 
 ```python
 if api.instance.mode == "flow":
@@ -1309,7 +1327,7 @@ part.max_frame_size = 16384
 
 ### RewritePart.http1
 
-H1 header draft for an annotated Content-Length message; None on other parts. Edit the body through its Body part.
+H1 header draft for an annotated Content-Length or chunked message; None on other parts. Edit the body through its Body part.
 
 Availability: Always available for a content callback.
 
@@ -1323,6 +1341,23 @@ Expert: This member has the same behavior in both modes. It does not select or p
 for part in api.message.parts:
     if part.http1 is not None:
         part.http1.set_header("X-Test", "held")
+```
+
+### RewritePart.chunks
+
+Physical data-chunk views owned by a chunked H1 Body; empty on other parts. Edit chunk bytes or the whole Body, never both. Do not emit these views separately or reorder them.
+
+Availability: Always available for a content callback.
+
+Access: read-only tuple of editable views; type/result: `tuple[RewritePart, ...]`.
+
+Easy: Rebuild changed chunk sizes. Body edits with trailers are rejected until trailer dependencies can be repaired.
+
+Expert: Rebuild changed chunk sizes and preserve trailers unchanged; their meaning is the caller responsibility. Framing, completeness and quotas remain enforced.
+
+```python
+for chunk in part.chunks:
+    api.print(chunk.get_bytes().hex())
 ```
 
 ### RewritePart.is_a
@@ -1344,7 +1379,7 @@ if part.is_a(PartType.Http2.Part):
 
 ### RewritePart.get_bytes
 
-Materialize representation: unpadded DATA, HPACK block, raw control-frame payload, or Opaque bytes. No gzip inflation.
+Materialize representation: unpadded DATA, HPACK block, raw control-frame payload, or Opaque bytes. H1 Body lazily decodes a complete gzip/zlib-deflate content; physical chunks and DATA remain encoded. Decoded limit is 1 MiB.
 
 Availability: All rewrite parts.
 
@@ -1360,7 +1395,7 @@ api.print(part.get_bytes()[:32].hex())
 
 ### RewritePart.set_bytes
 
-Replace the representation, not the nine-byte frame header. Rewrite supports unknown frame types; translate permits same-length DATA edits while preserving stream ID, flags and padding.
+Replace the representation, not the nine-byte frame header. H1 Body accepts plaintext and encodes gzip/deflate during commit; its physical chunks remain encoded. Translate permits DATA resizing with negotiated content-reverse support; frame identity remains fixed and padding can be removed during reframing.
 
 Availability: Complete parts only for a changed commit.
 
@@ -1389,6 +1424,123 @@ Expert: Allow H1 semantic inconsistencies and oversized H2 control frames; permi
 ```python
 wire = part.commit()
 api.print(len(wire))
+```
+
+## H2Body
+
+Logical view, not an additional wire part. DATA retain their physical order.
+
+### H2Body.type
+
+Always PartType.Http2.Body.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `str`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.type)
+```
+
+### H2Body.stream_id
+
+Stream owning these DATA parts.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.stream_id)
+```
+
+### H2Body.complete
+
+Whole content is known only after complete END_STREAM DATA or trailers; unknown after gaps/reset.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `bool`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.complete)
+```
+
+### H2Body.content
+
+Whole-content completeness; unlike a DATA part, Body itself spans the whole content.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `PartContent`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.content.complete)
+```
+
+### H2Body.chunks
+
+Existing DATA parts, including incomplete frames. Read or edit these instead of replacing the whole body; do not emit them again.
+
+Availability: Always available for a content callback.
+
+Access: tuple of mutable drafts; type/result: `tuple[RewritePart, ...]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+for chunk in body.chunks:
+    api.print(chunk.complete)
+```
+
+### H2Body.get_bytes
+
+Concatenate unpadded DATA and lazily decode complete gzip/zlib-deflate content. Cache successful reads without dirtying wire bytes. Incomplete frames/content, corrupt coding, stacked codings and decoded content above 1 MiB raise CommitException. Physical DATA remain encoded.
+
+Availability: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
+
+Access: read-only; type/result: `bytes`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(body.get_bytes().hex())
+```
+
+### H2Body.set_bytes
+
+Replace complete logical content. Compressed content is encoded only during commit/translate. Keep original DATA capacities except the last DATA, which receives the remainder. Keep padding, flags and interleaved frame order; no new stream or implicit flow-control translation.
+
+Availability: Backend scripts, including Run on selected, use persistent storage. Standalone make_views examples use temporary memory.
+
+Access: mutable draft; type/result: `None`.
+
+Easy: Require complete content and no prior DATA edits; final assembly repairs known retained Content-Length. Translate resizing requires negotiated content-reverse support.
+
+Expert: Same view guards. Rewrite may resize DATA; connection-wide correctness remains the caller responsibility. Translate does not allow resizing.
+
+```python
+body.set_bytes(body.get_bytes())
 ```
 
 ## PartContent
@@ -1543,7 +1695,7 @@ Ordered mutable parts with an explicit suffix hold boundary.
 
 ### PartList.hold_from
 
-Hold this part and everything after it. Return message.commit() in rewrite or message.translate() in translate to publish the prefix and retain the suffix for the next callback.
+Hold this part and everything after it. Return message.commit() in rewrite or message.translate() in translate to publish the prefix and retain the suffix for the next callback. Translate processes RST_STREAM and GOAWAY even inside the suffix, discarding cancelled DATA while preserving HPACK history.
 
 Availability: Live flow deployment at the end of the enabled chain.
 
@@ -1626,6 +1778,28 @@ return api.message.translate()
 ## ConnectionHttp2
 
 Persistent HTTP/2 policy, applied only by an explicitly returned translate result.
+
+### ConnectionHttp2.reserve_body
+
+Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available, including END_STREAM trailers. Limits count original encoded DATA including padding and are immutable: at most 32 reservations and 256 KiB combined per direction. Backend capacity is released after both directions settle their reserved bodies, input ownership and early credit.
+
+Availability: Live sole flow deployment with backend reservation support and content-reverse. RST_STREAM and GOAWAY bypass body hold during explicit Translate, dispose cancelled DATA and preserve source HPACK history. Exhausted capacity still tears down strict translation.
+
+Access: staged body reservation; type/result: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.connection.set_mode(Mode.Translate)
+for part in api.message.parts:
+    if part.type == PartType.Http2.Header and part.complete and part.content.complete is False:
+        api.message.parts.hold_from(part)
+        api.connection.http2.reserve_body(part, 128 * 1024)
+        break
+return api.message.translate()
+```
 
 ### ConnectionHttp2.enforce_header_table_limit
 

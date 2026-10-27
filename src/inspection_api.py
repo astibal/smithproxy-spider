@@ -176,11 +176,24 @@ class Message:
                  for group in _h2_content_groups(parts)}
         object.__setattr__(self, '_body_sizes', sizes)
 
+    @api_method('', 'tuple[RewritePart | H2Body, ...]',
+                'Return H1 Body parts and logical H2 body views in header order. H2 views reference existing DATA parts; never append them to message.parts. Reacquire views after changing the parts list.',
+                'for body in api.message.bodies():\n    if body.complete:\n        api.print(body.stream_id, len(body.get_bytes()))', access='views of mutable drafts',
+                easy='H2 whole-body edits require complete known content and unedited DATA drafts. Commit repairs known Content-Length.',
+                expert='The same view rules apply. Translate resizing requires negotiated content-reverse support and retained Content-Length headers, in both safety modes.')
+    def bodies(self):
+        groups = {id(group[0]): group for group in _h2_content_groups(self.parts)}
+        return tuple(
+            H2Body(groups[id(part)]) if id(part) in groups else part
+            for part in self.parts
+            if id(part) in groups or part.type == PartType.Http1.Body
+        )
+
     @api_method('update_content_length: bool = True, *, safety: str = Safety.Easy', 'bytes | HeldCommit',
                 'Assemble the emitted Parts atomically and checkpoint any held suffix. Recalculate known Content-Length; update_content_length=False disables H2 repair only (H1 typed assembly always recalculates it). Incomplete emitted content raises CommitException. Return the result to publish it. No future-message translation.',
                 'return api.message.commit()', access='assemble private draft',
                 easy='Default. Repair supported H1 Content-Digest (sha-256/sha-512 without parameters) and apply remaining H1 metadata guards and H2 frame-size guards. This is not full protocol validation.',
-                expert='Allow H1 encoding/integrity/range/signature inconsistency and representable oversized H2 control frames. Supported unencoded H1 Content-Digest and Content-Length are still repaired; unsupported digests remain unchanged. Keep quotas, atomicity and unambiguous framing.')
+                expert='Allow H1 integrity/range/signature inconsistency and representable oversized H2 control frames. Supported H1 Content-Digest and Content-Length are still repaired, including managed Body coding; unsupported digests remain unchanged. Keep coding guards, quotas, atomicity and unambiguous framing.')
     def commit(self, update_content_length=True, *, safety=Safety.Easy):
         try:
             _validate_safety(safety)
@@ -191,12 +204,12 @@ class Message:
             raise CommitException(str(error)) from error
 
     @api_method('*, safety: str = Safety.Easy', 'bytes | HeldCommit',
-                'Explicitly translate every callback of a pinned H2 flow. Header edits and same-length DATA; requires a capable strict-control proxy and python-hpack. Hold incomplete Parts with parts.hold_from(part); only the emitted prefix advances HPACK state. No silent background runs.',
+                'Explicitly translate every callback of a pinned H2 flow. With content-reverse capability from activation, DATA resizing uses bounded directional queues and independent flow-control windows; legacy peers allow same-length DATA only. Hold incomplete Parts explicitly. No silent background runs.',
                 'if api.instance.mode == "flow":\n    return api.message.translate()',
                 availability='First observed content of a new flow, sole enabled deployment; every callback thereafter.',
                 access='assemble translated output',
-                easy='Require complete emitted frames, coherent HEADERS/PUSH_PROMISE HPACK state, unchanged header frame identity, explicit callbacks and same-length DATA. PUSH_PROMISE requires server direction and enabled push; full stream lifecycle validation is not provided.',
-                expert='The same translate invariants apply. Expert does not disable strict control, HPACK synchronization or DATA flow-control restrictions; use rewrite for local state-breaking experiments.')
+                easy='Require complete emitted frames, coherent HPACK state, unchanged frame identity and explicit callbacks. Resizing repairs retained Content-Length for complete content; already emitted lengths cannot be repaired. Pending output is limited to 384 KiB and 1024 live stream records per direction. Closed IDs use bounded compressed ranges. Full lifecycle and H2 digest repair are not provided.',
+                expert='The same Translate invariants and quotas apply. Expert cannot bypass credit, retained Content-Length or capability requirements. RST_STREAM and GOAWAY cancel affected queued DATA while preserving encoded headers and HPACK ordering; use Rewrite for state-breaking experiments.')
     def translate(self, *, safety=Safety.Easy):
         _validate_safety(safety)
         transaction = getattr(self, '_translation', None)
@@ -426,7 +439,11 @@ class MessageSnapshot:
         if encodings != original_encodings:
             raise CommitException('Content-Encoding changes require an encoder')
 
-        if self.http1.body != original_body and all_names & (_BODY_METADATA - {'content-digest'}):
+        repaired = {'content-digest'}
+        if getattr(self, '_managed_body_encoding', False):
+            repaired.add('content-encoding')
+
+        if self.http1.body != original_body and all_names & (_BODY_METADATA - repaired):
             raise CommitException(
                 'Body has encoding, integrity or range metadata '
                 'that cannot be recalculated yet'
@@ -518,7 +535,8 @@ class MessageSnapshot:
         try:
             all_headers = list(original_headers) + headers
 
-            if _header_values(all_headers, 'content-encoding'):
+            if (_header_values(all_headers, 'content-encoding')
+                    and not getattr(self, '_managed_body_encoding', False)):
                 raise CommitException('Content-Digest repair requires unencoded H1 content')
 
             algorithms = []
@@ -718,7 +736,7 @@ def api_schema():
     """Generate reference directly from runtime dataclasses, types and field comments."""
     types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock,
              InstanceContext, SharedStorage, StorageNamespace, MessageSnapshot, Http1Draft, CommitException,
-             RewritePart, PartContent, H2Headers, HpackField, PartList, HeldCommit, Connection, ConnectionHttp2]
+             RewritePart, H2Body, PartContent, H2Headers, HpackField, PartList, HeldCommit, Connection, ConnectionHttp2]
     return {'version': '0.6', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),
@@ -735,5 +753,7 @@ if '__file__' in globals():
     exec(compile(_h2_source.read_text(), str(_h2_source), 'exec'), globals())
     _hold_source = _ApiPath(__file__).with_name('inspection_hold.py')
     exec(compile(_hold_source.read_text(), str(_hold_source), 'exec'), globals())
+    _chunked_source = _ApiPath(__file__).with_name('inspection_chunked.py')
+    exec(compile(_chunked_source.read_text(), str(_chunked_source), 'exec'), globals())
     _translate_source = _ApiPath(__file__).with_name('inspection_translate.py')
     exec(compile(_translate_source.read_text(), str(_translate_source), 'exec'), globals())

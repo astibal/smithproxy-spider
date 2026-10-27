@@ -22,6 +22,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/too
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_h2.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_hold.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_chunked.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_translate.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_language.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_sandbox.py"
@@ -33,6 +34,7 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tools/pack-inspection-worker.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_translate.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_hold.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_chunked.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_h2.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_worker.py src/inspection_api.py src/inspection_language.py src/inspection_sandbox.py tools/generate-inspection-schema.py)
 configure_file(src/inspection_worker.hpp.in generated/inspection_worker.hpp @ONLY)
@@ -94,6 +96,21 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_cookbook_test.py)
     set_tests_properties(inspection_cookbook_tests PROPERTIES TIMEOUT 45)
     option(SPIDER_TEST_TRANSLATE_POC "Enable isolated python-hpack translate experiment" OFF)
+    option(SPIDER_TEST_FLOW_CONTROL_POC "Enable independent hyper-h2 flow-control design probes" OFF)
+    if(SPIDER_TEST_FLOW_CONTROL_POC)
+        execute_process(COMMAND ${Python3_EXECUTABLE} -c "import h2.connection"
+                        RESULT_VARIABLE H2_IMPORT_RESULT)
+        if(NOT H2_IMPORT_RESULT EQUAL 0)
+            message(FATAL_ERROR "Flow-control probes require python-h2; production does not")
+        endif()
+        add_test(NAME inspection_translate_flow_control_tests
+                 COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_flow_control_test.py)
+        set_tests_properties(inspection_translate_flow_control_tests
+                             PROPERTIES TIMEOUT 30 LABELS "experimental;protocol")
+        add_test(NAME inspection_translate_windows_tests
+                 COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_windows_test.py)
+        set_tests_properties(inspection_translate_windows_tests PROPERTIES TIMEOUT 45 LABELS "experimental;protocol")
+    endif()
     if(SPIDER_TEST_TRANSLATE_POC)
         execute_process(COMMAND ${Python3_EXECUTABLE} -c "import hpack"
                         RESULT_VARIABLE HPACK_IMPORT_RESULT)
@@ -126,6 +143,38 @@ if(BUILD_TESTING)
         set(SPIDER_E2E_SMITHPROXY_SOURCE "" CACHE PATH "Smithproxy source for optional real translate E2E")
         set(SPIDER_E2E_SMITHPROXY_BINARY "" CACHE FILEPATH "Built Smithproxy with webhook control/sequence support")
         if(SPIDER_E2E_SMITHPROXY_SOURCE AND SPIDER_E2E_SMITHPROXY_BINARY)
+            if(SPIDER_TEST_FLOW_CONTROL_POC)
+                foreach(safety easy expert)
+                    add_test(NAME inspection_translate_e2e_windows_${safety}
+                        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                            --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                            --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                            --spider $<TARGET_FILE:smithproxy-spider> --windows --safety ${safety})
+                    set_tests_properties(inspection_translate_e2e_windows_${safety}
+                        PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+                    add_test(NAME inspection_translate_e2e_goaway_${safety}
+                        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                            --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                            --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                            --spider $<TARGET_FILE:smithproxy-spider> --goaway --safety ${safety})
+                    set_tests_properties(inspection_translate_e2e_goaway_${safety}
+                        PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+                    foreach(transport json sxbn)
+                        set(reserved_transport_args)
+                        if(transport STREQUAL "json")
+                            list(APPEND reserved_transport_args --json)
+                        endif()
+                        add_test(NAME inspection_translate_e2e_reserved_${transport}_${safety}
+                            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
+                                --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                                --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                                --spider $<TARGET_FILE:smithproxy-spider> --reserved --safety ${safety}
+                                ${reserved_transport_args})
+                        set_tests_properties(inspection_translate_e2e_reserved_${transport}_${safety}
+                            PROPERTIES TIMEOUT 90 LABELS "experimental;integration" RUN_SERIAL TRUE)
+                    endforeach()
+                endforeach()
+            endif()
             foreach(failure exception missing-translate)
                 add_test(NAME inspection_translate_e2e_${failure}
                     COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/translate_e2e.py
@@ -187,6 +236,12 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_test.py)
     add_test(NAME inspection_hold_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_hold_test.py)
+    add_test(NAME inspection_chunked_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_chunked_test.py)
+    add_test(NAME inspection_h2_body_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_body_test.py)
+    add_test(NAME inspection_compression_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_compression_test.py)
     add_test(NAME inspection_h1_corpus_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h1_corpus_test.py)
     add_test(NAME inspection_h2_corpus_tests

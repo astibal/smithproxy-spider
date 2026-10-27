@@ -100,7 +100,7 @@ class WriteTests(unittest.TestCase):
         import base64, json, subprocess
         source_dir = pathlib.Path(__file__).resolve().parents[1] / 'src'
         worker = '\n'.join((source_dir / name).read_text() for name in (
-            'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_translate.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
+            'inspection_api.py', 'inspection_h2.py', 'inspection_hold.py', 'inspection_chunked.py', 'inspection_translate.py', 'inspection_language.py', 'inspection_sandbox.py', 'inspection_worker.py'))
         def run(script):
             request = {'script': script, 'event': {'details': {'info': {
                 'content': base64.b64encode(self.request).decode()}}}}
@@ -197,7 +197,9 @@ class Http2Tests(unittest.TestCase):
                         # Execute each independently, inside a real script function
                         # so explicit `return api.message.commit()` is exercised.
                         part = api.http2.Frame(1, 5, 1, b'\x00\x01x\x01v')
-                        scope = {'Mode': Mode}
+                        from inspection_h2_test import message, frame, literal
+                        body_message = message(frame(literal(b':status', b'200'), 1, 4), frame(b'abc'))
+                        scope = {'Mode': Mode, 'body': body_message.bodies()[0]}
                         source = 'def example(api, part, entry, PartType):\n' + indent(field['example'], '    ')
                         exec(compile(source, '<api-example>', 'exec'), scope)
                         if name == 'Connection' and field['name'] == 'request_rewrite':

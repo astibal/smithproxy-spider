@@ -312,6 +312,28 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     assert.match(await editor.innerText(), /api\.print/);
     await editor.fill('return None');
 
+    const restoredLegacyRules = await page.evaluate(() => restoreTrafficRules([
+      {id: 'focus:192.0.2.2', address: '192.0.2.2', mode: 'focus', matches: 2},
+      {id: 'address:192.0.2.2', kind: 'address', value: '192.0.2.2', mode: 'focus', matches: 3},
+    ]));
+    assert.equal(restoredLegacyRules.length, 1);
+    assert.equal(restoredLegacyRules[0].id, 'address:192.0.2.2');
+    assert.equal(restoredLegacyRules[0].matches, 5);
+
+    // A legacy backend id must still be removable by the canonical endpoint action.
+    state.traffic_rules.rules = [
+      {id: 'focus:192.0.2.2', kind: 'address', value: '192.0.2.2', address: '192.0.2.2', mode: 'focus'},
+    ];
+    await page.evaluate(async () => {
+      trafficRules = restoreTrafficRules([{
+        id: 'focus:192.0.2.2', kind: 'address', value: '192.0.2.2', address: '192.0.2.2', mode: 'focus',
+      }]);
+      classifyEndpoint({id: 'address:192.0.2.2', kind: 'address', value: '192.0.2.2'}, 'clear');
+      await trafficRulesWriteQueue;
+    });
+    assert.equal(state.traffic_rules.rules.length, 0);
+    assert.equal(await page.evaluate(() => trafficRules.length), 0);
+
     // Seed the authoritative backend, then let the normal poll update the GUI.
     // A GUI-only rule can be erased by a poll between opening the menu and clicking.
     state.traffic_rules.rules = [

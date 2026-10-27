@@ -123,6 +123,13 @@ def invoke_script(current, compiled):
                 response['translate_state'] = translation.checkpoint
                 response['translate_control'] = translation.control_checkpoint
                 response['translated'] = True
+                if translation.peer_hold_changed:
+                    response['peer_held_parts'] = translation.peer_hold_result
+                response['hold_credit_reservation'] = bool(translation.control_checkpoint.get('flow', {}).get('hold_reserved'))
+                if translation.flow_summary is not None:
+                    response['flow_control'] = translation.flow_summary
+                if translation.reverse_output:
+                    response['replacement_reverse'] = base64.b64encode(translation.reverse_output).decode()
             held = None
             if isinstance(result, HeldCommit):
                 if not current.get('hold_allowed') or api.instance.mode != 'flow' or api.side not in ('L', 'R'):
@@ -176,6 +183,11 @@ def invoke_script(current, compiled):
             if api is not None and api.phase == 'setup':
                 response['rewrite_requested'] = api.connection._rewrite_requested
             response['held_parts'] = held
+            if response.get('replacement_reverse'):
+                # An empty forward replacement plus reverse output is not need-more.
+                response['need_more'] = False
+            if len(json.dumps(response).encode()) > 1900 * 1024:
+                raise CommitException('Translate output and checkpoints exceed worker response budget')
     except BaseException:
         response = script_error()
     finally:

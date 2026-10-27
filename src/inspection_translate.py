@@ -1,7 +1,8 @@
-"""Explicit, bounded HPACK translation. Embedded before entering the sandbox.
+"""Explicit, bounded HPACK and flow-control translation.
 
 Only data is checkpointed. No pickle, Python globals or worker affinity.
 SETTINGS are synchronized by ordered ACKs. Incomplete units require explicit hold.
+Embedded before entering the sandbox; every output needs a script's translate call.
 """
 try:
     import hpack as _translate_hpack
@@ -10,6 +11,671 @@ except ImportError:
 
 
 _H2_PREFACE = b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n'
+
+
+class _TranslationInput:
+    """Sender windows, charged once from original callback bytes, before hold.
+
+    The incremental cursor owns only a frame header. DATA reserves its
+    entire declared payload as soon as its header is
+    available. Reassembled Parts never pass through this cursor a second time.
+    """
+    @staticmethod
+    def initial():
+        return {'window': 65535, 'initial': 65535, 'acknowledged': 65535, 'owned': 0,
+                'pending': [], 'streams': {}, 'header': [], 'remaining': 0,
+                'preface': None}
+
+    def __init__(self, flow):
+        self.flow = flow
+        for side in ('L', 'R'):
+            if 'input' not in flow.state[side]:
+                raise CommitException('Translate input-window checkpoint missing; reconnect')
+            if 'owned' not in flow.state[side]['input']:
+                raise CommitException('Translate input ownership checkpoint missing; reconnect')
+
+    def direction(self, side):
+        return self.flow.state[side]['input']
+
+    def cancelled(self, side, stream):
+        return (self.flow.cancelled(side, stream) or
+                self.flow._contains(self.flow.state[side].get('input_cancelled', {}), stream))
+
+    def stream(self, side, stream):
+        state = self.direction(side)
+        key = str(stream)
+        if key not in state['streams']:
+            if not stream or len(state['streams']) >= self.flow.MAX_STREAMS:
+                raise CommitException('Translate input stream quota exceeded or stream zero')
+            state['streams'][key] = {'window': state['initial'], 'ended': False, 'received': 0}
+        return state['streams'][key]
+
+    def debit(self, side, stream, amount, end):
+        state = self.direction(side)
+        if not stream:
+            raise CommitException('DATA requires nonzero stream')
+        if amount > state['window']:
+            raise CommitException('Translate input connection window exceeded')
+        state['window'] -= amount
+        state['owned'] += amount
+        if self.cancelled(side, stream):
+            return
+        if self.flow.retired(side, stream):
+            raise CommitException('DATA after translated stream termination')
+        entry = self.stream(side, stream)
+        if entry['ended']:
+            raise CommitException('DATA after translated stream termination')
+        # Until ACK, bytes sent under an earlier initial window can be in
+        # flight. Account against the new window, allowing that bounded debt.
+        allowance = max([state['acknowledged'], state['initial']] + state['pending']) - state['initial']
+        if amount and amount > entry['window'] + allowance:
+            raise CommitException('Translate input stream window exceeded')
+        entry['window'] -= amount
+        entry['received'] += amount
+        entry['ended'] = end
+        reservation = self.flow.bodies(side).get(str(stream))
+        if reservation and reservation['stream'] == stream:
+            if entry['received'] > reservation['limit']:
+                raise CommitException('Reserved H2 body exceeds encoded byte limit')
+            if entry['received'] == reservation['limit'] and not end:
+                raise CommitException('Reserved H2 body limit exhausted before END_STREAM')
+
+    def receive(self, side, data):
+        state = self.direction(side)
+        position = 0
+        while position < len(data):
+            # Raw frame fixtures may omit the preface. Once its first byte is
+            # seen, however, every fragmented byte must match the real preface.
+            if state['preface'] is None:
+                state['preface'] = 0 if side == 'L' and data[position] == 80 else len(_H2_PREFACE)
+            if state['preface'] < len(_H2_PREFACE):
+                if data[position] != _H2_PREFACE[state['preface']]:
+                    raise CommitException('Invalid H2 input preface')
+                state['preface'] += 1
+                position += 1
+                continue
+            if state['remaining']:
+                count = min(state['remaining'], len(data) - position)
+                state['remaining'] -= count
+                position += count
+                if state['remaining']:
+                    continue
+                self.complete(side)
+                continue
+            count = min(9 - len(state['header']), len(data) - position)
+            state['header'].extend(data[position:position + count])
+            position += count
+            if len(state['header']) < 9:
+                continue
+            header = bytes(state['header'])
+            length = int.from_bytes(header[:3], 'big')
+            kind, flags = header[3:5]
+            stream = int.from_bytes(header[5:9], 'big') & self.flow.MAX_WINDOW
+            if kind == 0:
+                self.debit(side, stream, length, bool(flags & 1))
+            elif kind == 1 and not (self.cancelled(side, stream) or self.flow.retired(side, stream)):
+                entry = self.stream(side, stream)
+                entry['ended'] = entry['ended'] or bool(flags & 1)
+            elif kind == 4 and flags & 1:
+                if length or stream or not state['pending']:
+                    raise CommitException('Unexpected input SETTINGS ACK')
+                state['acknowledged'] = state['pending'].pop(0)
+            state['remaining'] = length
+            if not length:
+                self.complete(side)
+
+    def complete(self, side):
+        state = self.direction(side)
+        # Remember terminal controls at receipt, even if the script holds
+        # them. This affects input policing only; forwarding remains explicit.
+        header = bytes(state['header'])
+        kind = header[3]
+        stream = int.from_bytes(header[5:9], 'big') & self.flow.MAX_WINDOW
+        if kind == 3 and stream and int.from_bytes(header[:3], 'big') == 4:
+            for direction in ('L', 'R'):
+                self.flow._remember(direction, 'input_cancelled', stream)
+        state['header'] = []
+
+    def sent(self, side, data):
+        """Observe only actual output: retained SETTINGS grant nothing yet."""
+        target = 'R' if side == 'L' else 'L'
+        state = self.direction(target)
+        position = len(_H2_PREFACE) if data.startswith(_H2_PREFACE) else 0
+        while position < len(data):
+            length = int.from_bytes(data[position:position + 3], 'big')
+            kind, flags = data[position + 3:position + 5]
+            stream = int.from_bytes(data[position + 5:position + 9], 'big') & self.flow.MAX_WINDOW
+            payload = data[position + 9:position + 9 + length]
+            position += 9 + length
+            if kind == 4 and not flags & 1:
+                for offset in range(0, length, 6):
+                    if int.from_bytes(payload[offset:offset + 2], 'big') != 4:
+                        continue
+                    initial = int.from_bytes(payload[offset + 2:offset + 6], 'big')
+                    delta = initial - state['initial']
+                    for entry in state['streams'].values():
+                        if entry['window'] + delta > self.flow.MAX_WINDOW:
+                            raise CommitException('Translate input window overflow after SETTINGS')
+                        entry['window'] += delta
+                    state['initial'] = initial
+                if len(state['pending']) >= 128:
+                    raise CommitException('Translate input SETTINGS quota exceeded')
+                state['pending'].append(state['initial'])
+            elif kind == 8:
+                increment = int.from_bytes(payload, 'big') & self.flow.MAX_WINDOW
+                if stream and (self.flow.retired(target, stream) or self.cancelled(target, stream)):
+                    continue
+                entry = self.stream(target, stream) if stream else state
+                if not increment or entry['window'] + increment > self.flow.MAX_WINDOW:
+                    raise CommitException('Translate input window grant overflow')
+                entry['window'] += increment
+
+    def finish(self):
+        for side in ('L', 'R'):
+            self.sent(side, bytes(self.flow.output[side]))
+            streams = self.direction(side)['streams']
+            for key in list(streams):
+                if self.flow.retired(side, int(key)) or self.cancelled(side, int(key)):
+                    del streams[key]
+
+
+class _TranslationHoldCredit:
+    MAX_BODY = 256 * 1024
+    MAX_BODIES = 32
+    INPUT_CAPACITY = MAX_BODY + 65535
+
+    def __init__(self, transaction, flow, incoming, cut):
+        self.flow, self.incoming = flow, incoming
+        side = flow.side
+        direction = flow.state[side]
+        for part, limit in transaction.body_reservations:
+            if flow.cancelled(side, part.stream_id):
+                continue
+            if not transaction.hold_credit_available:
+                raise CommitException('Body reservation requires backend admission support')
+            positions = [i for i, item in enumerate(transaction.message.parts) if item is part]
+            if not positions or positions[0] < cut or not part.complete or part.frame_type != 1:
+                raise CommitException('Reserve a complete initial HEADERS part in the held suffix')
+            fields = transaction._header_fields(part)
+            if not any(name in (b':method', b':status') for name, _, _ in fields):
+                raise CommitException('Body reservation requires initial request or response headers')
+            lengths = transaction.source_lengths[id(part)]
+            if any(not value.isdigit() or int(value) > limit for value in lengths):
+                raise CommitException('Content-Length exceeds reserved encoded body limit')
+            bodies = flow.bodies(side)
+            current = bodies.get(str(part.stream_id))
+            if current and current['limit'] != limit:
+                raise CommitException('Body reservation limit is immutable')
+            if not current:
+                if str(part.stream_id) in direction['streams'] or flow.retired(side, part.stream_id):
+                    raise CommitException('Body reservation requires headers retained before any output')
+                candidate = {'stream': part.stream_id, 'limit': limit,
+                             'stream_due': 0, 'advanced': 0}
+                active = [body for body in bodies.values() if not flow.cancelled(side, body['stream'])]
+                if len(active) >= self.MAX_BODIES or sum(body['limit'] for body in active) + limit > self.MAX_BODY:
+                    raise CommitException('Body reservation aggregate exceeds 256 KiB or 32 streams')
+                bodies[str(part.stream_id)] = candidate
+                flow.state['hold_reserved'] = True
+        if flow.state.get('hold_reserved') and not transaction.hold_credit_available:
+            raise CommitException('Body reservation backend capability lost')
+        # A reserved body is an all-or-nothing retained semantic message.
+        for reservation in flow.bodies(side).values():
+            if flow.cancelled(side, reservation['stream']):
+                continue
+            for part in transaction.message.parts[:cut]:
+                if part.frame_type == 1 and part.stream_id == reservation['stream']:
+                    if not part.content.complete:
+                        raise CommitException('Reserved body must remain held until complete')
+
+    def advance(self):
+        for side in ('L', 'R'):
+            direction = self.flow.state[side]
+            limits = sum(body['limit'] for body in self.flow.bodies(side).values()
+                         if not self.flow.cancelled(side, body['stream']))
+            if self.flow.bodies(side):
+                # A smaller serialized promise must also bound early connection
+                # credit consumed by unrelated streams in the held suffix.
+                capacity = min(self.INPUT_CAPACITY, limits + 65535)
+                direction['input_capacity'] = max(direction.get('input_capacity', 0), capacity)
+            for reservation in list(self.flow.bodies(side).values()):
+                self.advance_body(side, reservation)
+            if self.flow.bodies(side) or direction.get('advance_due', 0) or direction['input']['owned']:
+                # Reserve serialized capacity, including baseline in-flight DATA,
+                # base64 representations and metadata. Fragmentation still has
+                # an explicit checkpoint bound. Never shrink an outstanding promise.
+                capacity = direction.get('input_capacity', 65535)
+                needed = min(1024 * 1024, ((3 * capacity + 65536 + 65535) // 65536) * 65536)
+                direction['hold_capacity'] = max(direction.get('hold_capacity', 0), needed)
+            else:
+                direction.pop('hold_capacity', None)
+                direction.pop('input_capacity', None)
+
+    def advance_body(self, side, reservation):
+        direction = self.flow.state[side]
+        stream = reservation['stream']
+        if self.incoming.cancelled(side, stream):
+            if self.flow.cancelled(side, stream) and side in self.flow.disposed:
+                if reservation['stream_due']:
+                    raise CommitException('Cancelled body credit did not settle')
+                del self.flow.bodies(side)[str(stream)]
+                return
+            # Only a fully accepted original body has no retained Parts to
+            # dispose of in another callback direction. Output cancellation
+            # has already discarded its DATA and settled ownership in finish().
+            elif reservation.get('released') and not reservation['stream_due']:
+                if self.flow.cancelled(side, stream):
+                    del self.flow.bodies(side)[str(stream)]
+                # A retained reset affects input policing before forwarding.
+                # Keep the reservation until that reset is actually accepted.
+                return
+            else:
+                raise CommitException('Reserved H2 body cancelled; strict teardown releases reservation')
+        if self.flow.retired(side, stream):
+            if reservation['stream_due']:
+                raise CommitException('Reserved H2 body credit did not settle')
+            del self.flow.bodies(side)[str(stream)]
+            return
+        state = self.incoming.direction(side)
+        entry = state['streams'][str(stream)]
+        received, limit = entry['received'], reservation['limit']
+        if received > limit or (received == limit and not entry['ended']):
+            raise CommitException('Reserved H2 body limit exhausted before completion')
+        if entry['ended']:
+            return
+        owned_output = sum(item.get('owned', 0) for item in direction['streams'].values())
+        held = state['owned'] - owned_output
+        room = direction['input_capacity'] - state['owned'] - state['window']
+        if room < 0:
+            raise CommitException('H2 input exceeds admitted reservation capacity')
+        connection_grant = min(held - direction.get('advance_due', 0), room)
+        allowance = max([state['acknowledged'], state['initial']] + state['pending']) - state['initial']
+        stream_room = max(0, limit - received - max(0, entry['window'] + allowance))
+        stream_grant = min(received - reservation['advanced'], stream_room)
+        target = 'R' if side == 'L' else 'L'
+        for stream_id, amount in ((0, connection_grant), (stream, stream_grant)):
+            if amount < 0:
+                raise CommitException('Reserved H2 credit provenance underflow')
+            if amount:
+                self.flow.output[target].extend(self.flow.frame(8, 0, stream_id, amount.to_bytes(4, 'big')))
+        state['window'] += connection_grant
+        entry['window'] += stream_grant
+        direction['advance_due'] = direction.get('advance_due', 0) + connection_grant
+        reservation['stream_due'] += stream_grant
+        reservation['advanced'] += stream_grant
+        if state['window'] <= 0 or entry['window'] + allowance <= 0:
+            raise CommitException('Reserved H2 input capacity exhausted before completion')
+
+
+class _TranslationFlow:
+    """Two independent credit ledgers, advanced only by explicit translation.
+
+    Input credit belongs to the sender; output credit belongs to the recipient.
+    Recipient WINDOW_UPDATEs never pass through after we own flow control.
+    Consumed input is acknowledged after that stream's queued DATA drains.
+    The checkpoint contains owned bytes, never live Python references.
+    """
+    MAX_WINDOW = 0x7fffffff
+    MAX_PENDING = 384 * 1024
+    MAX_STREAMS = 1024
+    MAX_RANGES = 1024
+
+    @staticmethod
+    def initial():
+        def direction():
+            return {'output': 65535, 'initial': 65535,
+                    'frame': 16384, 'streams': {}, 'queue': [], 'credit': 0,
+                    'input': _TranslationInput.initial()}
+        state = {'version': 1, 'L': direction(), 'R': direction()}
+        state['R']['input']['preface'] = len(_H2_PREFACE)
+        return state
+
+    def __init__(self, state, side):
+        import base64
+        self.state = state
+        self.side = side
+        self.peer = 'R' if side == 'L' else 'L'
+        self.output = {'L': bytearray(), 'R': bytearray()}
+        self.disposed = set()
+        self.queues = {key: [base64.b64decode(value, validate=True)
+                             for value in state[key]['queue']] for key in ('L', 'R')}
+        for key in ('L', 'R'):
+            # Upgrade the original single-body checkpoint without losing debt.
+            old = state[key].pop('body', None)
+            if old:
+                self.bodies(key)[str(old['stream'])] = old
+                state[key]['hold_capacity'] = 1024 * 1024
+                state[key]['input_capacity'] = _TranslationHoldCredit.INPUT_CAPACITY
+
+    def bodies(self, side):
+        return self.state[side].setdefault('bodies', {})
+
+    def stream(self, side, stream):
+        streams = self.state[side]['streams']
+        key = str(stream)
+
+        if key not in streams:
+            if self.retired(side, stream):
+                raise CommitException('DATA after translated stream termination')
+            if not stream or len(streams) >= self.MAX_STREAMS:
+                raise CommitException('Translate flow stream quota exceeded or stream zero')
+            initial = self.state[side]['initial']
+            streams[key] = {'output': initial, 'credit': 0, 'closed': False,
+                            'content_length': False}
+
+        return streams[key]
+
+    @staticmethod
+    def _contains(ranges, stream):
+        return any(first <= stream <= last for first, last in ranges.get(str(stream & 1), []))
+
+    def _remember(self, side, name, stream):
+        # IDs increase by two per initiator. Merge adjacent closed intervals;
+        # sequential churn costs constant space without forgetting late frames.
+        ranges = self.state[side].setdefault(name, {})
+        parity = str(stream & 1)
+        merged = []
+        for first, last in sorted(ranges.get(parity, []) + [[stream, stream]]):
+            if merged and first <= merged[-1][1] + 2:
+                merged[-1][1] = max(merged[-1][1], last)
+            else:
+                merged.append([first, last])
+        ranges[parity] = merged
+        if sum(map(len, ranges.values())) > self.MAX_RANGES:
+            raise CommitException('Translate closed stream range quota exceeded')
+
+    def retired(self, side, stream):
+        return self._contains(self.state[side].get('retired', {}), stream)
+
+    def cancelled(self, side, stream):
+        if self._contains(self.state[side].get('cancelled', {}), stream):
+            return True
+        for sender in ('L', 'R'):
+            last = self.state[sender].get('goaway')
+            if last is not None and stream & 1 == (sender == 'R') and stream > last:
+                return True
+        return False
+
+    def close(self, side, stream):
+        entry = self.state[side]['streams'].get(str(stream))
+        if entry is not None:
+            entry['closed'] = True
+        else:
+            self._remember(side, 'retired', stream)
+
+    def settings(self, part):
+        if part.flags & 1:
+            return
+
+        # A received SETTINGS constrains what we may send back to its sender.
+        direction = self.state[self.peer]
+        data = bytes(part._data)
+
+        for offset in range(0, len(data), 6):
+            key = int.from_bytes(data[offset:offset + 2], 'big')
+            value = int.from_bytes(data[offset + 2:offset + 6], 'big')
+
+            if key == 4:
+                delta = value - direction['initial']
+                for stream in direction['streams'].values():
+                    if stream['output'] + delta > self.MAX_WINDOW:
+                        raise CommitException('Translate stream window overflow after SETTINGS')
+                    stream['output'] += delta
+                direction['initial'] = value
+            elif key == 5:
+                direction['frame'] = value
+
+    def update(self, part):
+        data = bytes(part._data)
+
+        if len(data) != 4:
+            raise CommitException('WINDOW_UPDATE requires four bytes')
+
+        increment = int.from_bytes(data, 'big') & self.MAX_WINDOW
+        direction = self.state[self.peer]
+        if not increment:
+            raise CommitException('WINDOW_UPDATE increment must be nonzero')
+        if part.stream_id and (self.retired(self.peer, part.stream_id) or
+                               self.cancelled(self.peer, part.stream_id)):
+            return
+        target = self.stream(self.peer, part.stream_id) if part.stream_id else direction
+        if target.get('closed'):
+            return  # Late credit for our already emitted END_STREAM is harmless.
+        if target['output'] + increment > self.MAX_WINDOW:
+            raise CommitException('Translate flow-control window overflow')
+
+        target['output'] += increment
+
+    def reset(self, part):
+        if not part.stream_id or len(part._data) != 4:
+            raise CommitException('Invalid RST_STREAM')
+
+        for side in ('L', 'R'):
+            self._remember(side, 'cancelled', part.stream_id)
+            self.close(side, part.stream_id)
+        self.discard_cancelled()
+
+    def discard_input(self, side, stream_id, amount):
+        direction = self.state[side]
+        advanced = min(amount, direction.get('advance_due', 0))
+        direction['advance_due'] = direction.get('advance_due', 0) - advanced
+        direction['credit'] += amount - advanced
+        direction['cancelled_owned'] = direction.get('cancelled_owned', 0) + amount
+        reservation = self.bodies(side).get(str(stream_id))
+        if reservation and reservation['stream'] == stream_id:
+            reservation['stream_due'] -= min(amount, reservation['stream_due'])
+
+    def discard_cancelled(self):
+        for side in ('L', 'R'):
+            # Encoded headers must still reach the peer's HPACK decoder, even
+            # on cancelled streams. Never drop/reorder those compression units.
+            self.queues[side] = [wire for wire in self.queues[side]
+                                 if wire[3] != 0 or not self.cancelled(
+                                     side, int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW)]
+            for key, entry in self.state[side]['streams'].items():
+                if self.cancelled(side, int(key)):
+                    entry['closed'] = True
+
+    def goaway(self, part):
+        if part.stream_id or len(part._data) < 8:
+            raise CommitException('Invalid GOAWAY')
+        last = int.from_bytes(part._data[:4], 'big') & self.MAX_WINDOW
+        previous = self.state[self.side].get('goaway', self.MAX_WINDOW)
+        if last > previous:
+            raise CommitException('GOAWAY last stream ID must not increase')
+        self.state[self.side]['goaway'] = last
+        self.discard_cancelled()
+
+    def accept(self, part, wire):
+        side = self.side
+        kind = part._initial[0]
+
+        if kind == 8:
+            self.update(part)
+            return
+        if kind == 4:
+            self.settings(part)
+        if kind == 3:
+            # A locally initiated stream whose original headers are still held
+            # does not exist at the recipient. Do not send RST_STREAM on idle.
+            initiated = part.stream_id & 1 == (side == 'L')
+            queued = any(item[3] == 1 and int.from_bytes(item[5:9], 'big') & self.MAX_WINDOW == part.stream_id
+                         for item in self.queues[side] if not item.startswith(_H2_PREFACE))
+            if initiated and not queued and not self._contains(self.state[side].get('opened', {}), part.stream_id):
+                wire = b''
+            self.reset(part)
+        if kind == 7:
+            self.goaway(part)
+
+        if kind == 0:
+            amount = int.from_bytes(bytes(part._wire)[:3], 'big')
+            direction = self.state[side]
+            if self.cancelled(side, part.stream_id):
+                self.discard_input(side, part.stream_id, amount)
+                return
+            # Early connection credit is backed by the retained input pool.
+            # Normal release follows source order; cancellation may settle any
+            # of that ownership first. Stream credit has its separate debt.
+            advanced = min(amount, direction.get('advance_due', 0))
+            direction['advance_due'] = direction.get('advance_due', 0) - advanced
+            direction['credit'] += amount - advanced
+            stream = self.stream(side, part.stream_id)
+            if stream['closed'] or stream.get('ended'):
+                raise CommitException('DATA after translated stream termination')
+            stream['ended'] = bool(part.flags & 1)
+            # Include padding and its length byte, but not the frame header.
+            stream['owned'] = stream.get('owned', 0) + amount
+            reservation = self.bodies(side).get(str(part.stream_id))
+            advanced_stream = 0
+            if reservation and reservation['stream'] == part.stream_id:
+                advanced_stream = min(amount, reservation['stream_due'])
+                reservation['stream_due'] -= advanced_stream
+                if part.flags & 1:
+                    reservation['released'] = True
+            # Per-stream refund debt can differ from connection debt when
+            # several streams contribute bytes to the same retained prefix.
+            stream['connection_credit'] = stream.get('connection_credit', 0) + amount - advanced
+            stream['credit'] += amount - advanced_stream
+
+        if kind == 1 and part.flags & 1 and not self.cancelled(side, part.stream_id):
+            if not self.retired(side, part.stream_id):
+                self.stream(side, part.stream_id)['ended'] = True
+            reservation = self.bodies(side).get(str(part.stream_id))
+            if reservation and reservation['stream'] == part.stream_id:
+                reservation['released'] = True
+
+        # Control frames must not wait behind DATA whose credit they enable.
+        # Header blocks stay indivisible; queued output never ends mid-block.
+        # ACK is a synchronization boundary for HPACK and frame-size limits.
+        # It must remain behind previously encoded header blocks.
+        if kind in (6, 7, 8) or (kind == 4 and not part.flags & 1):
+            self.output[side].extend(wire)
+        elif wire:
+            self.queues[side].append(wire)
+
+        self.drain(side)
+
+    def drain(self, side):
+        queue = self.queues[side]
+        direction = self.state[side]
+
+        while queue:
+            # Pick one frame per ready stream per round. Preserve each stream's
+            # order and global HPACK order; SETTINGS ACK and other non-header
+            # control units remain synchronization barriers.
+            candidates, seen = [], set()
+            header_seen = False
+            for index, item in enumerate(queue):
+                if item.startswith(_H2_PREFACE) or item[3] not in (0, 1):
+                    if index == 0:
+                        candidates.append((index, 0))
+                    break
+                stream_id = int.from_bytes(item[5:9], 'big') & self.MAX_WINDOW
+                blocked = stream_id in seen
+                seen.add(stream_id)
+                if item[3] == 1:
+                    blocked = blocked or header_seen
+                    header_seen = True
+                elif len(item) > 9 and not (item[4] & 8 and item[9] == len(item) - 10):
+                    blocked = blocked or min(direction['output'], self.stream(side, stream_id)['output']) <= 0
+                if not blocked:
+                    candidates.append((index, stream_id))
+            if not candidates:
+                break
+            previous = direction.get('last_sent', -1)
+            index, selected = min(candidates, key=lambda entry: (entry[1] <= previous, entry[1]))
+            wire = queue[index]
+            direction['last_sent'] = selected
+            if wire.startswith(_H2_PREFACE) or wire[3] != 0:
+                self.output[side].extend(queue.pop(index))
+                if not wire.startswith(_H2_PREFACE) and wire[3] == 1:
+                    self._remember(side, 'opened', int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW)
+                if not wire.startswith(_H2_PREFACE) and wire[3] == 1 and wire[4] & 1:
+                    stream_id = int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
+                    self.close(side, stream_id)
+                continue
+
+            stream_id = int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
+            stream = self.stream(side, stream_id)
+            flags = wire[4]
+            payload = wire[9:]
+            available = min(direction['output'], stream['output'], direction['frame'])
+
+            if len(payload) <= available or not payload:
+                self.output[side].extend(queue.pop(index))
+                direction['output'] -= len(payload)
+                stream['output'] -= len(payload)
+                if flags & 1:
+                    stream['closed'] = True
+                continue
+
+            # Padding has no application meaning. Remove it only when a frame
+            # needs reframing; untouched, immediately sendable DATA stays exact.
+            if flags & 8:
+                padding = payload[0]
+                payload = payload[1:len(payload) - padding]
+                flags &= ~8
+                queue[index] = self.frame(0, flags, stream_id, payload)
+                continue
+
+            if available <= 0:
+                break
+
+            self.output[side].extend(self.frame(0, flags & ~1, stream_id, payload[:available]))
+            queue[index] = self.frame(0, flags, stream_id, payload[available:])
+            direction['output'] -= available
+            stream['output'] -= available
+
+    @staticmethod
+    def frame(kind, flags, stream, data):
+        return (len(data).to_bytes(3, 'big') + bytes((kind, flags)) +
+                stream.to_bytes(4, 'big') + data)
+
+    def finish(self):
+        import base64
+        self.drain(self.side)
+        self.drain(self.peer)
+
+        for side in ('L', 'R'):
+            direction = self.state[side]
+            target = 'R' if side == 'L' else 'L'
+            blocked = {int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
+                       for wire in self.queues[side] if wire[3] == 0}
+            retained = 0
+            refunds = bytearray()
+            for key, entry in list(direction['streams'].items()):
+                stream_id = int(key)
+                if stream_id in blocked:
+                    retained += entry.get('connection_credit', entry['credit'])
+                    continue
+                amount = entry['credit']
+                if amount and not entry.get('closed'):
+                    refunds.extend(self.frame(8, 0, stream_id, amount.to_bytes(4, 'big')))
+                entry['credit'] = 0
+                entry['connection_credit'] = 0
+                direction['input']['owned'] -= entry.get('owned', 0)
+                entry['owned'] = 0
+                if entry['closed']:
+                    self._remember(side, 'retired', stream_id)
+                    del direction['streams'][key]
+            amount = direction['credit'] - retained
+            if amount:
+                self.output[target].extend(self.frame(8, 0, 0, amount.to_bytes(4, 'big')))
+            self.output[target].extend(refunds)
+            direction['credit'] = retained
+            direction['input']['owned'] -= direction.pop('cancelled_owned', 0)
+            if direction['input']['owned'] < 0:
+                raise CommitException('Translate input ownership underflow; reconnect')
+
+        pending = sum(len(wire) for queue in self.queues.values() for wire in queue)
+        if pending > self.MAX_PENDING:
+            raise CommitException('Translate pending output exceeds 384 KiB')
+        if sum(map(len, self.output.values())) > 1024 * 1024:
+            raise CommitException('Translated directional output exceeds 1 MiB')
+
+        for side in ('L', 'R'):
+            self.state[side]['queue'] = [base64.b64encode(wire).decode() for wire in self.queues[side]]
+
+        return bytes(self.output[self.side]), bytes(self.output[self.peer])
 
 
 class Mode:
@@ -23,6 +689,20 @@ class ConnectionHttp2:
 
     def __init__(self, connection):
         self._connection = connection
+
+    @api_method('header: RewritePart, max_bytes: int', 'None',
+                'Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available, including END_STREAM trailers. Limits count original encoded DATA including padding and are immutable: at most 32 reservations and 256 KiB combined per direction. Backend capacity is released after both directions settle their reserved bodies, input ownership and early credit.',
+                'api.connection.set_mode(Mode.Translate)\nfor part in api.message.parts:\n    if part.type == PartType.Http2.Header and part.complete and part.content.complete is False:\n        api.message.parts.hold_from(part)\n        api.connection.http2.reserve_body(part, 128 * 1024)\n        break\nreturn api.message.translate()',
+                availability='Live sole flow deployment with backend reservation support and content-reverse. RST_STREAM and GOAWAY bypass body hold during explicit Translate, dispose cancelled DATA and preserve source HPACK history. Exhausted capacity still tears down strict translation.',
+                access='staged body reservation')
+    def reserve_body(self, header, max_bytes):
+        if type(max_bytes) is not int or not 0 < max_bytes <= _TranslationHoldCredit.MAX_BODY:
+            raise CommitException('Body reservation limit must be an integer in 1..262144')
+        transaction = self._connection._transaction()
+        if 'flow' not in transaction.control_before:
+            raise CommitException('Body reservation requires content-reverse from activation')
+        transaction.body_reservations = [(part, limit) for part, limit in transaction.body_reservations
+                                         if part is not header] + [(header, max_bytes)]
 
     @api_method('limit: int', 'None',
                 'Enforce a maximum HPACK table capacity in both directions. Idempotent; never increases a peer-advertised limit. SETTINGS and synthetic ACK handling occur only through message.translate().',
@@ -359,6 +1039,10 @@ def _resume_translation(message, checkpoint, settings=None):
     data = message.bytes
     preface = False
     settings = settings or _TranslationSettings()
+    # A cancelled partial DATA frame retains only its remaining byte count.
+    # The input ledger still consumes those bytes through its physical cursor.
+    discard = settings.state.get('flow', {}).get(settings.side, {}).get('discard_bytes', 0)
+    data = data[min(discard, len(data)):]
 
     # Complete held ACKs precede fresh input and can change its frame limit.
     for part in held:
@@ -441,7 +1125,7 @@ def _translate_table_load(codec, saved):
 
 
 class _Translation:
-    def __init__(self, message, checkpoint, active, control=None, side='L'):
+    def __init__(self, message, checkpoint, active, control=None, side='L', reverse_capable=False):
         if _translate_hpack is None:
             raise CommitException('H2 translate requires python-hpack')
 
@@ -451,9 +1135,22 @@ class _Translation:
         self.result = None
         self.checkpoint = None
         self.control_checkpoint = None
+        self.reverse_output = b''
+        self.flow_summary = None
+        self.body_reservations = []
+        self.hold_credit_available = False
+        self.peer_hold_known = False
+        self.peer_hold = None
+        self.peer_hold_result = None
+        self.peer_hold_changed = False
         self.control_before = _TranslationSettings(control, side).state
+        if control is None and reverse_capable:
+            self.control_before['flow'] = _TranslationFlow.initial()
+        if 'flow' in self.control_before and not reverse_capable:
+            raise CommitException('Translate lost content-reverse capability')
         self.settings = _TranslationSettings(control, side)
         self.decoded = {}
+        self.source_lengths = {}
         self.original_fields = {}
         self.originals = tuple(bytes(p._wire) for p in message.parts)
         self.identities = tuple(id(p) for p in message.parts)
@@ -486,10 +1183,44 @@ class _Translation:
                 # HEADERS, including responses on the promised stream.
                 self._decode_headers(part, active)
 
+        flow = self.control_before.get('flow')
+        if flow is not None:
+            ledger = _TranslationFlow(flow, side)
+            for part in message.parts:
+                if part.complete and part.stream_id and ledger.cancelled(side, part.stream_id):
+                    # Compression history is retained, but a cancelled message
+                    # must not look like a body still waiting for more DATA.
+                    part._translate_cancelled = True
         object.__setattr__(message, '_body_sizes', {
             id(group[0]): sum(len(p._data) for p in group if p.frame_type == 0)
             for group in _h2_content_groups(message.parts)
         })
+
+    @staticmethod
+    def _discard_held(parts, flow, side):
+        kept = []
+        direction = flow.state[side]
+        for part in parts:
+            if part.stream_id and flow.cancelled(side, part.stream_id):
+                if part.frame_type == 0 and len(part._wire) >= 9:
+                    amount = int.from_bytes(bytes(part._wire)[:3], 'big')
+                    flow.discard_input(side, part.stream_id, amount)
+                    if not part.complete:
+                        direction['discard_bytes'] = 9 + amount - len(part._wire)
+                    continue
+                if part.frame_type in (1, 5):
+                    # Keep the source HPACK block until its direction resumes.
+                    # It will update only the input decoder, never the peer.
+                    part.headers = None
+                    part._pending = None
+                    part._translate_draft = False
+                    part._translate_cancelled = True
+                    for name in ('_body_plain', '_decoded_body'):
+                        if hasattr(part, name):
+                            delattr(part, name)
+            kept.append(part)
+        flow.disposed.add(side)
+        return kept
 
     def _validate_push(self, part):
         """Check push envelope, without pretending to track every stream state."""
@@ -509,6 +1240,8 @@ class _Translation:
             for field in fields
         ])
         self.decoded[id(part)] = headers
+        self.source_lengths[id(part)] = tuple(field.value for field in headers.entries
+                                             if field.name == b'content-length')
 
         if active and not getattr(part, '_translate_draft', False):
             part.headers = headers
@@ -608,18 +1341,51 @@ class _Translation:
         # changes until the entire message and checkpoint have passed validation.
         encoder = copy.deepcopy(self.encoder)
         settings = _TranslationSettings(self.control_before, self.settings.side)
+        flow = (_TranslationFlow(settings.state['flow'], settings.side)
+                if 'flow' in settings.state else None)
+        incoming = _TranslationInput(flow) if flow is not None else None
+        if incoming is not None:
+            direction = flow.state[settings.side]
+            if 'discard_bytes' in direction:
+                remaining = max(0, direction['discard_bytes'] - len(message.bytes))
+                if remaining:
+                    direction['discard_bytes'] = remaining
+                else:
+                    del direction['discard_bytes']
+            incoming.receive(settings.side, message.bytes)
+        terminal = set()
+        if flow is not None:
+            # Translate owns terminal control even when an application body is
+            # held. Otherwise a same-direction reset could wait behind that body.
+            for part, original in zip(message.parts, self.originals):
+                if part.complete and part.frame_type in (3, 7):
+                    if part.commit() != original:
+                        raise CommitException('Translate terminal controls cannot be edited')
+                    flow.accept(part, original)
+                    terminal.add(id(part))
+        hold_credit = _TranslationHoldCredit(self, flow, incoming, cut) if flow is not None else None
 
         emitted = message.parts[:cut]
+        live = [part for part in emitted if flow is None or not flow.cancelled(settings.side, part.stream_id)]
+        body_overrides = _encoded_h2_bodies(live)
+        header_lengths = self._body_lengths(live, body_overrides, flow)
 
         for part, original in zip(emitted, self.originals):
+            start = len(output)
+            if id(part) in terminal:
+                continue
             if not part.complete:
                 raise CommitException('Incomplete H2 part: hold_from(part) before translate')
 
+            if flow is not None and flow.cancelled(settings.side, part.stream_id) and part.frame_type in (1, 5):
+                continue  # Input HPACK was decoded; cancelled drafts have no output context.
+
             if part._initial[0] == 0:
-                output.extend(self._translate_data(part, original))
+                output.extend(self._translate_data(body_overrides.get(id(part), part), original,
+                                                   resizing=flow is not None))
             elif part._initial[0] not in (1, 5):
                 if part.commit() != original:
-                    raise CommitException('Translate supports header edits and same-length DATA only')
+                    raise CommitException('Translate supports logical header and DATA edits only')
 
                 if part.frame_type == 4:
                     _translate_encoder_settings(encoder, settings.process(part))
@@ -632,6 +1398,15 @@ class _Translation:
                     raise CommitException('Translate headers must preserve frame type, flags and stream id')
 
                 fields = self._header_fields(part)
+                if id(part) in header_lengths:
+                    fields = [(name, header_lengths[id(part)] if name == b'content-length' else value, sensitive)
+                              for name, value, sensitive in fields]
+                if (flow is not None and part.frame_type == 1 and
+                        not flow.cancelled(settings.side, part.stream_id) and
+                        not flow.retired(settings.side, part.stream_id)):
+                    if any(name in (b':method', b':status') for name, _, _ in fields):
+                        flow.stream(settings.side, part.stream_id)['content_length'] = any(
+                            name == b'content-length' for name, _, _ in fields)
                 previous_size = part.max_frame_size
 
                 try:
@@ -640,6 +1415,11 @@ class _Translation:
                 finally:
                     part.max_frame_size = previous_size
 
+            if flow is not None:
+                wire = bytes(output[start:])
+                del output[start:]
+                flow.accept(part, wire)
+
             if len(output) > 1024 * 1024:
                 raise CommitException('Translated output exceeds 1 MiB')
 
@@ -647,6 +1427,39 @@ class _Translation:
         # Do not emit around a held boundary: the user explicitly retained it.
         if boundary is None:
             output.extend(settings.pending_policy_frame())
+
+        reverse_output = b''
+        suffix = [part for part in message.parts[cut:] if id(part) not in terminal]
+        suffix_fields = {}
+        peer_held = self.peer_hold
+        if flow is not None:
+            # Work on private copies: failed serialization may be retried using
+            # the same callback-local draft and neither hold may change early.
+            copied, _ = _restore(_checkpoint([copy.copy(part) for part in suffix], {}))
+            suffix_fields = {id(clone): self._header_fields(original)
+                             for original, clone in zip(suffix, copied)
+                             if original.complete and original.frame_type in (1, 5)}
+            suffix = self._discard_held(copied, flow, settings.side)
+            if self.peer_hold_known:
+                peer_parts, peer_sizes = _restore(self.peer_hold) if self.peer_hold else ([], {})
+                peer_parts = self._discard_held(peer_parts, flow, flow.peer)
+                peer_held = _checkpoint(peer_parts, peer_sizes) if peer_parts else None
+            flow.output[settings.side].extend(output)
+            forward, reverse_output = flow.finish()
+            incoming.finish()
+            hold_credit.advance()
+            if flow.state.get('hold_reserved') and all(
+                    not flow.bodies(side) and
+                    not flow.state[side].get('advance_due', 0) and
+                    not flow.state[side]['input']['owned'] for side in ('L', 'R')):
+                # No reserved stream or source bytes remain to back future
+                # grants/output. Remaining HPACK metadata is charged as actual
+                # state; a later reservation must pass admission again.
+                flow.state['hold_reserved'] = False
+            if sum(map(len, flow.output.values())) > 1024 * 1024:
+                raise CommitException('Translated directional output exceeds 1 MiB')
+            forward, reverse_output = bytes(flow.output[flow.side]), bytes(flow.output[flow.peer])
+            output = bytearray(forward)
 
         if len(output) > 1024 * 1024:
             raise CommitException('Translated output exceeds 1 MiB')
@@ -676,13 +1489,12 @@ class _Translation:
         if len(json.dumps(checkpoint)) > 65536:
             raise CommitException('Translate checkpoint exceeds 64 KiB')
 
-        if len(json.dumps(settings.state)) > 16384:
-            raise CommitException('SETTINGS checkpoint exceeds 16 KiB')
+        if len(json.dumps(settings.state)) > 1024 * 1024:
+            raise CommitException('Translate control checkpoint exceeds 1 MiB')
 
         result = bytes(output)
 
         if boundary is not None:
-            suffix = message.parts[cut:]
             saved = []
 
             try:
@@ -691,9 +1503,11 @@ class _Translation:
                             (part.frame_type, part.flags, part.stream_id) != part._initial):
                         raise CommitException('Cannot hold an edited incomplete H2 part')
 
-                    if part.complete and part.frame_type in (1, 5):
+                    if part.complete and part.frame_type in (1, 5) and not (
+                            flow is not None and flow.cancelled(settings.side, part.stream_id)):
                         # Normalize only the checkpoint, never the user's live draft.
-                        fields = self._header_fields(part)
+                        # Copies retain resolved logical fields from the live draft.
+                        fields = suffix_fields[id(part)] if flow is not None else self._header_fields(part)
                         saved.append((part, part.headers, getattr(part, '_translate_draft', None)))
                         part.headers = H2Headers([
                             HpackField(name, value, 'never' if sensitive else 'without', 0, 0)
@@ -716,17 +1530,65 @@ class _Translation:
 
             result = HeldCommit(result, held, len(suffix))
 
+        if flow is not None and flow.state.get('hold_reserved'):
+            for side, hold in ((flow.side, result.checkpoint if isinstance(result, HeldCommit) else None),
+                               (flow.peer, peer_held)):
+                capacity = flow.state[side].get('hold_capacity', 1024 * 1024)
+                if hold is not None and len(json.dumps(hold)) > capacity:
+                    raise CommitException('Reserved hold checkpoint exceeds admitted capacity')
+
         self.result = result
         self.checkpoint = checkpoint
         self.control_checkpoint = settings.state
+        self.reverse_output = reverse_output
+        self.peer_hold_result = peer_held
+        self.peer_hold_changed = self.peer_hold_known and peer_held != self.peer_hold
+        if flow is not None:
+            self.flow_summary = {
+                'pending_bytes': sum(len(wire) for queue in flow.queues.values() for wire in queue),
+                'forward_bytes': len(output), 'reverse_bytes': len(reverse_output),
+            }
         return self.result
 
-    @staticmethod
-    def _translate_data(part, original):
-        """Replace only application bytes; preserve flow-control accounting exactly.
+    def _body_lengths(self, parts, overrides, flow):
+        """Repair retained headers; never pretend to repair headers already sent."""
+        def size(part):
+            draft = overrides.get(id(part), part)
+            return len(draft._data if draft._pending is None else draft._pending)
 
-        Keep the frame header, pad-length byte and padding verbatim. Reusing the
-        generic assembler could split a frame or change its END_STREAM flag.
+        changed = {part.stream_id for part in parts if part.frame_type == 0 and
+                   size(part) != len(part._data)}
+        lengths = {}
+        local = set()
+
+        for group in _h2_content_groups(parts):
+            head = group[0]
+            if not any(part.frame_type == 0 and size(part) != len(part._data) for part in group):
+                continue
+            local.add(head.stream_id)
+            fields = self._header_fields(head)
+            if not any(name == b'content-length' for name, _, _ in fields):
+                continue
+            if not head.content.complete:
+                raise CommitException('Retain complete content before resizing a Content-Length body')
+            length = sum(size(part) for part in group if part.frame_type == 0)
+            lengths[id(head)] = str(length).encode()
+
+        if flow is not None:
+            for stream in changed - local:
+                if flow.cancelled(flow.side, stream):
+                    continue
+                if flow.stream(flow.side, stream)['content_length']:
+                    raise CommitException('Cannot resize body after emitting Content-Length; hold the header first')
+
+        return lengths
+
+    @staticmethod
+    def _translate_data(part, original, *, resizing=False):
+        """Keep original DATA geometry unless a negotiated resize needs reframing.
+
+        The flow ledger, not this serializer, splits by current output credit.
+        Legacy peers retain exact frame headers, padding and DATA length.
         """
         if (part.frame_type, part.flags, part.stream_id) != part._initial:
             raise CommitException('Translate DATA must preserve frame type, flags and stream id')
@@ -737,7 +1599,9 @@ class _Translation:
         data = _h2_bytes(part.get_bytes())
 
         if len(data) != len(part._data):
-            raise CommitException('Translate DATA requires the same length; flow-control translation is not supported yet')
+            if not resizing:
+                raise CommitException('Translate DATA resizing requires content-reverse capability from connection start')
+            return _TranslationFlow.frame(0, part.flags & ~8, part.stream_id, data)
 
         start = 9 + len(part._prefix)
         end = start + len(data)
@@ -760,7 +1624,14 @@ def _prepare_translation(message, request):
         elif ((message.bytes and _H2_PREFACE.startswith(message.bytes[:len(_H2_PREFACE)])) or
               any(p.is_a(PartType.Http2.Part) for p in message.parts)):
             _resume_translation(message, None, settings)
-        transaction = _Translation(message, request.get('translate_state'), active, control, side)
+        info = request.get('event', {}).get('details', {}).get('info', {})
+        reverse_capable = info.get('webhook_control', {}).get('content-reverse') is True
+        transaction = _Translation(message, request.get('translate_state'), active, control, side, reverse_capable)
+        transaction.hold_credit_available = request.get('hold_credit_available') is True
+        transaction.peer_hold_known = 'peer_held_parts' in request
+        transaction.peer_hold = request.get('peer_held_parts')
+        if transaction.control_before.get('flow', {}).get('hold_reserved') and not request.get('hold_credit_reserved'):
+            raise CommitException('Body reservation owner lost; reconnect')
         object.__setattr__(message, '_translation', transaction)
     except Exception as error:
         if active:

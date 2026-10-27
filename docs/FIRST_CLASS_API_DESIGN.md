@@ -319,8 +319,9 @@ instruction need not be accepted in peer state. This is deliberately the script
 author's responsibility. Unchanged HPACK instructions and frames retain original bytes.
 
 Live **TRANSLATE** requires explicit activation. Current H2 support covers
-HEADERS/PUSH_PROMISE, HPACK, supported SETTINGS and same-length DATA edits, not
-general DATA resizing with flow-control compensation. It requires one enabled
+HEADERS/PUSH_PROMISE, HPACK, supported SETTINGS and bounded DATA resizing with
+flow-control compensation when content-reverse is negotiated at activation.
+Legacy proxies retain same-length DATA support. It requires one enabled
 flow deployment and activation in the first content callback. Every subsequent
 callback must run the script and return `api.message.translate()`; there are no
 hidden repairs outside user execution. The backend pins deployment/version and
@@ -339,6 +340,14 @@ connection instead of continuing with inconsistent state. Failure before first
 successful activation may still fail open under regular policy. Ordinary REWRITE,
 including hold, remains fail-open; state-loss protection is deliberately deferred.
 Implemented contract details: [Live H2 Translate](H2_TRANSLATE_LIVE.md).
+
+Explicit H2 whole-body retention across flow-control windows is available through
+`api.connection.http2.reserve_body(header, max_bytes)` before Translate. It requires
+an initial header still in the held suffix, backend reservation support and
+content-reverse from activation. Capacity, original-input credit provenance and
+cancellation and strict exhaustion behavior are specified in
+[bounded hold credit](H2_TRANSLATE_HOLD_CREDIT_DESIGN.md). Ordinary hold remains
+uncredited; this API does not enable background translation or arbitrary-size bodies.
 
 ## Verification criteria
 
