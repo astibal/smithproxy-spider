@@ -71,7 +71,8 @@ Both Easy and Expert enforce the same transport invariants:
   and the existing 4 MiB deployment-state quota. Closed records are reclaimed after
   queued DATA and credit settle. Their IDs remain in parity-separated, merged
   ranges so late WINDOW_UPDATE does not reopen them. Each direction permits 1024
-  retired ranges and 1024 cancellation ranges. Sequential churn is constant-space;
+  ranges in each retired, cancelled, input-cancelled and recipient-opened set.
+  Sequential churn is constant-space;
   sparse/out-of-order histories can still reach an explicit quota.
 - Invalid/overflowing WINDOW_UPDATE and quota failures raise CommitException.
   Failed assembly leaves checkpoints unpublished and is retryable in the script.
@@ -311,7 +312,7 @@ Validation on 2026-10-26:
 - Generated API reference consistency and whitespace checks passed. Native code
   and live SASlik configuration were unchanged; no new native full P3 was run.
 
-### Reserved whole-body hold: 2026-10-27
+### Initial reserved whole-body hold milestone: 2026-10-27
 
 The explicit `reserve_body` API admits serialized checkpoint capacity in the
 backend before any early grant. An ordered connection-credit debt and separate
@@ -323,9 +324,10 @@ retained input within the shared directional capacity.
 The encoded-body limit is 256 KiB. Backend admission reserves both 1 MiB hold
 slots plus the 1 MiB shared control slot for the connection's lifetime, charging
 actual additional state against the 4 MiB deployment quota. This is deliberately
-conservative. Cancellation while original body Parts remain held and cap exhaustion
-cause strict teardown. Fully released bodies can cancel pending output without
-closing the connection. See the linked reservation document for the
+conservative. At this milestone, cancellation while original body Parts remained
+held and cap exhaustion caused strict teardown. Fully released bodies could cancel
+pending output without closing the connection. Subsequent cancellation and quota
+reclamation changes are described below. See the linked reservation document for the
 complete contract and a runnable deployment pattern.
 
 Validation on 2026-10-27:
@@ -366,3 +368,42 @@ Validation: final build and **54/54 CTest suites** passed in **215.25 s**, inclu
 15 integration suites and all **88 production window tests**. The standalone window
 run also passed in **12.787 s**. Generated API reference and whitespace checks passed.
 Tests ran in an isolated network namespace; native code and SASlik were unchanged.
+
+### Retained cancellation, trailers and reservation reclamation: 2026-10-27
+
+Explicit Translate now processes RST_STREAM and GOAWAY even within a held suffix.
+Both directional holds are updated in the same backend transaction as output,
+input ownership and credit. Cancelled DATA is discarded immediately; partial DATA
+keeps only the count of remaining bytes to skip. Other retained streams keep their
+drafts. Source HPACK blocks remain until their direction resumes, updating only
+the input decoder; already encoded output headers keep their required ordering.
+Cancelled messages no longer appear as incomplete logical bodies. Resets are not
+forwarded to recipients that have never seen the initiating stream's headers.
+
+END_STREAM trailers complete reserved bodies and participate in Content-Length
+repair, output draining and cancellation. A fragmented cancelled trailer still
+updates the source dynamic table before later indexed headers are interpreted.
+
+The backend reserves one 1 MiB hold slot per direction with an active reserved
+body, owned DATA or early-credit debt, plus the shared 1 MiB control slot. This
+charges roughly 2 MiB for one direction and 3 MiB for both. Once both directions
+have no body, owned input or connection-credit debt, only actual stored metadata
+is charged. New reservations must pass admission again. Slots remain conservative
+full checkpoint limits; two simultaneous single-direction reservations plus
+overhead still exceed a 4 MiB deployment quota.
+
+Tests cover cancellation at DATA header boundaries, partial payload and trailer
+reassembly, mixed retained streams, worker rotation and fresh admission. Each
+safety mode cancels 1200 reserved streams on one connection while checking bounded
+state and exact window restoration. Real JSON/SXBN peers exercise trailers, upload
+and response cancellation, GOAWAY during hold, and subsequent streams/control.
+
+Validation: the full configured run passed **54/54 CTest suites** in **218.39 s**,
+including 15 integration suites and the then-current **104 window tests**. A final
+refinement stages a replacement reservation until the old cancelled body's debt
+has settled, covering reset plus new HEADERS/DATA in the same callback.
+After rebuilding that refinement, all **8/8 targeted suites** passed in **48.39 s**:
+production windows, fresh workers, backend admission, holds and all four reserved
+socket variants. The final window suite contains **106 tests**; its standalone run
+also passed in **26.464 s**. Generated API reference and whitespace checks passed.
+Native production code and live SASlik remained unchanged; no new native P3 was run.

@@ -48,19 +48,21 @@ before returning directional output. Ownership belongs to the deployment
 generation and connection across workers. User `api.state` is not an admission
 authority. Preview requests cannot claim backend reservation support.
 
-Admission charges the full existing serialized checkpoint slots:
+Admission charges full serialized checkpoint slots only where liability remains:
 
 | Slot | Reserved capacity |
 | --- | ---: |
-| L held Parts | 1 MiB |
-| R held Parts | 1 MiB |
-| Shared translation control / output queues | 1 MiB |
+| Each direction with a reserved body, owned DATA or early-credit debt | 1 MiB |
+| Shared translation control / output queues while reserved | 1 MiB |
 
 Actual script state, HPACK checkpoints and structural overhead are added.
-`state_bytes` includes these slots. With a 4 MiB deployment limit, two independent
-connections cannot each promise roughly 3 MiB. Both directions share one connection's
-reservation. Slots stay charged until the instance ends, even after Parts and output
-drain. This conservative model is not exact process-RSS accounting.
+`state_bytes` includes these slots: approximately 2 MiB for one active direction,
+3 MiB for two. With the 4 MiB deployment limit, two simultaneous single-direction
+reservations plus metadata still exceed the quota. Both directions share the control
+slot. Directional slots are reclaimed as their liabilities settle. The final shared
+reservation is released only when both directions have no reserved body, no owned
+input and no early connection-credit debt. A later body must pass admission again.
+Actual retained HPACK metadata remains charged. This is not exact RSS accounting.
 
 Serialization and worker-envelope limits remain independent. Very fragmented or
 metadata-heavy traffic can reach a checkpoint limit before the encoded-body cap.
@@ -88,15 +90,16 @@ Only actually emitted SETTINGS/WINDOW_UPDATE change input allowances; ACK bounda
 cover initial-window changes and in-flight data.
 
 Early connection grants are also bounded by retained source input not already
-credited. Connection debt follows the ordered retained prefix across streams.
+credited. Connection debt is backed by the retained input pool across streams;
+normal release is ordered, but cancellation can settle any cancelled ownership first.
 Stream debt is separate and grants respect the body's remaining limit. Accepting
 original DATA settles these debts before ordinary refunds are recorded. This
 physical-input provenance, including padding, survives JSON checkpoints and worker
 rotation independently of mutable output bodies.
 
 Input transferred into blocked output stays owned until that output drains or is
-discarded. Releasing Parts does not free capacity backing queued output or promised
-credit. Serialized slots remain reserved for the whole connection as well.
+discarded. Releasing Parts alone does not free capacity backing queued output or
+promised credit. Settled ownership, rather than connection lifetime, releases slots.
 Receiver WINDOW_UPDATEs still feed output windows rather than passing through.
 
 ## Transaction and failures
@@ -112,24 +115,31 @@ Empty forward output plus reverse WINDOW_UPDATE uses `replace` with
 `content-reverse`. The worker owns held Parts; native need-more does not retain
 a second copy. Real proxy fixtures cover JSON and negotiated SXBN.
 
-Unknown-size input must complete before exhausting its cap, with END_STREAM on
-the DATA reaching it. Exceeding the limit, exhausting capacity, or having no
+Input must complete before exhausting its cap, with END_STREAM on the DATA
+reaching it. A body terminated by trailers therefore needs a reservation larger
+than its DATA byte count (including padding). Exceeding the limit, exhausting capacity, or having no
 effective input window that consumed-byte advancement can reopen fails explicitly.
 There is no silent wait at the cap or automatic streaming fallback. Lost ownership
 or an older input ownership checkpoint requires reconnection.
 
-RST_STREAM or GOAWAY exclusion of a fully released reserved body discards pending
-DATA and settles remaining connection credit without closing the connection.
-Release is checkpointed only when original END_STREAM DATA is accepted, not merely
-when content is complete or its header is emitted. This marker survives worker
-rotation. A retained reset does not release the reservation until it is forwarded.
-Repeated cancellation cannot refund input twice; a subsequent body can reserve
-the same direction. Backend slot charges still last until connection end.
+RST_STREAM and GOAWAY are processed during explicit Translate even inside a body
+hold. Cancelled DATA is discarded from both the output queue and both directional
+hold checkpoints, atomically with credit settlement and backend publication.
+Initial headers still retained at the source do not establish a recipient stream;
+a reset from their initiator is suppressed rather than sent on an idle stream.
 
-Cancellation while original body Parts remain held still causes **strict connection
-teardown**. Cross-direction disposal of held drafts is not implemented. Bodies
-ending in trailers and older checkpoints without the release marker conservatively
-retain this strict behavior while pending. Existing unreserved handling is unchanged.
+Retained source HPACK blocks survive cancellation until that direction resumes.
+They update the input decoder only; their drafts are discarded, and they appear
+complete to the script so the cancelled body does not request another hold.
+Already encoded output headers remain ordered for the recipient decoder. Other
+streams' retained drafts and data remain intact. Partial DATA retains only a byte
+count to skip; its physical input cursor still consumes the remainder exactly once.
+
+END_STREAM trailers complete reserved bodies and record release like END_STREAM
+DATA. Repeated cancellation cannot refund input twice. A subsequent body can reserve
+the same direction, subject to fresh admission if the previous liability settled.
+Reset and replacement reservation may share a callback: the old stream's debt is
+settled before the staged new reservation starts granting credit.
 Easy and Expert share these limits; arbitrary-size bodies and full lifecycle
 repair are not promised.
 
@@ -140,9 +150,11 @@ zero/unchanged/expanded output, gzip, padding, partial DATA, competing streams,
 simultaneous directional holds, exhaustion, source Content-Length despite edits,
 immutable limits, failed commit/retry, cancellation, fresh workers and lost ownership.
 Independent hyper-h2 endpoints validate windows and Content-Length. Backend tests
-race connections for admission, retain charges after release and recover capacity
-on stop. Real JSON/SXBN socket fixtures exercise both Easy and Expert.
+race connections for admission and recover capacity after settled output, cancellation
+and stop. Worker tests rotate processes across partial DATA and cross-direction
+cancellation. Churn tests cancel 1200 reserved streams per safety mode while checking
+bounded state and quota release. Real JSON/SXBN socket fixtures exercise both Easy
+and Expert, trailers, collecting/pending cancellation and subsequent traffic.
 
-Future refinements include earlier reservation reclamation with a proof of remaining
-liability, finer deployment admission, graceful cancellation of retained body Parts and
-explicit streaming fallback. These are not enabled by the current API.
+Future refinements include smaller per-body serialized capacity classes and explicit
+streaming fallback. The current reservation still uses full 1 MiB checkpoint slots.

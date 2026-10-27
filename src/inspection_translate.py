@@ -185,9 +185,12 @@ class _TranslationHoldCredit:
 
     def __init__(self, transaction, flow, incoming, cut):
         self.flow, self.incoming = flow, incoming
+        self.pending = None
         side = flow.side
         direction = flow.state[side]
         for part, limit in transaction.body_reservations:
+            if flow.cancelled(side, part.stream_id):
+                continue
             if not transaction.hold_credit_available:
                 raise CommitException('Body reservation requires backend admission support')
             positions = [i for i, item in enumerate(transaction.message.parts) if item is part]
@@ -199,20 +202,27 @@ class _TranslationHoldCredit:
             lengths = transaction.source_lengths[id(part)]
             if any(not value.isdigit() or int(value) > limit for value in lengths):
                 raise CommitException('Content-Length exceeds reserved encoded body limit')
-            current = direction.get('body')
+            old = direction.get('body')
+            current = self.pending or (old if old and not flow.cancelled(side, old['stream']) else None)
             if current and (current['stream'] != part.stream_id or current['limit'] != limit):
                 raise CommitException('Only one body reservation per direction; its limit is immutable')
             if not current:
                 if str(part.stream_id) in direction['streams'] or flow.retired(side, part.stream_id):
                     raise CommitException('Body reservation requires headers retained before any output')
-                direction['body'] = {'stream': part.stream_id, 'limit': limit,
-                                     'stream_due': 0, 'advanced': 0}
+                candidate = {'stream': part.stream_id, 'limit': limit,
+                             'stream_due': 0, 'advanced': 0}
+                if old and flow.cancelled(side, old['stream']):
+                    # Preserve the old stream debt until its held DATA has been
+                    # disposed of, then install the new reservation atomically.
+                    self.pending = candidate
+                else:
+                    direction['body'] = candidate
                 flow.state['hold_reserved'] = True
         if flow.state.get('hold_reserved') and not transaction.hold_credit_available:
             raise CommitException('Body reservation backend capability lost')
         # A reserved body is an all-or-nothing retained semantic message.
         reservation = direction.get('body')
-        if reservation:
+        if reservation and not flow.cancelled(side, reservation['stream']):
             for part in transaction.message.parts[:cut]:
                 if part.frame_type == 1 and part.stream_id == reservation['stream']:
                     if not part.content.complete:
@@ -226,16 +236,25 @@ class _TranslationHoldCredit:
                 continue
             stream = reservation['stream']
             if self.incoming.cancelled(side, stream):
+                if self.flow.cancelled(side, stream) and side in self.flow.disposed:
+                    if reservation['stream_due']:
+                        raise CommitException('Cancelled body credit did not settle')
+                    del direction['body']
+                    if side != self.flow.side or self.pending is None:
+                        continue
+                    direction['body'] = reservation = self.pending
+                    stream = reservation['stream']
                 # Only a fully accepted original body has no retained Parts to
                 # dispose of in another callback direction. Output cancellation
                 # has already discarded its DATA and settled ownership in finish().
-                if reservation.get('released') and not reservation['stream_due']:
+                elif reservation.get('released') and not reservation['stream_due']:
                     if self.flow.cancelled(side, stream):
                         del direction['body']
                     # A retained reset affects input policing before forwarding.
                     # Keep the reservation until that reset is actually accepted.
                     continue
-                raise CommitException('Reserved H2 body cancelled; strict teardown releases reservation')
+                else:
+                    raise CommitException('Reserved H2 body cancelled; strict teardown releases reservation')
             if self.flow.retired(side, stream):
                 if reservation['stream_due']:
                     raise CommitException('Reserved H2 body credit did not settle')
@@ -301,6 +320,7 @@ class _TranslationFlow:
         self.side = side
         self.peer = 'R' if side == 'L' else 'L'
         self.output = {'L': bytearray(), 'R': bytearray()}
+        self.disposed = set()
         self.queues = {key: [base64.b64decode(value, validate=True)
                              for value in state[key]['queue']] for key in ('L', 'R')}
 
@@ -409,6 +429,16 @@ class _TranslationFlow:
             self.close(side, part.stream_id)
         self.discard_cancelled()
 
+    def discard_input(self, side, stream_id, amount):
+        direction = self.state[side]
+        advanced = min(amount, direction.get('advance_due', 0))
+        direction['advance_due'] = direction.get('advance_due', 0) - advanced
+        direction['credit'] += amount - advanced
+        direction['cancelled_owned'] = direction.get('cancelled_owned', 0) + amount
+        reservation = direction.get('body')
+        if reservation and reservation['stream'] == stream_id:
+            reservation['stream_due'] -= min(amount, reservation['stream_due'])
+
     def discard_cancelled(self):
         for side in ('L', 'R'):
             # Encoded headers must still reach the peer's HPACK decoder, even
@@ -440,6 +470,13 @@ class _TranslationFlow:
         if kind == 4:
             self.settings(part)
         if kind == 3:
+            # A locally initiated stream whose original headers are still held
+            # does not exist at the recipient. Do not send RST_STREAM on idle.
+            initiated = part.stream_id & 1 == (side == 'L')
+            queued = any(item[3] == 1 and int.from_bytes(item[5:9], 'big') & self.MAX_WINDOW == part.stream_id
+                         for item in self.queues[side] if not item.startswith(_H2_PREFACE))
+            if initiated and not queued and not self._contains(self.state[side].get('opened', {}), part.stream_id):
+                wire = b''
             self.reset(part)
         if kind == 7:
             self.goaway(part)
@@ -447,15 +484,15 @@ class _TranslationFlow:
         if kind == 0:
             amount = int.from_bytes(bytes(part._wire)[:3], 'big')
             direction = self.state[side]
-            # Early connection credit belongs to the retained input prefix,
-            # which is released in source order. Stream credit has its own debt.
+            if self.cancelled(side, part.stream_id):
+                self.discard_input(side, part.stream_id, amount)
+                return
+            # Early connection credit is backed by the retained input pool.
+            # Normal release follows source order; cancellation may settle any
+            # of that ownership first. Stream credit has its separate debt.
             advanced = min(amount, direction.get('advance_due', 0))
             direction['advance_due'] = direction.get('advance_due', 0) - advanced
             direction['credit'] += amount - advanced
-            if self.cancelled(side, part.stream_id):
-                # In-flight DATA after reset still consumes connection credit.
-                direction['cancelled_owned'] = direction.get('cancelled_owned', 0) + amount
-                return
             stream = self.stream(side, part.stream_id)
             if stream['closed'] or stream.get('ended'):
                 raise CommitException('DATA after translated stream termination')
@@ -477,6 +514,9 @@ class _TranslationFlow:
         if kind == 1 and part.flags & 1 and not self.cancelled(side, part.stream_id):
             if not self.retired(side, part.stream_id):
                 self.stream(side, part.stream_id)['ended'] = True
+            reservation = self.state[side].get('body')
+            if reservation and reservation['stream'] == part.stream_id:
+                reservation['released'] = True
 
         # Control frames must not wait behind DATA whose credit they enable.
         # Header blocks stay indivisible; queued output never ends mid-block.
@@ -497,6 +537,8 @@ class _TranslationFlow:
             wire = queue[0]
             if wire.startswith(_H2_PREFACE) or wire[3] != 0:
                 self.output[side].extend(queue.pop(0))
+                if not wire.startswith(_H2_PREFACE) and wire[3] == 1:
+                    self._remember(side, 'opened', int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW)
                 if not wire.startswith(_H2_PREFACE) and wire[3] == 1 and wire[4] & 1:
                     stream_id = int.from_bytes(wire[5:9], 'big') & self.MAX_WINDOW
                     self.close(side, stream_id)
@@ -599,9 +641,9 @@ class ConnectionHttp2:
         self._connection = connection
 
     @api_method('header: RewritePart, max_bytes: int', 'None',
-                'Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available. The limit counts original encoded DATA including padding, up to 256 KiB; it is immutable. One collecting body per direction. Backend checkpoint capacity remains reserved until connection end.',
+                'Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available, including END_STREAM trailers. The limit counts original encoded DATA including padding, up to 256 KiB; it is immutable. One collecting body per direction. Backend capacity is released after both directions settle their reserved bodies, input ownership and early credit.',
                 'api.connection.set_mode(Mode.Translate)\nfor part in api.message.parts:\n    if part.type == PartType.Http2.Header and part.complete and part.content.complete is False:\n        api.message.parts.hold_from(part)\n        api.connection.http2.reserve_body(part, 128 * 1024)\n        break\nreturn api.message.translate()',
-                availability='Live sole flow deployment with backend reservation support and content-reverse. Cancellation while original body Parts remain held, or exhausted capacity, tears down strict translation. Fully released bodies may cancel pending output without closing the connection.',
+                availability='Live sole flow deployment with backend reservation support and content-reverse. RST_STREAM and GOAWAY bypass body hold during explicit Translate, dispose cancelled DATA and preserve source HPACK history. Exhausted capacity still tears down strict translation.',
                 access='staged body reservation')
     def reserve_body(self, header, max_bytes):
         if type(max_bytes) is not int or not 0 < max_bytes <= _TranslationHoldCredit.MAX_BODY:
@@ -947,6 +989,10 @@ def _resume_translation(message, checkpoint, settings=None):
     data = message.bytes
     preface = False
     settings = settings or _TranslationSettings()
+    # A cancelled partial DATA frame retains only its remaining byte count.
+    # The input ledger still consumes those bytes through its physical cursor.
+    discard = settings.state.get('flow', {}).get(settings.side, {}).get('discard_bytes', 0)
+    data = data[min(discard, len(data)):]
 
     # Complete held ACKs precede fresh input and can change its frame limit.
     for part in held:
@@ -1043,6 +1089,10 @@ class _Translation:
         self.flow_summary = None
         self.body_reservations = []
         self.hold_credit_available = False
+        self.peer_hold_known = False
+        self.peer_hold = None
+        self.peer_hold_result = None
+        self.peer_hold_changed = False
         self.control_before = _TranslationSettings(control, side).state
         if control is None and reverse_capable:
             self.control_before['flow'] = _TranslationFlow.initial()
@@ -1083,10 +1133,44 @@ class _Translation:
                 # HEADERS, including responses on the promised stream.
                 self._decode_headers(part, active)
 
+        flow = self.control_before.get('flow')
+        if flow is not None:
+            ledger = _TranslationFlow(flow, side)
+            for part in message.parts:
+                if part.complete and part.stream_id and ledger.cancelled(side, part.stream_id):
+                    # Compression history is retained, but a cancelled message
+                    # must not look like a body still waiting for more DATA.
+                    part._translate_cancelled = True
         object.__setattr__(message, '_body_sizes', {
             id(group[0]): sum(len(p._data) for p in group if p.frame_type == 0)
             for group in _h2_content_groups(message.parts)
         })
+
+    @staticmethod
+    def _discard_held(parts, flow, side):
+        kept = []
+        direction = flow.state[side]
+        for part in parts:
+            if part.stream_id and flow.cancelled(side, part.stream_id):
+                if part.frame_type == 0 and len(part._wire) >= 9:
+                    amount = int.from_bytes(bytes(part._wire)[:3], 'big')
+                    flow.discard_input(side, part.stream_id, amount)
+                    if not part.complete:
+                        direction['discard_bytes'] = 9 + amount - len(part._wire)
+                    continue
+                if part.frame_type in (1, 5):
+                    # Keep the source HPACK block until its direction resumes.
+                    # It will update only the input decoder, never the peer.
+                    part.headers = None
+                    part._pending = None
+                    part._translate_draft = False
+                    part._translate_cancelled = True
+                    for name in ('_body_plain', '_decoded_body'):
+                        if hasattr(part, name):
+                            delattr(part, name)
+            kept.append(part)
+        flow.disposed.add(side)
+        return kept
 
     def _validate_push(self, part):
         """Check push envelope, without pretending to track every stream state."""
@@ -1211,17 +1295,40 @@ class _Translation:
                 if 'flow' in settings.state else None)
         incoming = _TranslationInput(flow) if flow is not None else None
         if incoming is not None:
+            direction = flow.state[settings.side]
+            if 'discard_bytes' in direction:
+                remaining = max(0, direction['discard_bytes'] - len(message.bytes))
+                if remaining:
+                    direction['discard_bytes'] = remaining
+                else:
+                    del direction['discard_bytes']
             incoming.receive(settings.side, message.bytes)
+        terminal = set()
+        if flow is not None:
+            # Translate owns terminal control even when an application body is
+            # held. Otherwise a same-direction reset could wait behind that body.
+            for part, original in zip(message.parts, self.originals):
+                if part.complete and part.frame_type in (3, 7):
+                    if part.commit() != original:
+                        raise CommitException('Translate terminal controls cannot be edited')
+                    flow.accept(part, original)
+                    terminal.add(id(part))
         hold_credit = _TranslationHoldCredit(self, flow, incoming, cut) if flow is not None else None
 
         emitted = message.parts[:cut]
-        body_overrides = _encoded_h2_bodies(emitted)
-        header_lengths = self._body_lengths(emitted, body_overrides, flow)
+        live = [part for part in emitted if flow is None or not flow.cancelled(settings.side, part.stream_id)]
+        body_overrides = _encoded_h2_bodies(live)
+        header_lengths = self._body_lengths(live, body_overrides, flow)
 
         for part, original in zip(emitted, self.originals):
             start = len(output)
+            if id(part) in terminal:
+                continue
             if not part.complete:
                 raise CommitException('Incomplete H2 part: hold_from(part) before translate')
+
+            if flow is not None and flow.cancelled(settings.side, part.stream_id) and part.frame_type in (1, 5):
+                continue  # Input HPACK was decoded; cancelled drafts have no output context.
 
             if part._initial[0] == 0:
                 output.extend(self._translate_data(body_overrides.get(id(part), part), original,
@@ -1272,11 +1379,33 @@ class _Translation:
             output.extend(settings.pending_policy_frame())
 
         reverse_output = b''
+        suffix = [part for part in message.parts[cut:] if id(part) not in terminal]
+        suffix_fields = {}
+        peer_held = self.peer_hold
         if flow is not None:
+            # Work on private copies: failed serialization may be retried using
+            # the same callback-local draft and neither hold may change early.
+            copied, _ = _restore(_checkpoint([copy.copy(part) for part in suffix], {}))
+            suffix_fields = {id(clone): self._header_fields(original)
+                             for original, clone in zip(suffix, copied)
+                             if original.complete and original.frame_type in (1, 5)}
+            suffix = self._discard_held(copied, flow, settings.side)
+            if self.peer_hold_known:
+                peer_parts, peer_sizes = _restore(self.peer_hold) if self.peer_hold else ([], {})
+                peer_parts = self._discard_held(peer_parts, flow, flow.peer)
+                peer_held = _checkpoint(peer_parts, peer_sizes) if peer_parts else None
             flow.output[settings.side].extend(output)
             forward, reverse_output = flow.finish()
             incoming.finish()
             hold_credit.advance()
+            if flow.state.get('hold_reserved') and all(
+                    not flow.state[side].get('body') and
+                    not flow.state[side].get('advance_due', 0) and
+                    not flow.state[side]['input']['owned'] for side in ('L', 'R')):
+                # No reserved stream or source bytes remain to back future
+                # grants/output. Remaining HPACK metadata is charged as actual
+                # state; a later reservation must pass admission again.
+                flow.state['hold_reserved'] = False
             if sum(map(len, flow.output.values())) > 1024 * 1024:
                 raise CommitException('Translated directional output exceeds 1 MiB')
             forward, reverse_output = bytes(flow.output[flow.side]), bytes(flow.output[flow.peer])
@@ -1316,7 +1445,6 @@ class _Translation:
         result = bytes(output)
 
         if boundary is not None:
-            suffix = message.parts[cut:]
             saved = []
 
             try:
@@ -1325,9 +1453,11 @@ class _Translation:
                             (part.frame_type, part.flags, part.stream_id) != part._initial):
                         raise CommitException('Cannot hold an edited incomplete H2 part')
 
-                    if part.complete and part.frame_type in (1, 5):
+                    if part.complete and part.frame_type in (1, 5) and not (
+                            flow is not None and flow.cancelled(settings.side, part.stream_id)):
                         # Normalize only the checkpoint, never the user's live draft.
-                        fields = self._header_fields(part)
+                        # Copies retain resolved logical fields from the live draft.
+                        fields = suffix_fields[id(part)] if flow is not None else self._header_fields(part)
                         saved.append((part, part.headers, getattr(part, '_translate_draft', None)))
                         part.headers = H2Headers([
                             HpackField(name, value, 'never' if sensitive else 'without', 0, 0)
@@ -1354,6 +1484,8 @@ class _Translation:
         self.checkpoint = checkpoint
         self.control_checkpoint = settings.state
         self.reverse_output = reverse_output
+        self.peer_hold_result = peer_held
+        self.peer_hold_changed = self.peer_hold_known and peer_held != self.peer_hold
         if flow is not None:
             self.flow_summary = {
                 'pending_bytes': sum(len(wire) for queue in flow.queues.values() for wire in queue),
@@ -1439,6 +1571,8 @@ def _prepare_translation(message, request):
         reverse_capable = info.get('webhook_control', {}).get('content-reverse') is True
         transaction = _Translation(message, request.get('translate_state'), active, control, side, reverse_capable)
         transaction.hold_credit_available = request.get('hold_credit_available') is True
+        transaction.peer_hold_known = 'peer_held_parts' in request
+        transaction.peer_hold = request.get('peer_held_parts')
         if transaction.control_before.get('flow', {}).get('hold_reserved') and not request.get('hold_credit_reserved'):
             raise CommitException('Body reservation owner lost; reconnect')
         object.__setattr__(message, '_translation', transaction)

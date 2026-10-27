@@ -464,9 +464,12 @@ def _h2_content_groups(parts):
     active, groups = {}, []
     for part in parts:
         if not part.type.startswith('http1.'):
-            part.content = PartContent(None)
+            part.content = PartContent(True if part.complete and getattr(part, '_translate_cancelled', False) else None)
 
     for part in parts:
+        if getattr(part, '_translate_cancelled', False):
+            active.pop(part.stream_id, None)
+            continue
         # Unknown bytes may hide a boundary or data. Never claim completeness
         # through a gap we cannot interpret. RST_STREAM is not END_STREAM.
         if part.frame_type is None:

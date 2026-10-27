@@ -1695,7 +1695,7 @@ Ordered mutable parts with an explicit suffix hold boundary.
 
 ### PartList.hold_from
 
-Hold this part and everything after it. Return message.commit() in rewrite or message.translate() in translate to publish the prefix and retain the suffix for the next callback.
+Hold this part and everything after it. Return message.commit() in rewrite or message.translate() in translate to publish the prefix and retain the suffix for the next callback. Translate processes RST_STREAM and GOAWAY even inside the suffix, discarding cancelled DATA while preserving HPACK history.
 
 Availability: Live flow deployment at the end of the enabled chain.
 
@@ -1781,9 +1781,9 @@ Persistent HTTP/2 policy, applied only by an explicitly returned translate resul
 
 ### ConnectionHttp2.reserve_body
 
-Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available. The limit counts original encoded DATA including padding, up to 256 KiB; it is immutable. One collecting body per direction. Backend checkpoint capacity remains reserved until connection end.
+Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available, including END_STREAM trailers. The limit counts original encoded DATA including padding, up to 256 KiB; it is immutable. One collecting body per direction. Backend capacity is released after both directions settle their reserved bodies, input ownership and early credit.
 
-Availability: Live sole flow deployment with backend reservation support and content-reverse. Cancellation while original body Parts remain held, or exhausted capacity, tears down strict translation. Fully released bodies may cancel pending output without closing the connection.
+Availability: Live sole flow deployment with backend reservation support and content-reverse. RST_STREAM and GOAWAY bypass body hold during explicit Translate, dispose cancelled DATA and preserve source HPACK history. Exhausted capacity still tears down strict translation.
 
 Access: staged body reservation; type/result: `None`.
 

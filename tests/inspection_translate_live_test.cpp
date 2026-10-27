@@ -126,17 +126,39 @@ int main() {
     assert((status_a == 200 && status_b == 503) || (status_a == 503 && status_b == 200));
     const auto winner = status_a == 200 ? "reserve-a" : "reserve-b";
     auto charge = engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>();
-    assert(charge > 3 * 1024 * 1024 && charge < 4 * 1024 * 1024);
+    assert(charge > 2 * 1024 * 1024 && charge < 3 * 1024 * 1024);
     auto early = reserve_send(winner, 3, frame("abc", 0, 0));
     assert(early.status == 200 && early.body["action"] == "replace");
     assert(early.body["content"] == "" && early.body.contains("content-reverse"));
     auto released = reserve_send(winner, 4, frame("def", 0, 1));
     assert(released.status == 200 && released.body["action"] == "replace");
-    // Releasing Parts must not release capacity backing already granted credit.
-    assert(engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>() > 3 * 1024 * 1024);
-    engine.automatic({{"action", "connection-stop"}, {"id", winner}}, json::array());
+    // Completed output has settled all early credit: the live connection now
+    // needs only actual metadata, and another connection can obtain admission.
     assert(engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>() < 65536);
     assert(reserve_send("reserve-c", 1, preface).status == 200);
     assert(reserve_send("reserve-c", 2, request_header).status == 200);
+    assert(reserve_send("reserve-c", 3, frame("abc", 0, 0)).status == 200);
+    assert(send("reserve-c", 4, frame(std::string("\x88", 1)), false, true, "R", true, true).status == 200);
+    assert(engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>() > 3 * 1024 * 1024);
+    assert(send("reserve-c", 5, frame("reply", 0, 1), false, true, "R", true, true).status == 200);
+    charge = engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>();
+    assert(charge > 2 * 1024 * 1024 && charge < 3 * 1024 * 1024);
+    const auto reset = frame(std::string("\0\0\0\x08", 4), 3, 0);
+    auto cancelled = send("reserve-c", 6, reset, false, true, "R", true, true);
+    assert(cancelled.status == 200 && cancelled.body["action"] == "replace");
+    assert(engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>() < 65536);
+    assert(engine.status().dump().find("peer_held_parts") == std::string::npos);
+    // Resume the cancelled direction: its saved HPACK block is consumed without
+    // leaking the cancelled body or replaying its already-refunded DATA.
+    auto next_header = request_header;
+    next_header[8] = 5;
+    assert(reserve_send("reserve-c", 7, next_header).status == 200);
+    auto next_data = frame("", 0, 1);
+    next_data[8] = 5;
+    assert(reserve_send("reserve-c", 8, next_data).status == 200);
+    assert(reserve_send("reserve-d", 1, preface).status == 200);
+    assert(reserve_send("reserve-d", 2, request_header).status == 200);
+    engine.automatic({{"action", "connection-stop"}, {"id", "reserve-d"}}, json::array());
+    assert(engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>() < 65536);
     std::cout << "Live translate routing, admission, control and failure tests passed\n";
 }

@@ -271,11 +271,13 @@ nlohmann::json Inspection::run(nlohmann::json request) {
     request.erase("translate_allowed");
     request.erase("translate_active");
     request.erase("held_parts");
+    request.erase("peer_held_parts");
     request.erase("hold_allowed"); // Preview never creates a transport hold.
     request.erase("hold_credit_available");
     request.erase("hold_credit_reserved");
     auto result = run_request(std::move(request), nullptr);
     result.erase("held_parts");
+    result.erase("peer_held_parts");
     result.erase("translate_state");
     result.erase("translate_control");
     return result;
@@ -300,6 +302,7 @@ nlohmann::json Inspection::run_request(nlohmann::json request, const std::shared
     summary.erase("replacement_reverse");
     summary.erase("instance_state");
     summary.erase("held_parts");
+    summary.erase("peer_held_parts");
     summary.erase("translate_state");
     summary.erase("translate_control");
     summary.erase("hold_credit_reservation");
@@ -311,9 +314,13 @@ std::size_t Inspection::state_charge(const nlohmann::json& state, const nlohmann
                                      const nlohmann::json& translations, bool reserved) {
     auto bytes = state.dump().size() + holds.dump().size() + translations.dump().size();
     if (!reserved) return bytes;
-    // Reserve the full existing checkpoint limits, not an optimistic body-size
-    // multiplier. JSON framing/drafts can cost much more than encoded DATA.
+    // Keep full checkpoint slots only for directions with outstanding source
+    // ownership or body credit. The shared control slot backs queued output.
+    const auto& flow = translations.at("settings").at("flow");
     for (const auto* side : {"L", "R"}) {
+        const auto& direction = flow.at(side);
+        if (!direction.contains("body") && direction.value("advance_due", 0LL) == 0 &&
+            direction.at("input").value("owned", 0LL) == 0) continue;
         const auto used = holds.contains(side) ? holds.at(side).dump().size() : 0;
         bytes += 1024 * 1024 - std::min<std::size_t>(used, 1024 * 1024);
     }
@@ -413,6 +420,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     auto result = run_request({{"script", item["script"]}, {"event", event}, {"enrichments", enrichments},
         {"script_id", id}, {"timeout_ms", budget}, {"instance_state", previous},
         {"held_parts", holds.value(side, nlohmann::json(nullptr))},
+        {"peer_held_parts", holds.value(side == "L" ? "R" : "L", nlohmann::json(nullptr))},
         {"hold_allowed", hold_allowed && mode == "flow"},
         {"hold_credit_available", hold_allowed && mode == "flow"},
         {"hold_credit_reserved", previously_reserved},
@@ -430,6 +438,12 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         const auto held = result.value("held_parts", nlohmann::json(nullptr));
         if (held.is_null()) holds.erase(side);
         else holds[side] = held;
+        const bool peer_changed = result.contains("peer_held_parts");
+        const auto peer_held = result.value("peer_held_parts", nlohmann::json(nullptr));
+        if (peer_changed) {
+            if (peer_held.is_null()) holds.erase(side == "L" ? "R" : "L");
+            else holds[side == "L" ? "R" : "L"] = peer_held;
+        }
         const auto state_size = next.dump().size();
         const auto translated = result.value("translate_state", nlohmann::json(nullptr));
         const auto settings = result.value("translate_control", nlohmann::json(nullptr));
@@ -439,7 +453,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
             translations["settings"] = settings;
         }
 
-        const bool reserved = previously_reserved || result.value("hold_credit_reservation", false);
+        const bool reserved = result.value("hold_credit_reservation", previously_reserved);
         const auto bytes = state_charge(next, holds, translations, reserved);
         const auto previous_bytes = runtime->states.contains(key) ? runtime->states.at(key).bytes : 0;
         const bool invalid_state = !next.is_object() || state_size > 65536;
@@ -449,12 +463,15 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
             !settings.is_object() || settings.dump().size() > 1024 * 1024);
         const bool invalid_hold = !held.is_null() && (
             !hold_allowed || mode != "flow" || !held.is_object() || held.dump().size() > 1024 * 1024);
+        const bool invalid_peer_hold = peer_changed && (
+            !hold_allowed || mode != "flow" || translated.is_null() ||
+            (!peer_held.is_null() && (!peer_held.is_object() || peer_held.dump().size() > 1024 * 1024)));
         const bool invalid_reservation = reserved &&
             (!hold_allowed || mode != "flow" || translated.is_null() || !settings.is_object());
         const bool deployment_full = !key.empty() &&
             runtime->state_bytes.load() - previous_bytes + bytes > 4 * 1024 * 1024;
 
-        if (invalid_state || invalid_translation || invalid_hold || invalid_reservation || deployment_full) {
+        if (invalid_state || invalid_translation || invalid_hold || invalid_peer_hold || invalid_reservation || deployment_full) {
             result = failure("Instance state / hold exceeds allowed mode or 64 KiB state / 1 MiB hold / 4 MiB deployment quota");
         } else if (!key.empty()) {
             std::scoped_lock lock(mutex_);
@@ -479,6 +496,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     }
     result.erase("instance_state");
     result.erase("held_parts"); // Never publish checkpoint bytes into GUI/events.
+    result.erase("peer_held_parts");
     result.erase("translate_state");
     result.erase("translate_control");
     result.erase("hold_credit_reservation");

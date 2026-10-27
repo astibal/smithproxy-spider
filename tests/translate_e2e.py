@@ -107,13 +107,15 @@ def windows_exchange(client, origin, reserved=False):
     """Real peers enforce flow control; only their WINDOW_UPDATEs release queues."""
     from h2.config import H2Configuration
     from h2.connection import H2Connection
-    from h2.events import DataReceived, StreamEnded, StreamReset
+    from h2.events import DataReceived, StreamEnded, StreamReset, ConnectionTerminated, WindowUpdated
 
     sockets = {'L': client, 'R': origin}
     peers = {side: H2Connection(H2Configuration(client_side=side == 'L')) for side in sockets}
     received = {'L': {}, 'R': {}}
     ended = set()
     reset = set()
+    terminated = set()
+    updated = set()
 
     def send(side):
         data = peers[side].data_to_send()
@@ -144,6 +146,10 @@ def windows_exchange(client, origin, reserved=False):
                         ended.add((side, event.stream_id))
                     if isinstance(event, StreamReset):
                         reset.add((side, event.stream_id))
+                    if isinstance(event, ConnectionTerminated):
+                        terminated.add(side)
+                    if isinstance(event, WindowUpdated):
+                        updated.add((side, event.stream_id))
                 send(side)
 
     for side, peer in peers.items():
@@ -166,11 +172,15 @@ def windows_exchange(client, origin, reserved=False):
                 while sent < len(value):
                     progress(lambda: peers[side].local_flow_control_window(stream) > 0)
                     count = min(16000, len(value) - sent, peers[side].local_flow_control_window(stream))
-                    peers[side].send_data(stream, value[sent:sent + count], end_stream=sent + count == len(value))
+                    peers[side].send_data(stream, value[sent:sent + count],
+                                          end_stream=sent + count == len(value) and stream not in (1, 5))
                     sent += count
                     send(side)
                     if sent < len(value):
                         assert not received[target].get(stream), 'Retained body leaked before completion'
+                if stream in (1, 5):
+                    peers[side].send_headers(stream, [(b'x-complete', b'trailers')], end_stream=True)
+                    send(side)
             else:
                 peers[side].send_data(stream, value, end_stream=True)
                 send(side)
@@ -198,9 +208,56 @@ def windows_exchange(client, origin, reserved=False):
         peers['R'].send_headers(9, [(b':status', b'204')], end_stream=True)
         send('R')
         progress(lambda: ('L', 9) in ended)
+        # Cancel an upload before the origin has even seen its retained headers.
+        # Forwarding that reset to the idle recipient stream would be invalid.
+        peers['L'].send_headers(11, request)
+        peers['L'].send_data(11, b'x' * 16000)
+        send('L')
+        peers['L'].reset_stream(11)
+        send('L')
+        peers['L'].send_headers(13, request[:-1], end_stream=True)
+        send('L')
+        progress(lambda: ('R', 13) in ended)
+        assert not received['R'].get(11), 'Cancelled retained upload leaked'
+        peers['R'].send_headers(13, [(b':status', b'204')], end_stream=True)
+        send('R')
+        progress(lambda: ('L', 13) in ended)
+        # The reverse direction holds a response on a request known to both peers.
+        peers['L'].send_headers(15, request[:-1], end_stream=True)
+        send('L')
+        progress(lambda: ('R', 15) in ended)
+        peers['R'].send_headers(15, [(b':status', b'200'), (b'content-length', b'100000')])
+        peers['R'].send_data(15, b'x' * 16000)
+        send('R')
+        peers['R'].reset_stream(15)
+        send('R')
+        progress(lambda: ('L', 15) in reset)
+        assert not received['L'].get(15), 'Cancelled retained response leaked'
+        peers['L'].send_headers(17, request[:-1], end_stream=True)
+        send('L')
+        progress(lambda: ('R', 17) in ended)
+        peers['R'].send_headers(17, [(b':status', b'204')], end_stream=True)
+        send('R')
+        progress(lambda: ('L', 17) in ended)
+        peers['L'].send_headers(21, request)
+        peers['L'].send_data(21, b'x' * 16000)
+        send('L')
+        progress(lambda: ('L', 21) in updated)
+        # hyper-h2 intentionally closes its state on GOAWAY. Use a raw PING
+        # afterwards to verify the translator itself remains live.
+        origin.sendall(frame((17).to_bytes(4, 'big') + b'\0' * 4, 7, 0, 0))
+        progress(lambda: 'L' in terminated)
+        ping = frame(b'holdgone', 6, 0, 0)
+        client.sendall(ping)
+        while True:
+            head, data = receive_frame(origin)
+            if head[3] == 6:
+                assert head + data == ping
+                break
+            assert head[3] == 8, 'Cancelled retained stream leaked after GOAWAY'
         print('PASS: 100 KiB-class reserved bodies across windows in both directions, '
               'zero/unchanged/expanded output, Content-Length repair, pending DATA reset '
-              'and a subsequent stream on the same connection')
+              'and collecting body reset/GOAWAY, trailers and subsequent streams/control on the same connection')
         return
 
     request = [(b':method', b'POST'), (b':scheme', b'http'),
