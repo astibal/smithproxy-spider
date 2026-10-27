@@ -106,7 +106,7 @@ int main() {
         "for part in api.message.parts:\n"
         "    if part.type == PartType.Http2.Header and part.content.complete is False:\n"
         "        api.message.parts.hold_from(part)\n"
-        "        api.connection.http2.reserve_body(part, 128 * 1024)\n"
+        "        api.connection.http2.reserve_body(part, 256 * 1024)\n"
         "        break\n"
         "return api.message.translate()";
     state = configure({{"operation", "deploy"}, {"name", "reserve"}, {"script", reserve_script},
@@ -159,6 +159,27 @@ int main() {
     assert(reserve_send("reserve-d", 1, preface).status == 200);
     assert(reserve_send("reserve-d", 2, request_header).status == 200);
     engine.automatic({{"action", "connection-stop"}, {"id", "reserve-d"}}, json::array());
+    assert(engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>() < 65536);
+    // Smaller holds admit two independent connections under the same 4 MiB
+    // deployment quota. A third must fail atomically, including racing workers.
+    configure({{"operation", "remove"}, {"id", id}});
+    auto small_script = reserve_script;
+    small_script.replace(small_script.find("256 * 1024"), 10, "128 * 1024");
+    state = configure({{"operation", "deploy"}, {"name", "small reserve"}, {"script", small_script},
+                       {"scope", "all"}, {"instancing", "flow"}});
+    id = state["chain"][0]["id"];
+    configure({{"operation", "enable"}, {"id", id}, {"enabled", true}});
+    for (const auto* flow : {"small-a", "small-b", "small-c"})
+        assert(reserve_send(flow, 1, preface).status == 200);
+    std::thread small_a([&] { status_a = reserve_send("small-a", 2, request_header).status; });
+    std::thread small_b([&] { status_b = reserve_send("small-b", 2, request_header).status; });
+    small_a.join(); small_b.join();
+    assert(status_a == 200 && status_b == 200);
+    charge = engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>();
+    assert(charge > 3 * 1024 * 1024 && charge < 4 * 1024 * 1024);
+    assert(reserve_send("small-c", 2, request_header).status == 503);
+    for (const auto* flow : {"small-a", "small-b"})
+        assert(reserve_send(flow, 3, frame("done", 0, 1)).status == 200);
     assert(engine.status()["chain"][0]["state_bytes"].get<std::uint64_t>() < 65536);
     std::cout << "Live translate routing, admission, control and failure tests passed\n";
 }

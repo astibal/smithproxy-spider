@@ -239,13 +239,38 @@ def windows_exchange(client, origin, reserved=False):
         peers['R'].send_headers(17, [(b':status', b'204')], end_stream=True)
         send('R')
         progress(lambda: ('L', 17) in ended)
-        peers['L'].send_headers(21, request)
-        peers['L'].send_data(21, b'x' * 16000)
+        # Two interleaved 100 kB bodies must both obtain early stream credit.
+        # A completed body stays held until the shared suffix can be released.
+        rounds = int(os.environ.get('SPIDER_H2_SOAK_ROUNDS', '1'))
+        assert 1 <= rounds <= 32
+        for cycle in range(rounds):
+            streams = (19 + 4 * cycle, 21 + 4 * cycle)
+            for side, target in (('L', 'R'), ('R', 'L')):
+                fields = request if side == 'L' else [(b':status', b'200'), (b'content-length', b'100000')]
+                for stream in streams:
+                    peers[side].send_headers(stream, fields)
+                send(side)
+                counts = {stream: 0 for stream in streams}
+                while min(counts.values()) < 100000:
+                    for stream in counts:
+                        if counts[stream] == 100000:
+                            continue
+                        progress(lambda: peers[side].local_flow_control_window(stream) > 0)
+                        count = min(16000, 100000 - counts[stream], peers[side].local_flow_control_window(stream))
+                        counts[stream] += count
+                        peers[side].send_data(stream, bytes([stream]) * count, end_stream=counts[stream] == 100000)
+                        send(side)
+                progress(lambda: all((target, stream) in ended for stream in counts))
+                for stream in counts:
+                    assert bytes(received[target][stream]) == bytes([stream]) * 100000
+        cancelled_stream = streams[-1] + 4
+        peers['L'].send_headers(cancelled_stream, request)
+        peers['L'].send_data(cancelled_stream, b'x' * 16000)
         send('L')
-        progress(lambda: ('L', 21) in updated)
+        progress(lambda: ('L', cancelled_stream) in updated)
         # hyper-h2 intentionally closes its state on GOAWAY. Use a raw PING
         # afterwards to verify the translator itself remains live.
-        origin.sendall(frame((17).to_bytes(4, 'big') + b'\0' * 4, 7, 0, 0))
+        origin.sendall(frame(streams[-1].to_bytes(4, 'big') + b'\0' * 4, 7, 0, 0))
         progress(lambda: 'L' in terminated)
         ping = frame(b'holdgone', 6, 0, 0)
         client.sendall(ping)
@@ -257,7 +282,7 @@ def windows_exchange(client, origin, reserved=False):
             assert head[3] == 8, 'Cancelled retained stream leaked after GOAWAY'
         print('PASS: 100 KiB-class reserved bodies across windows in both directions, '
               'zero/unchanged/expanded output, Content-Length repair, pending DATA reset '
-              'and collecting body reset/GOAWAY, trailers and subsequent streams/control on the same connection')
+              f'and collecting body reset/GOAWAY, {rounds} concurrent-body rounds, trailers and subsequent streams/control on the same connection')
         return
 
     request = [(b':method', b'POST'), (b':scheme', b'http'),
@@ -482,11 +507,15 @@ def main():
                 script = ("if api.phase == 'setup':\n"
                           "    api.connection.request_rewrite()\n    return\n"
                           "api.state['binary'] = api.state.get('binary', 0) + (api.info.get('payload_encoding') == 'sxbn-001')\n"
+                          "retaining = False\n"
+                          "first = None\n"
                           "for part in api.message.parts:\n"
+                          "    if first is None and (part.frame_type == 1 or not part.complete): first = part\n"
                           "    if part.type == PartType.Http2.Header and part.complete and part.content.complete is False:\n"
-                          "        api.message.parts.hold_from(part)\n"
-                          "        api.connection.http2.reserve_body(part, 128 * 1024)\n        break\n"
-                          "    if not part.complete:\n        api.message.parts.hold_from(part)\n        break\n"
+                          "        retaining = True\n"
+                          "        api.connection.http2.reserve_body(part, 128 * 1024)\n"
+                          "    if not part.complete: retaining = True\n"
+                          "if retaining: api.message.parts.hold_from(first)\n"
                           "for body in api.message.bodies():\n"
                           "    if body.complete:\n"
                           "        if body.stream_id in (1, 7): body.set_bytes(b'z' * 160000)\n"

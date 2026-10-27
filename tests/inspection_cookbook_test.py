@@ -161,6 +161,9 @@ class CookbookTests(unittest.TestCase):
             with self.subTest(example=name):
                 event = fixture(kind)
                 options = {}
+                if expected == 'translate':
+                    options = {'translate_allowed': True, 'hold_allowed': True, 'instance': {'mode': 'flow'}}
+                    event['details']['info']['webhook_control'] = {'content-reverse': True}
                 if expected == 'hold-resume':
                     options = {'hold_allowed': True, 'instance': {'mode': 'flow'}}
                 result = run(script, event, **options)
@@ -221,6 +224,11 @@ class CookbookTests(unittest.TestCase):
                     frames = unpack(wire)
                     self.assertIn((b'content-length', b'20000'), Oracle().decode(frames[0][3]))
                     self.assertEqual(b''.join(f[3] for f in frames if f[0] == 0), b'A' * 20000)
+                elif name == 'h2-streaming':
+                    frames = unpack(wire)
+                    self.assertIn((b'content-length', b'3'), Oracle().decode(frames[0][3]))
+                    self.assertEqual(b''.join(f[3] for f in frames if f[0] == 0), b'Abc')
+                    self.assertFalse(result.get('hold_credit_reservation'))
                 elif name == 'h2-logical-body':
                     frames = unpack(wire)
                     self.assertIn((b'content-length', b'7'), Oracle().decode(frames[0][3]))

@@ -1781,7 +1781,7 @@ Persistent HTTP/2 policy, applied only by an explicitly returned translate resul
 
 ### ConnectionHttp2.reserve_body
 
-Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available, including END_STREAM trailers. The limit counts original encoded DATA including padding, up to 256 KiB; it is immutable. One collecting body per direction. Backend capacity is released after both directions settle their reserved bodies, input ownership and early credit.
+Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available, including END_STREAM trailers. Limits count original encoded DATA including padding and are immutable: at most 32 reservations and 256 KiB combined per direction. Backend capacity is released after both directions settle their reserved bodies, input ownership and early credit.
 
 Availability: Live sole flow deployment with backend reservation support and content-reverse. RST_STREAM and GOAWAY bypass body hold during explicit Translate, dispose cancelled DATA and preserve source HPACK history. Exhausted capacity still tears down strict translation.
 

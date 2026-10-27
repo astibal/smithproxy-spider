@@ -314,15 +314,19 @@ std::size_t Inspection::state_charge(const nlohmann::json& state, const nlohmann
                                      const nlohmann::json& translations, bool reserved) {
     auto bytes = state.dump().size() + holds.dump().size() + translations.dump().size();
     if (!reserved) return bytes;
-    // Keep full checkpoint slots only for directions with outstanding source
-    // ownership or body credit. The shared control slot backs queued output.
+    // Directional serialized capacity is promised before early credit escapes.
+    // Keep the shared full control slot for arbitrarily resized queued output.
     const auto& flow = translations.at("settings").at("flow");
     for (const auto* side : {"L", "R"}) {
         const auto& direction = flow.at(side);
-        if (!direction.contains("body") && direction.value("advance_due", 0LL) == 0 &&
+        if (!direction.contains("body") && direction.value("bodies", nlohmann::json::object()).empty() &&
+            direction.value("advance_due", 0LL) == 0 &&
             direction.at("input").value("owned", 0LL) == 0) continue;
         const auto used = holds.contains(side) ? holds.at(side).dump().size() : 0;
-        bytes += 1024 * 1024 - std::min<std::size_t>(used, 1024 * 1024);
+        const auto capacity = direction.value("hold_capacity", std::size_t(1024 * 1024));
+        if (capacity < 256 * 1024 || capacity > 1024 * 1024 || capacity % 65536 != 0)
+            throw std::runtime_error("Invalid reserved hold capacity");
+        bytes += capacity - std::min<std::size_t>(used, capacity);
     }
     const auto used = translations.contains("settings") ? translations.at("settings").dump().size() : 0;
     bytes += 1024 * 1024 - std::min<std::size_t>(used, 1024 * 1024);

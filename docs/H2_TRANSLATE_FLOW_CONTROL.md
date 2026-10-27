@@ -54,9 +54,13 @@ any additional source DATA. SETTINGS_INITIAL_WINDOW_SIZE changes existing stream
 windows by a delta, including negative values, and never alters connection credit.
 Immediately sendable unchanged DATA preserves padding; reframing can remove it.
 
-Queues preserve frame/header-block order. Connection control frames can bypass
-blocked DATA, but SETTINGS ACKs remain behind earlier encoded header blocks.
-This is bounded FIFO output, not a fair per-stream scheduler.
+Queues preserve per-stream order and global header-block order. Ready streams
+share output in round-robin stream-ID order, one DATA frame (or frame-size slice)
+per turn. A stream with no credit does not block unrelated ready streams.
+Header blocks remain indivisible and cannot overtake earlier HPACK blocks.
+Connection control frames can bypass blocked DATA; queued SETTINGS ACKs and other
+non-header synchronization units remain barriers. Scheduling does not bypass an
+application's explicit held suffix and does not implement HTTP priority weights.
 
 Cancelled streams still need compression processing, as described by
 [RFC 9113 stream states](https://www.rfc-editor.org/rfc/rfc9113.html#section-5.1)
@@ -79,7 +83,7 @@ Both Easy and Expert enforce the same transport invariants:
 - RST_STREAM discards queued DATA in both directions and refunds connection credit.
   Encoded headers remain ordered for HPACK synchronization. The reset follows
   already queued headers in its own direction; unrelated blocked DATA may delay
-  that forwarding under FIFO. In-flight DATA on cancelled streams is consumed
+  that forwarding at a control barrier. In-flight DATA on cancelled streams is consumed
   and refunded only at connection level, never emitted as application content.
 - GOAWAY records a non-increasing last-stream ID per sender. DATA for excluded
   peer-initiated streams is discarded in both directions; eligible pending streams
@@ -93,7 +97,8 @@ Both Easy and Expert enforce the same transport invariants:
   H2 content digests/signatures are not repaired automatically.
 - Ordinary held input is not credited until released. Explicit
   `connection.http2.reserve_body(header, max_bytes)` enables whole-body hold across
-  windows, up to 256 KiB encoded DATA, with backend capacity admission. See
+  windows, up to 32 reservations and 256 KiB combined encoded DATA limits per
+  direction, with backend capacity admission. See
   [bounded hold credit](H2_TRANSLATE_HOLD_CREDIT_DESIGN.md) for persistent quota
   ownership, input provenance, cancellation and exhaustion behavior.
 
@@ -407,3 +412,45 @@ production windows, fresh workers, backend admission, holds and all four reserve
 socket variants. The final window suite contains **106 tests**; its standalone run
 also passed in **26.464 s**. Generated API reference and whitespace checks passed.
 Native production code and live SASlik remained unchanged; no new native P3 was run.
+
+### Concurrent reservations and ready-stream scheduling: 2026-10-27
+
+Reservations are now keyed by stream, with at most 32 bodies and a combined
+256 KiB of declared limits per direction. The existing suffix-hold API remains
+unchanged. Cancelling one body settles only its stream debt; connection credit
+continues to use the retained input pool. Original single-body checkpoints upgrade
+without discarding credit or reducing their existing capacity promise.
+
+Directional serialized capacity is admitted in 64 KiB classes from 256 KiB to
+1 MiB. Both serialized and encoded-input capacity retain their highest admitted
+value until the direction settles. In particular, a small reservation cannot
+grant unrelated held streams connection credit backed only by the old maximum.
+An active 128 KiB reservation now charges approximately 1.625 MiB including the
+shared control slot, so two such connections fit under the existing 4 MiB quota.
+Actual metadata is still charged and checkpoint overflow remains explicit.
+
+Ready output streams now share connection credit in round-robin stream-ID order.
+Stream-local ordering, global HPACK order and SETTINGS ACK barriers remain intact.
+Blocked DATA does not prevent unrelated ready streams from progressing. This is
+not HTTP priority scheduling and does not override an explicit application hold.
+
+The cookbook includes an executable incremental DATA example. Independent peers
+also validate 2 MiB input expanded to 4 MiB output in each direction without body
+reservation or whole-body buffering. Automatic whole-body-to-streaming fallback
+and incremental logical gzip/JSON rewriting remain outside the API contract.
+
+The real-proxy reserved fixture supports `SPIDER_H2_SOAK_ROUNDS=1..32`. Each round
+uses two interleaved 100000-byte requests and two corresponding responses on the
+same connection, followed by retained-body GOAWAY cancellation and a live PING.
+The default remains one round; 32 rounds across JSON/SXBN and Easy/Expert exercise
+512 bodies collected in pairs (51.2 MB of input), in addition to the baseline
+resizing, trailer and cancellation cases. This is isolated cleartext proxy testing,
+not an observation or deployment of the user's live SASlik traffic.
+
+Final validation: **54/54 CTest suites passed in 302.96 s**, including all 15
+integration suites with the four reserved variants running 32 rounds each.
+The production window suite contains **124 tests** across Easy and Expert.
+Backend tests confirm concurrent admission of two 128 KiB reservations, rejection
+of a third, and reclamation after completion. Generated API documentation and
+whitespace checks passed. Native remains at `f443fb9`; no native source or live
+SASlik configuration was changed and no new native P3 run was performed.

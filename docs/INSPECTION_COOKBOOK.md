@@ -623,6 +623,40 @@ input including padding. See [bounded hold credit](H2_TRANSLATE_HOLD_CREDIT_DESI
 for the complete deployment pattern and admission/failure limits. Snapshot APIs
 remain wire-level drafts; automatic coding belongs to Parts/Body only.
 
+## Incremental H2 DATA beyond the whole-body limit
+
+The 256 KiB reservation limit applies to collecting whole encoded bodies, not
+to the lifetime size of a streamed message. For a transformation that is local
+to each DATA payload, process complete frames and hold only incomplete frames:
+
+<!-- example: h2-streaming fixture=h2 expect=translate -->
+```python
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+
+for part in api.message.parts:
+    if not part.complete:
+        api.message.parts.hold_from(part)
+        break
+    if part.type == PartType.Http2.Data:
+        part.set_bytes(part.get_bytes().replace(b'a', b'A'))
+return api.message.translate()
+```
+
+This example assumes an uncompressed body whose application format permits this
+byte substitution. DATA is encoded application content, not lazily decoded Body
+content. The same-length example preserves Content-Length; resizing a stream is
+also supported when no Content-Length has already been emitted. Digests and
+signatures still need an application-specific policy. A pattern spanning DATA
+boundaries requires explicit bounded carry state; JSON and gzip cannot be safely
+rewritten by treating each frame as an independent document.
+
+There is no automatic fallback from `reserve_body()` to this pattern. The script
+chooses incremental processing before releasing headers. Regression tests stream
+2 MiB input to 4 MiB output in both directions through independent hyper-h2 peers,
+checking that no body reservation or whole-body hold is created.
+
 ## Other important boundaries
 
 - H1 Parts do not yet split pipelined messages into separate typed messages. Without suitable

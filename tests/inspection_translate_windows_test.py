@@ -276,7 +276,7 @@ class WindowsTests(unittest.TestCase):
                     direction = peers.bridge.control['flow'][side]
                     self.assertEqual(direction['input']['owned'], 0)
                     self.assertEqual(direction['advance_due'], 0)
-                    self.assertNotIn('body', direction)
+                    self.assertFalse(direction.get('bodies'))
                     self.assertFalse(peers.bridge.reserved)
 
     def pending_reserved_bridge(self, side):
@@ -292,8 +292,8 @@ class WindowsTests(unittest.TestCase):
         bridge.feed(side, frame(b'x' * 4000, 0, 1, 1))
         direction = bridge.control['flow'][side]
         self.assertTrue(direction['queue'])
-        self.assertTrue(direction['body']['released'])
-        self.assertEqual(direction['body']['stream_due'], 0)
+        self.assertTrue(direction['bodies']['1']['released'])
+        self.assertEqual(direction['bodies']['1']['stream_due'], 0)
         self.assertEqual(direction['input']['owned'], 100000)
         return bridge
 
@@ -314,7 +314,7 @@ class WindowsTests(unittest.TestCase):
                 self.assertEqual(direction['input']['owned'], 0)
                 self.assertEqual(direction['input']['window'], 65535)
                 self.assertEqual(direction['advance_due'], 0)
-                self.assertNotIn('body', direction)
+                self.assertFalse(direction.get('bodies'))
                 self.assertFalse(bridge.reserved)
                 # Repeated cancellation must not refund bytes twice.
                 forward, reverse = bridge.feed(source, cancel)
@@ -329,7 +329,7 @@ class WindowsTests(unittest.TestCase):
                     bridge.feed('L', header, retain)
                     bridge.feed('L', frame(b'new body', 0, 1, 3),
                                 lambda m: m.bodies()[0].set_bytes(b''))
-                    self.assertNotIn('body', bridge.control['flow']['L'])
+                    self.assertFalse(bridge.control['flow']['L'].get('bodies'))
 
     def test_terminal_control_bypasses_body_hold(self):
         bridge = self.pending_reserved_bridge('L')
@@ -339,15 +339,15 @@ class WindowsTests(unittest.TestCase):
         self.assertEqual(reverse, b'')
         self.assertFalse(bridge.control['flow']['L']['queue'])
         bridge.feed('R', b'')
-        self.assertNotIn('body', bridge.control['flow']['L'])
+        self.assertFalse(bridge.control['flow']['L'].get('bodies'))
         self.assertEqual(bridge.control['flow']['L']['input']['owned'], 0)
 
     def test_complete_reserved_body_with_retained_data_cancels(self):
         bridge, _ = self.reserved_bridge()
         bridge.feed('L', frame(b'abc', 0, 1, 1), lambda m: m.parts.hold_from(m.parts[1]))
-        self.assertFalse(bridge.control['flow']['L']['body'].get('released'))
+        self.assertFalse(bridge.control['flow']['L']['bodies']['1'].get('released'))
         bridge.feed('R', frame(b'\0\0\0\x08', 3, 0, 1))
-        self.assertNotIn('body', bridge.control['flow']['L'])
+        self.assertFalse(bridge.control['flow']['L'].get('bodies'))
         self.assertEqual(bridge.control['flow']['L']['input']['owned'], 0)
         self.assertIsNone(bridge.held['L'])
 
@@ -469,7 +469,7 @@ class WindowsTests(unittest.TestCase):
         forward, reverse = bridge.feed('L', frame(b'\0\0\0\x08', 3, 0, 1), retain)
         self.assertEqual(forward, b'')
         self.assertEqual(reverse, b'')  # All three input bytes were already credited.
-        self.assertNotIn('body', bridge.control['flow']['L'])
+        self.assertFalse(bridge.control['flow']['L'].get('bodies'))
         self.assertEqual(bridge.control['flow']['L']['input']['owned'], 0)
         self.assertEqual(bridge.feed('L', b''), (b'', b''))
 
@@ -485,8 +485,8 @@ class WindowsTests(unittest.TestCase):
         forward, _ = bridge.feed('L', wire, reserve_next)
         self.assertEqual(forward, b'')
         direction = bridge.control['flow']['L']
-        self.assertEqual(direction['body']['stream'], 3)
-        self.assertEqual(direction['body']['stream_due'], 3)
+        self.assertEqual(direction['bodies']['3']['stream'], 3)
+        self.assertEqual(direction['bodies']['3']['stream_due'], 3)
         self.assertEqual(direction['input']['owned'], 3)
         forward, _ = bridge.feed('L', frame(b' body', 0, 1, 3))
         self.assertEqual(b''.join(data for kind, _, _, data in unpack(forward) if kind == 0), b'new body')
@@ -508,13 +508,13 @@ class WindowsTests(unittest.TestCase):
             trailer = frame(encoder.encode([(b'x-trailer', b'complete')]), 1, 5, 1)
             forward, _ = bridge.feed(side, trailer, lambda m: m.bodies()[0].set_bytes(b'z' * 160000))
             self.assertIn((b'content-length', b'160000'), decoder.decode(unpack(forward)[0][3], raw=True))
-            self.assertTrue(bridge.control['flow'][side]['body']['released'])
+            self.assertTrue(bridge.control['flow'][side]['bodies']['1']['released'])
             peer = 'R' if side == 'L' else 'L'
             _, reverse = bridge.feed(peer, frame(b'\0\0\0\x08', 3, 0, 1))
             headers = [data for kind, _, _, data in unpack(reverse) if kind == 1]
             self.assertEqual(decoder.decode(headers[0], raw=True), [(b'x-trailer', b'complete')])
             self.assertEqual(bridge.control['flow'][side]['input']['owned'], 0)
-            self.assertNotIn('body', bridge.control['flow'][side])
+            self.assertFalse(bridge.control['flow'][side].get('bodies'))
 
     def reserved_bridge(self, limit=128 * 1024):
         bridge = self.input_bridge()
@@ -538,7 +538,7 @@ class WindowsTests(unittest.TestCase):
                 self.assertEqual(bridge.reverse, b'')
             cancel = frame(b'\0\0\0\x08', 3, 0, 1) if terminal == 'reset' else frame(b'\0' * 8, 7, 0, 0)
             bridge.feed('R', cancel)
-            self.assertNotIn('body', bridge.control['flow']['L'])
+            self.assertFalse(bridge.control['flow']['L'].get('bodies'))
             self.assertEqual(bridge.control['flow']['L']['input']['owned'], 0)
             self.assertEqual(bridge.control['flow']['L']['input']['window'], 65535)
             self.assertEqual(bridge.feed('L', b''), (b'', b''))
@@ -566,15 +566,15 @@ class WindowsTests(unittest.TestCase):
         self.assertEqual(bridge.control['flow']['L']['input']['window'], 65535)
         self.assertEqual(bridge.control['flow']['L']['advance_due'], 0)
 
-    def test_reservation_rejects_second_body_and_incomplete_release(self):
+    def test_reservation_accepts_second_body_and_rejects_incomplete_release(self):
         bridge, retain = self.reserved_bridge()
         with self.assertRaisesRegex(CommitException, 'remain held'):
             bridge.feed('L', b'')
         message = bridge.message('L', frame(hpack.Encoder().encode([(b':method', b'POST')]), 1, 4, 3))
         message.parts.hold_from(message.parts[0])
         Connection(message).http2.reserve_body(message.parts[-1], 128 * 1024)
-        with self.assertRaisesRegex(CommitException, 'one body reservation'):
-            bridge.publish('L', message)
+        bridge.publish('L', message)
+        self.assertEqual(set(bridge.control['flow']['L']['bodies']), {'1', '3'})
 
     def test_reserved_holds_in_both_directions_release_without_double_grants(self):
         bridge = self.input_bridge()
@@ -594,7 +594,147 @@ class WindowsTests(unittest.TestCase):
             self.assertEqual(state['input']['owned'], 0)
             self.assertEqual(state['input']['window'], 65535)
             self.assertEqual(state['advance_due'], 0)
-            self.assertNotIn('body', state)
+            self.assertFalse(state.get('bodies'))
+
+    def test_multiplexed_reserved_bodies_finish_and_cancel_independently(self):
+        for side in ('L', 'R'):
+            bridge = self.input_bridge()
+            fields = [(b':method', b'POST')] if side == 'L' else [(b':status', b'200')]
+            encoder = hpack.Encoder()
+            headers = b''.join(frame(encoder.encode(fields), 1, 4, stream) for stream in (1, 3))
+            def retain(message):
+                message.parts.hold_from(message.parts[0])
+                for part in message.parts:
+                    if part.frame_type == 1 and part.content.complete is False:
+                        Connection(message).http2.reserve_body(part, 128 * 1024)
+            bridge.feed(side, headers, retain)
+            for _ in range(6):
+                bridge.feed(side, frame(b'a' * 16000, 0, 0, 1) + frame(b'b' * 16000, 0, 0, 3), retain)
+            state = bridge.control['flow'][side]
+            self.assertEqual(set(state['bodies']), {'1', '3'})
+            self.assertEqual(state['input']['owned'], 192000)
+            self.assertEqual(state['advance_due'], 192000)
+            peer = 'R' if side == 'L' else 'L'
+            bridge.feed(peer, frame(b'\0\0\0\x08', 3, 0, 1))
+            state = bridge.control['flow'][side]
+            self.assertEqual(set(state['bodies']), {'3'})
+            self.assertEqual(state['input']['owned'], 96000)
+            def shrink(message):
+                bodies = message.bodies()
+                self.assertEqual(len(bodies), 1)
+                bodies[0].set_bytes(b'done')
+            output, _ = bridge.feed(side, frame(b'b' * 4000, 0, 1, 3), shrink)
+            self.assertEqual(b''.join(data for kind, _, _, data in unpack(output) if kind == 0), b'done')
+            self.assertFalse(bridge.reserved)
+            self.assertEqual(bridge.control['flow'][side]['input']['window'], 65535)
+
+    def test_multi_reservation_aggregate_and_stream_count_are_atomic(self):
+        for count, limit in ((3, 100000), (33, 1)):
+            bridge = self.input_bridge()
+            encoder = hpack.Encoder()
+            wire = b''.join(frame(encoder.encode([(b':method', b'POST')]), 1, 4, stream)
+                            for stream in range(1, count * 2, 2))
+            message = bridge.message('L', wire)
+            message.parts.hold_from(message.parts[0])
+            for part in message.parts:
+                Connection(message).http2.reserve_body(part, limit)
+            before = json.dumps(bridge.control)
+            with self.assertRaisesRegex(CommitException, 'aggregate'):
+                bridge.publish('L', message)
+            self.assertEqual(json.dumps(bridge.control), before)
+            self.assertIsNone(message._translation.result)
+
+    def test_smaller_reservation_checkpoint_limit_and_legacy_upgrade(self):
+        bridge, retain = self.reserved_bridge(limit=1024)
+        self.assertEqual(bridge.control['flow']['L']['hold_capacity'], 320 * 1024)
+        message = bridge.message('L', frame(b'abc', 0, 0, 1))
+        retain(message)
+        message.parts[0].headers.set_header(b'x-large', b'x' * 350000)
+        before = json.dumps(bridge.control)
+        with self.assertRaisesRegex(CommitException, 'checkpoint exceeds admitted'):
+            bridge.publish('L', message)
+        self.assertEqual(json.dumps(bridge.control), before)
+        direction = bridge.control['flow']['L']
+        direction['body'] = direction.pop('bodies')['1']
+        direction.pop('hold_capacity')
+        bridge.feed('L', frame(b'abc', 0, 0, 1), retain)
+        self.assertEqual(bridge.control['flow']['L']['hold_capacity'], 1024 * 1024)
+        bridge.feed('L', frame(b'def', 0, 1, 1))
+        self.assertFalse(bridge.reserved)
+
+    def test_small_reservation_bounds_credit_for_competing_held_data(self):
+        bridge, retain = self.reserved_bridge(limit=1024)
+        for _ in range(4):
+            bridge.feed('L', frame(b'x' * 16000, 0, 0, 3), retain)
+            direction = bridge.control['flow']['L']
+            self.assertLessEqual(direction['input']['owned'] + direction['input']['window'], 65535 + 1024)
+        self.assertEqual(direction['advance_due'], 1024)
+        self.assertEqual(direction['hold_capacity'], 320 * 1024)
+
+    def test_blocked_stream_does_not_block_other_stream_or_trailers_order(self):
+        bridge = self.input_bridge()
+        # Receiver constrains stream 1 only; connection credit remains available.
+        bridge.feed('L', frame(b'x', 0, 0, 1), lambda m: m.parts[0].set_bytes(b'a' * 65536))
+        bridge.feed('R', frame((100000).to_bytes(4, 'big'), 8, 0, 0))
+        encoder = hpack.Encoder()
+        output, _ = bridge.feed('L', frame(encoder.encode([(b':method', b'POST')]), 1, 4, 3) +
+                               frame(b'other', 0, 1, 3))
+        self.assertEqual([item[2] for item in unpack(output)], [3, 3])
+        # A trailer on the blocked stream must stay behind that stream's DATA.
+        output, _ = bridge.feed('L', frame(encoder.encode([(b'x-end', b'yes')]), 1, 5, 1))
+        self.assertEqual(output, b'')
+        _, reverse = bridge.feed('R', frame((1).to_bytes(4, 'big'), 8, 0, 1))
+        self.assertEqual([item[0] for item in unpack(reverse)], [0, 1])
+
+    def test_ready_output_streams_share_connection_credit_round_robin(self):
+        bridge = self.input_bridge()
+        bridge.feed('L', frame(b'x', 0, 0, 1), lambda m: m.parts[0].set_bytes(b'a' * 65535))
+        bridge.feed('R', frame((100000).to_bytes(4, 'big'), 8, 0, 1))
+        for stream in (1, 3, 5):
+            bridge.feed('L', frame(b'x', 0, 0, stream), lambda m: m.parts[-1].set_bytes(b'z' * 50000))
+        _, output = bridge.feed('R', frame((49152).to_bytes(4, 'big'), 8, 0, 0))
+        ids = [stream for kind, _, stream, _ in unpack(output) if kind == 0]
+        self.assertEqual(set(ids), {1, 3, 5})
+        self.assertEqual(len(ids), 3)
+
+    def test_streaming_multimegabyte_data_never_reserves_whole_body(self):
+        for side in ('L', 'R'):
+            peers = self.make_peers()
+            peers.open(reverse=side == 'R')
+            for index in range(128):
+                peers.data(side, b'x' * 16384, b'xy' * 16384, end=index == 127)
+                self.assertFalse(peers.bridge.reserved)
+                self.assertLess(len(json.dumps(peers.bridge.control)), 16384)
+                self.assertFalse(peers.bridge.held.get(side))
+            target = 'R' if side == 'L' else 'L'
+            self.assertEqual(b''.join(peers.received[target]), b'xy' * (2 * 1024 * 1024))
+            self.assertIn(1, peers.ended[target])
+
+    def test_padding_only_data_can_finish_without_output_credit(self):
+        bridge = self.input_bridge()
+        bridge.feed('R', frame(b'\x00\x04\x00\x00\x00\x00', 4, 0, 0))
+        # In-flight pre-ACK input is legal; reframing removes padding and the
+        # zero-byte END_STREAM does not need receiver DATA credit.
+        output, _ = bridge.feed('L', frame(b'\x03\0\0\0', 0, 9, 1))
+        self.assertEqual(output, frame(b'', 0, 1, 1))
+
+    def test_blocked_trailer_preserves_global_hpack_and_settings_ack_order(self):
+        bridge = self.input_bridge()
+        bridge.feed('L', frame(b'x', 0, 0, 1), lambda m: m.parts[0].set_bytes(b'z' * 65536))
+        encoder, decoder = hpack.Encoder(), hpack.Decoder()
+        trailer = [(b'x-shared', b'kept')]
+        headers = [(b':method', b'GET'), (b'x-shared', b'kept')]
+        output, _ = bridge.feed('L', frame(encoder.encode(trailer), 1, 5, 1) +
+                               frame(encoder.encode(headers), 1, 5, 3))
+        self.assertEqual(output, b'')
+        bridge.feed('R', frame(b'\x00\x01\x00\x00\x00\x00', 4, 0, 0))
+        self.assertEqual(bridge.feed('L', frame(b'', 4, 1, 0))[0], b'')
+        updates = frame((1).to_bytes(4, 'big'), 8, 0, 0) + frame((1).to_bytes(4, 'big'), 8, 0, 1)
+        _, reverse = bridge.feed('R', updates)
+        parts = unpack(reverse)
+        self.assertEqual([part[0] for part in parts], [0, 1, 1, 4])
+        self.assertEqual(decoder.decode(parts[1][3], raw=True), trailer)
+        self.assertEqual(decoder.decode(parts[2][3], raw=True), headers)
 
     def test_reserved_gzip_uses_encoded_capacity_and_repairs_length(self):
         import random
@@ -687,7 +827,7 @@ class WindowsTests(unittest.TestCase):
         direction = result['translate_control']['flow']['L']
         self.assertEqual(direction['input']['owned'], 0)
         self.assertEqual(direction['input']['window'], 65535)
-        self.assertNotIn('body', direction)
+        self.assertFalse(direction.get('bodies'))
 
     def test_collecting_cancel_survives_fresh_workers_and_peer_hold_publication(self):
         from inspection_cookbook_test import run
@@ -823,13 +963,14 @@ class WindowsTests(unittest.TestCase):
         bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
         bridge.feed('L', frame(b'x', 0, 0, 1), lambda m: m.parts[0].set_bytes(b'z' * 65536))
         block = hpack.Encoder().encode([(b':method', b'GET')])
-        bridge.feed('L', frame(block, 1, 5, 3))
+        headers, _ = bridge.feed('L', frame(block, 1, 5, 3))
+        self.assertEqual([item[0] for item in unpack(headers)], [1])
         bridge.feed('R', frame(b'\x00\x01\x00\x00\x00\x00', 4, 0, 0))
         forward, _ = bridge.feed('L', frame(b'', 4, 1, 0))
         self.assertEqual(forward, b'')
         updates = frame((1).to_bytes(4, 'big'), 8, 0, 0) + frame((1).to_bytes(4, 'big'), 8, 0, 1)
         _, reverse = bridge.feed('R', updates)
-        self.assertEqual([item[0] for item in unpack(reverse)], [0, 1, 4])
+        self.assertEqual([item[0] for item in unpack(reverse)], [0, 4])
 
     def test_capability_loss_is_not_silently_downgraded(self):
         bridge = self.make_bridge()
@@ -844,12 +985,12 @@ class WindowsTests(unittest.TestCase):
         bridge.feed('L', frame(b'x', 0, 0, 1), lambda m: m.parts[0].set_bytes(b'z' * 65536))
         encoder, decoder = hpack.Encoder(), hpack.Decoder()
         fields = [(b':method', b'GET'), (b'x-state', b'must survive reset')]
-        bridge.feed('L', frame(encoder.encode(fields), 1, 5, 3))
+        headers, _ = bridge.feed('L', frame(encoder.encode(fields), 1, 5, 3))
+        self.assertEqual(decoder.decode(unpack(headers)[0][3], raw=True), fields)
         bridge.feed('R', frame(b'\x00\x00\x00\x08', 3, 0, 3))
         updates = frame((1).to_bytes(4, 'big'), 8, 0, 0) + frame((1).to_bytes(4, 'big'), 8, 0, 1)
         _, reverse = bridge.feed('R', updates)
-        self.assertEqual([item[0] for item in unpack(reverse)], [0, 1])
-        self.assertEqual(decoder.decode(unpack(reverse)[1][3], raw=True), fields)
+        self.assertEqual([item[0] for item in unpack(reverse)], [0])
         output, _ = bridge.feed('L', frame(encoder.encode(fields), 1, 5, 5))
         self.assertEqual(decoder.decode(unpack(output)[0][3], raw=True), fields)
 
@@ -945,12 +1086,13 @@ class WindowsTests(unittest.TestCase):
         bridge = self.make_bridge()
         bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
         bridge.feed('L', frame(b'x', 0, 0, 1), lambda m: m.parts[0].set_bytes(b'z' * 65536))
-        bridge.feed('L', frame(hpack.Encoder().encode([(b':method', b'GET')]), 1, 4, 3))
+        headers, _ = bridge.feed('L', frame(hpack.Encoder().encode([(b':method', b'GET')]), 1, 4, 3))
+        self.assertEqual([item[0] for item in unpack(headers)], [1])
         output, _ = bridge.feed('L', frame(b'\0\0\0\x08', 3, 0, 3))
         self.assertEqual(output, b'')
         updates = frame((1).to_bytes(4, 'big'), 8, 0, 0) + frame((1).to_bytes(4, 'big'), 8, 0, 1)
         _, output = bridge.feed('R', updates)
-        self.assertEqual([item[0] for item in unpack(output)], [0, 1, 3])
+        self.assertEqual([item[0] for item in unpack(output)], [0, 3])
 
     def test_input_end_stream_is_enforced_while_output_is_pending(self):
         bridge = self.make_bridge()
@@ -970,10 +1112,11 @@ class WindowsTests(unittest.TestCase):
                         lambda m: m.parts[0].set_bytes(b'z' * 65536))
             encoder, decoder = hpack.Encoder(), hpack.Decoder()
             fields = [(b'x-shared', b'compression state')]
-            bridge.feed(side, frame(encoder.encode(fields), 1, 5, stream + 2))
+            headers, _ = bridge.feed(side, frame(encoder.encode(fields), 1, 5, stream + 2))
+            self.assertEqual(decoder.decode(unpack(headers)[0][3], raw=True), fields)
             forward, reverse = bridge.feed(peer, frame(b'\0' * 8, 7, 0, 0))
             self.assertEqual(unpack(forward)[0][0], 7)
-            self.assertEqual(decoder.decode(unpack(reverse)[0][3], raw=True), fields)
+            self.assertEqual(reverse, b'')
             # Race with GOAWAY: decode source indices without creating a new
             # destination compression block for already excluded headers.
             forward, reverse = bridge.feed(side, frame(encoder.encode(fields), 1, 4, stream + 4) +
