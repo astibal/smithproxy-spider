@@ -1,0 +1,83 @@
+{
+  "aliases": {
+    "connection": {
+      "certs": "mitmproxy.certs",
+      "human": "mitmproxy.utils.human",
+      "mode_specs": "mitmproxy.proxy.mode_specs",
+      "serializable": "mitmproxy.coretypes.serializable",
+      "server_spec": "mitmproxy.net.server_spec"
+    },
+    "flow": {
+      "connection": "mitmproxy.connection",
+      "serializable": "mitmproxy.coretypes.serializable",
+      "version": "mitmproxy.version"
+    },
+    "http": {
+      "cookies": "mitmproxy.net.http.cookies",
+      "encoding": "mitmproxy.net.encoding",
+      "flow": "mitmproxy.flow",
+      "human": "mitmproxy.utils.human",
+      "multidict": "mitmproxy.coretypes.multidict",
+      "multipart": "mitmproxy.net.http.multipart",
+      "serializable": "mitmproxy.coretypes.serializable",
+      "status_codes": "mitmproxy.net.http.status_codes",
+      "strutils": "mitmproxy.utils.strutils",
+      "url": "mitmproxy.net.http.url"
+    }
+  },
+  "reference": "mitmproxy 12.3.1",
+  "star_exports": {
+    "mitmproxy.contentviews": [
+      "Contentview",
+      "InteractiveContentview",
+      "SyntaxHighlight",
+      "add",
+      "Metadata"
+    ],
+    "mitmproxy.connection": [
+      "Connection",
+      "Client",
+      "Server",
+      "ConnectionState"
+    ],
+    "mitmproxy.flow": [
+      "Flow",
+      "Error"
+    ],
+    "mitmproxy.http": [
+      "HTTPFlow",
+      "Message",
+      "Request",
+      "Response",
+      "Headers"
+    ],
+    "mitmproxy.io": [
+      "FlowWriter",
+      "FlowReader",
+      "FilteredFlowWriter",
+      "read_flows_from_paths"
+    ],
+    "mitmproxy.io.tnetstring": [
+      "dump",
+      "dumps",
+      "load",
+      "loads",
+      "pop"
+    ],
+    "mitmproxy.net.encoding": [
+      "encode",
+      "decode"
+    ],
+    "mitmproxy.script": [
+      "concurrent"
+    ],
+    "mitmproxy.tcp": [
+      "TCPFlow",
+      "TCPMessage"
+    ],
+    "mitmproxy.udp": [
+      "UDPFlow",
+      "UDPMessage"
+    ]
+  }
+}

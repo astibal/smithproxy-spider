@@ -1,0 +1,12 @@
+{
+  "events": [
+    {
+      "hook": "add_log",
+      "level": "warn",
+      "message": "spider-add-log-probe:manual-trigger",
+      "repr": "LogEntry(spider-add-log-probe:manual-trigger, warn)",
+      "type": "LogEntry"
+    }
+  ],
+  "reference": "mitmproxy 12.3.1"
+}

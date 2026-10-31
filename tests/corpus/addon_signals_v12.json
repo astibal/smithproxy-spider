@@ -1,0 +1,39 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "signals": {
+    "async": {
+      "events": [
+        ["sync", 4],
+        ["async-start", 4],
+        ["async-end", 4]
+      ],
+      "remaining_receivers": 2,
+      "send": null
+    },
+    "sync": {
+      "coroutine_rejection": {
+        "error": "AssertionError",
+        "message": ""
+      },
+      "events": [
+        ["first", 1],
+        ["first", 1],
+        ["second", 1],
+        ["second", 2]
+      ],
+      "first_send": null,
+      "remaining_receivers": 1,
+      "second_send": null
+    },
+    "types": {
+      "async": "_AsyncSignal",
+      "bound_reference": "WeakMethod",
+      "function_reference": "ReferenceType",
+      "sync": "_SyncSignal"
+    },
+    "weak": {
+      "receiver_collected": true,
+      "remaining_receivers": 0
+    }
+  }
+}

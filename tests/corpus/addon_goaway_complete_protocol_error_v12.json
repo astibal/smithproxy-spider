@@ -1,0 +1,102 @@
+{
+  "client_bodies": [
+    [
+      3,
+      "<html>\n<head>\n    <title>502 Bad Gateway</title>\n</head>\n<body>\n    <h1>502 Bad Gateway</h1>\n    <p>HTTP/2 connection closed: &lt;ConnectionTerminated error_code:1, last_stream_id:1, additional_data:None&gt;</p>\n</body>\n</html>"
+    ]
+  ],
+  "client_ended": [
+    3,
+    1
+  ],
+  "client_headers": [
+    [
+      3,
+      [
+        [
+          ":status",
+          "502"
+        ],
+        [
+          "server",
+          "mitmproxy 12.3.1"
+        ],
+        [
+          "content-type",
+          "text/html"
+        ]
+      ]
+    ],
+    [
+      1,
+      [
+        [
+          ":status",
+          "200"
+        ]
+      ]
+    ]
+  ],
+  "client_resets": [],
+  "client_statuses": [
+    [
+      3,
+      "502"
+    ],
+    [
+      1,
+      "200"
+    ]
+  ],
+  "client_terminations": [],
+  "error_code": 1,
+  "hooks": [
+    [
+      "requestheaders",
+      "/1"
+    ],
+    [
+      "requestheaders",
+      "/3"
+    ],
+    [
+      "request",
+      "/1"
+    ],
+    [
+      "request",
+      "/3"
+    ],
+    [
+      "responseheaders",
+      "/1",
+      200
+    ],
+    [
+      "error",
+      "/3",
+      "HTTP/2 connection closed: <ConnectionTerminated error_code:1, last_stream_id:1, additional_data:None>"
+    ],
+    [
+      "response",
+      "/1",
+      200
+    ]
+  ],
+  "method": "GET",
+  "origin_errors": [],
+  "origin_requests": [
+    [
+      1,
+      "/1"
+    ],
+    [
+      3,
+      "/3"
+    ]
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "reset_stream": false,
+  "response_timing": "before-goaway",
+  "retry_connections": []
+}

@@ -8,7 +8,10 @@ import traceback
 
 # Resource limits complement the mandatory kernel policy installed below.
 resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024,) * 2)
-resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
+cpu_supervised = sys.argv[1:] == ['--persistent', '--cpu-supervised']
+persistent_worker = cpu_supervised or sys.argv[1:] == ['--persistent']
+if not cpu_supervised:
+    resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
 resource.setrlimit(resource.RLIMIT_FSIZE, (32 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
@@ -52,6 +55,7 @@ class Api:
             resume_message(self.message, request['held_parts'], info, self.enrichments)
         if self.message is not None:
             _prepare_translation(self.message, request)
+            _prepare_h1_responses(self.message, request)
         self.metadata = views.metadata
         self.http1 = views.http1
         self.http2 = views.http2
@@ -99,30 +103,205 @@ def script_error():
         response['error_kind'] = 'sandbox_unavailable'
     if isinstance(sys.exc_info()[1], StorageBusy):
         response['error_kind'] = 'storage_busy'
+    if isinstance(sys.exc_info()[1], ScriptApiUnavailable):
+        response['error_kind'] = 'unsupported_script_api'
     response['error'] = traceback.format_exc(limit=8)[-12000:]
+    return response
+
+
+class ScriptApiUnavailable(RuntimeError):
+    """The requested execution path cannot preserve addon lifecycle semantics."""
+
+
+def report_addon_failures(failures):
+    for failure in failures:
+        print(f'Addon {failure.addon} {failure.hook}: '
+              f'{type(failure.exception).__name__}: {failure.exception}')
+
+
+class AddonWorkerRuntime:
+    """Own every process-local resource of one addon generation.
+
+    A deployment worker has exactly one addon generation. Keeping its event
+    loop, adapter, concurrent runner and startup diagnostics together makes the
+    shutdown boundary explicit and prevents partially cleaned global state.
+    """
+
+    def __init__(self):
+        self.loop = None
+        self.adapter = None
+        self.concurrent_runner = None
+        self.startup_output = Output()
+        self.closed = False
+
+    def drain_startup_output(self, output):
+        if self.startup_output.text:
+            output.write(self.startup_output.text)
+            self.startup_output.text = ''
+
+    def run(self, awaitable):
+        if self.loop is None or self.loop.is_closed():
+            raise ScriptApiUnavailable('The addon event loop is unavailable')
+        return self.loop.run_until_complete(awaitable)
+
+    def close(self, report=False):
+        """Retire the generation and all of its prepared worker resources."""
+        if self.closed:
+            return {'ok': True, 'logs': []}
+        self.closed = True
+
+        shutdown_output = Output()
+        response = {'ok': True}
+        try:
+            if self.adapter is not None:
+                with (
+                    contextlib.redirect_stdout(shutdown_output),
+                    contextlib.redirect_stderr(shutdown_output),
+                ):
+                    failures = self.run(self.adapter.close())
+                    report_addon_failures(failures)
+                    if failures:
+                        response = {'ok': False, 'error': 'Addon cleanup hook failed'}
+        except BaseException:
+            response = {'ok': False, 'error': 'Addon cleanup aborted'}
+            shutdown_output.write(traceback.format_exc(limit=8)[-12000:])
+        finally:
+            if self.concurrent_runner is not None:
+                configure_concurrent_runner(None)
+                try:
+                    self.concurrent_runner.close()
+                except BaseException:
+                    response = {
+                        'ok': False,
+                        'error': 'Concurrent runner cleanup aborted',
+                    }
+                    shutdown_output.write(traceback.format_exc(limit=8)[-12000:])
+            if self.loop is not None and not self.loop.is_closed():
+                self.loop.close()
+
+        response['logs'] = shutdown_output.text.splitlines()
+        if shutdown_output.text and not report:
+            sys.stderr.write(shutdown_output.text)
+        return response
+
+
+addon_worker = AddonWorkerRuntime()
+
+
+def invoke_content_view(current):
+    """Serve one bounded UI request from the persistent addon generation."""
+    output = Output()
+    addon_worker.drain_startup_output(output)
+    try:
+        if addon_worker.adapter is None:
+            raise ScriptApiUnavailable(
+                'Custom content views require a deployed addon generation')
+        action = current.get('content_view_action')
+        if action not in ('list', 'render', 'reencode'):
+            raise ValueError('Unknown content view action')
+
+        arguments = {}
+        if action in ('render', 'reencode'):
+            encoded = current.get('data', '')
+            if not isinstance(encoded, str):
+                raise TypeError('Content view data must be base64 text')
+            data = base64.b64decode(encoded, validate=True)
+            if len(data) > 1024 * 1024:
+                raise ValueError('Content view input exceeds 1 MiB')
+
+            content_type = current.get('content_type')
+            if (content_type is not None and
+                    (not isinstance(content_type, str) or len(content_type) > 1024)):
+                raise ValueError('Content type must be text up to 1024 characters')
+            view_name = current.get('view_name', 'auto')
+            if not isinstance(view_name, str) or not 1 <= len(view_name) <= 256:
+                raise ValueError('Content view name must be 1 to 256 characters')
+
+            if action == 'render':
+                arguments = {
+                    'data': data,
+                    'content_type': content_type,
+                    'view_name': view_name,
+                }
+            else:
+                text = current.get('text')
+                if not isinstance(text, str):
+                    raise TypeError('Edited content view text must be text')
+                if len(text.encode('utf-8')) > 1024 * 1024:
+                    raise ValueError('Edited content view text exceeds 1 MiB')
+                arguments = {
+                    'text': text,
+                    'original_data': data,
+                    'content_type': content_type,
+                    'view_name': view_name,
+                }
+
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            result = addon_worker.adapter.generation.content_view(action, **arguments)
+        if action == 'render' and len(result['text'].encode('utf-8')) > 1024 * 1024:
+            raise ValueError('Rendered content view text exceeds 1 MiB')
+        if action == 'reencode':
+            if len(result['data']) > 1024 * 1024:
+                raise ValueError('Reencoded content view data exceeds 1 MiB')
+            result['data'] = base64.b64encode(result['data']).decode('ascii')
+        response = {'ok': True, 'replacement': None, **result}
+        if len(json.dumps(response).encode('utf-8')) > 1900 * 1024:
+            raise ValueError('Content view response exceeds worker budget')
+    except BaseException:
+        response = script_error()
+    response['logs'] = output.text.splitlines()
     return response
 
 
 def invoke_script(current, compiled):
     output = Output()
-    response = {'ok': False, 'replacement': None}
+    addon_worker.drain_startup_output(output)
+    response = {'ok': False, 'replacement': None,
+                'script_api': selected_api, 'script_api_source': selection_source}
     namespace = {'CommitException': CommitException, 'Header': Header, 'PartType': PartType, 'Mode': Mode, 'Safety': Safety}
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-            # Fresh script globals and API objects; imports/native module caches
-            # remain private to this deployment's worker, not to a flow instance.
-            exec(compiled, namespace)
-            api = None if current.get('validate_only') else Api(current)
+            # Native scripts keep callback-local globals. Addons instead use
+            # the generation created at startup; neither convention shares
+            # Python state with another deployment's worker.
+            if selected_api == 'spider':
+                exec(compiled, namespace)
+            stopping = (selected_api == 'mitmproxy' and
+                        current.get('event', {}).get('action') == 'connection-stop')
+            api = None if current.get('validate_only') or stopping else Api(current)
             input_size = len(api.bytes) if api is not None else 0
-            result = None if api is None else namespace['__spider_script'](api)
+            result = None
+            if stopping:
+                stop_info = current.get('event', {}).get('details', {}).get('info', {})
+                failures = addon_worker.run(
+                    addon_worker.adapter.stop(
+                        current['event'].get('id', ''), stop_info))
+                report_addon_failures(failures)
+            elif api is not None:
+                if selected_api == 'spider':
+                    result = namespace['__spider_script'](api)
+                elif api.phase == 'setup':
+                    # Endpoint observations are not yet part of the worker
+                    # envelope. Leave them unknown rather than infer TLS or
+                    # socket addresses from human-readable session labels.
+                    setup_result = addon_worker.adapter.setup(api, None, None)
+                    if setup_result is not None:
+                        report_addon_failures(addon_worker.run(setup_result))
+                else:
+                    result = addon_worker.run(addon_worker.adapter.content(api))
             translation = getattr(api.message, '_translation', None) if api is not None else None
+            h1_response = getattr(api.message, '_h1_response', None) if api is not None else None
             requested = api is not None and api.connection._requested
-            if requested or (translation is not None and translation.result is not None):
+            staged_translation = translation is not None and bool(
+                translation.message_edits or translation.local_responses)
+            if requested or staged_translation or (translation is not None and translation.result is not None):
                 if translation is None or translation.result is None or result is not translation.result:
                     raise CommitException('Active translate requires return api.message.translate() on every callback')
                 response['translate_state'] = translation.checkpoint
                 response['translate_control'] = translation.control_checkpoint
                 response['translated'] = True
+                if translation.peer_checkpoint_changed:
+                    response['peer_translate_state'] = translation.peer_checkpoint
                 if translation.peer_hold_changed:
                     response['peer_held_parts'] = translation.peer_hold_result
                 response['hold_credit_reservation'] = bool(translation.control_checkpoint.get('flow', {}).get('hold_reserved'))
@@ -130,6 +309,30 @@ def invoke_script(current, compiled):
                     response['flow_control'] = translation.flow_summary
                 if translation.reverse_output:
                     response['replacement_reverse'] = base64.b64encode(translation.reverse_output).decode()
+            if h1_response is not None:
+                if h1_response.result is not None:
+                    if result is not h1_response.result:
+                        raise CommitException(
+                            'HTTP/1 response ordering requires return api.message.commit()')
+                elif h1_response.local_responses:
+                    raise CommitException(
+                        'A staged HTTP/1 local response requires return api.message.commit()')
+                elif h1_response.requires_publication():
+                    if result is not None:
+                        raise CommitException(
+                            'Raw replacement cannot bypass a queued HTTP/1 local response')
+                    result = h1_response.commit()
+                else:
+                    h1_response.observe_passthrough()
+
+                response['h1_response_state'] = h1_response.checkpoint
+                if h1_response.termination is not None:
+                    response['connection_close'] = {
+                        'reason': h1_response.termination['reason'],
+                    }
+                if h1_response.reverse_output:
+                    response['replacement_reverse'] = base64.b64encode(
+                        h1_response.reverse_output).decode()
             held = None
             if isinstance(result, HeldCommit):
                 if not current.get('hold_allowed') or api.instance.mode != 'flow' or api.side not in ('L', 'R'):
@@ -197,35 +400,156 @@ def invoke_script(current, compiled):
 
 
 try:
+    source = request['script']
+    first_line = source.removeprefix('\ufeff').split('\n', 1)[0].rstrip('\r')
+    executing_addon = (not request.get('validate_only') and
+                       (first_line == '#!mitmproxy' or request.get('script_api') == 'mitmproxy'))
+    if cpu_supervised and not executing_addon:
+        # Native scripts retain the existing cumulative kernel limit. Only
+        # supervised addon generations use renewable parent-owned CPU budgets.
+        resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
+    if executing_addon:
+        if not persistent_worker:
+            raise ScriptApiUnavailable('Addon execution requires a persistent generation worker')
+        # Only trusted runtime preparation precedes the sandbox. In particular,
+        # no administrator module or lifecycle hook runs while sockets can be
+        # created. The policy grants access only to this prepared epoll handle.
+        import asyncio
+        import selectors
+        import logging
+        from addon_runtime import AddonGeneration
+        from addon_native import NativeAddonAdapter
+        from addon_h1_events import H1AddonEvents
+        from addon_h2_events import H2AddonEvents
+        from addon_script import ConcurrentRunner, configure_concurrent_runner
+        addon_selector = selectors.EpollSelector()
+        addon_worker.loop = asyncio.SelectorEventLoop(addon_selector)
+        addon_concurrent_selector = selectors.EpollSelector()
+        addon_concurrent_loop = asyncio.SelectorEventLoop(addon_concurrent_selector)
+        addon_worker.concurrent_runner = ConcurrentRunner(addon_concurrent_loop)
+
+        class AddonLogHandler(logging.Handler):
+            """Resolve stderr per record, not once during generation startup.
+
+            Each callback redirects stderr to its own bounded output buffer.
+            A normal StreamHandler would retain the startup buffer forever.
+            """
+            def emit(self, record):
+                try:
+                    sys.stderr.write(self.format(record) + '\n')
+                except Exception:
+                    self.handleError(record)
+
+        logging.addLevelName(21, 'ALERT')
+        addon_log_handler = AddonLogHandler()
+        addon_log_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+        logging.getLogger().addHandler(addon_log_handler)
+        logging.getLogger().setLevel(logging.INFO)
     try:
-        install_script_sandbox(request.get('storage_directory'))
+        if addon_worker.loop is None:
+            install_script_sandbox(request.get('storage_directory'))
+        else:
+            install_script_sandbox(request.get('storage_directory'),
+                                   event_loop_fd=addon_selector.fileno(),
+                                   additional_event_loop_fds=(
+                                       addon_concurrent_selector.fileno(),
+                                   ),
+                                   wakeup_read_fds=(
+                                       addon_worker.loop._ssock.fileno(),
+                                       addon_concurrent_loop._ssock.fileno(),
+                                   ),
+                                   wakeup_write_fds=(
+                                       addon_worker.loop._csock.fileno(),
+                                       addon_concurrent_loop._csock.fileno(),
+                                   ))
     except Exception as error:
         raise SandboxUnavailable('Cannot activate script sandbox: ' + str(error)) from error
-    source = 'def __spider_script(api):\n' + textwrap.indent(request['script'] or 'pass', '    ')
-    compiled = compile(source, '<inspection>', 'exec')
+    if addon_worker.concurrent_runner is not None:
+        addon_worker.concurrent_runner.start()
+        configure_concurrent_runner(addon_worker.concurrent_runner)
+    selected_api = 'spider'
+    selection_source = 'selection'
+    if 'script_api' in request or first_line == '#!mitmproxy':
+        # Keep the legacy path lightweight. Addon compilation is inert: even
+        # module-level imports and expressions must not run during validation.
+        from addon_loader import compile_script
+        selection, compiled = compile_script(source, request.get('script_api', 'spider'))
+        selected_api = selection.api
+        selection_source = selection.source
+    else:
+        source = 'def __spider_script(api):\n' + textwrap.indent(source or 'pass', '    ')
+        compiled = compile(source, '<inspection>', 'exec')
+    if selected_api == 'mitmproxy' and not request.get('validate_only'):
+        with (
+            contextlib.redirect_stdout(addon_worker.startup_output),
+            contextlib.redirect_stderr(addon_worker.startup_output),
+        ):
+            generation = AddonGeneration(source, NativeAddonAdapter.HOOKS)
+            addon_worker.adapter = NativeAddonAdapter(
+                generation, opaque_part_factory=RewritePart)
+            option_specs = request.get('addon_options', [])
+            if not isinstance(option_specs, list):
+                raise ValueError('Addon options must be a list')
+            if len(option_specs) > 128:
+                raise ValueError('Addon options exceed 128 entries')
+            if any(not isinstance(spec, str) or not spec or len(spec) > 4096
+                   for spec in option_specs):
+                raise ValueError('Addon option entries must be bounded non-empty text')
+            report_addon_failures(addon_worker.run(
+                generation.start(option_specs=option_specs)))
 except BaseException:
-    json.dump(script_error(), sys.stdout)
+    response = script_error()
+    if addon_worker.loop is not None:
+        # Module execution can register live addons before a later statement
+        # fails. Preserve the original startup error while retiring those
+        # objects inside the same sandbox and capturing their cleanup output.
+        try:
+            cleanup = addon_worker.close(report=True)
+            if cleanup.get('error') in (
+                    'Addon cleanup aborted',
+                    'Concurrent runner cleanup aborted'):
+                addon_worker.startup_output.write(
+                    'Addon startup cleanup aborted:\n')
+            for line in cleanup['logs']:
+                addon_worker.startup_output.write(line + '\n')
+        except BaseException:
+            addon_worker.startup_output.write('Addon startup cleanup aborted:\n')
+            addon_worker.startup_output.write(traceback.format_exc(limit=8)[-12000:])
+    response['logs'] = addon_worker.startup_output.text.splitlines()
+    json.dump(response, sys.stdout)
     sys.stdout.write('\n')
     sys.stdout.flush()
     sys.exit(0)
 
-if sys.argv[1:] != ['--persistent']:
-    json.dump(invoke_script(request, compiled), sys.stdout)
-else:
+def serve_persistent():
     import time
     storage_directory = request.get('storage_directory')
     started = time.monotonic()
-    sys.stdout.write('{"ready": true}\n')
+    ready = {'ready': True}
+    if selected_api == 'mitmproxy':
+        ready['script_api'] = selected_api
+    sys.stdout.write(json.dumps(ready) + '\n')
     sys.stdout.flush()
-    for calls in range(4096):
+    calls = 0
+    while addon_worker.adapter is not None or calls < 4096:
         line = sys.stdin.readline(64 * 1024 * 1024 + 1)
         if not line:
             break
         if len(line) > 64 * 1024 * 1024 or not line.endswith('\n'):
             break
         current = json.loads(line)
+        if current.get('_shutdown') is True and addon_worker.adapter is not None:
+            response = addon_worker.close(report=True)
+            response['_shutdown'] = True
+            json.dump(response, sys.stdout)
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+            break
         current['storage_directory'] = storage_directory
-        response = invoke_script(current, compiled)
+        if 'content_view_action' in current:
+            response = invoke_content_view(current)
+        else:
+            response = invoke_script(current, compiled)
         usage = resource.getrusage(resource.RUSAGE_SELF)
         # Ask the parent for rolling retirement, but keep serving until replaced.
         # Otherwise both equally-aged workers can exit while their successors
@@ -233,8 +557,19 @@ else:
         cpu_seconds = usage.ru_utime + usage.ru_stime
         age_seconds = time.monotonic() - started
         rotate = calls >= 255 or cpu_seconds >= 0.5 or age_seconds >= 300
-        recycle = (not response['ok'] or calls == 4095 or
-                   cpu_seconds >= 1.5 or age_seconds >= 600)
+        # A structured script error is a valid IPC response. Native callbacks
+        # execute in a fresh namespace and can safely report that error without
+        # destroying healthy pool capacity. Transport failure, malformed IPC
+        # and hard resource exhaustion are handled by the parent and still
+        # retire the process. Addon generations are different: an adapter-level
+        # failure can leave unrollbackable Python state and must invalidate the
+        # generation instead of silently continuing.
+        recycle = (calls == 4095 or cpu_seconds >= 1.5 or age_seconds >= 600)
+        if addon_worker.adapter is not None:
+            rotate = False
+            # A content view is an auxiliary renderer. Reference behavior
+            # reports formatter errors without discarding addon module state.
+            recycle = not response['ok'] and 'content_view_action' not in current
         response['_request_id'] = current['_request_id']
         response['_worker_rotate'] = rotate
         response['_worker_recycle'] = recycle
@@ -243,4 +578,13 @@ else:
         sys.stdout.flush()
         if recycle:
             break
+        calls += 1
         del current, response, line
+
+try:
+    if persistent_worker:
+        serve_persistent()
+    else:
+        json.dump(invoke_script(request, compiled), sys.stdout)
+finally:
+    addon_worker.close()

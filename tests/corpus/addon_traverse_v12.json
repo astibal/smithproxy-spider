@@ -1,0 +1,13 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": {
+    "list": {"value": ["first", "leaf", "second"]},
+    "tuple": {"value": ["first", "leaf", "second"]},
+    "single": {"error": "TypeError", "message": "'types.SimpleNamespace' object is not iterable"},
+    "none_children": {"error": "TypeError", "message": "'NoneType' object is not iterable"},
+    "tuple_children": {"value": ["tuple", "leaf"]},
+    "generator": {"value": ["first", "leaf", "second"]},
+    "empty": {"value": []},
+    "lazy_children": {"first": "root", "remaining": ["leaf"]}
+  }
+}

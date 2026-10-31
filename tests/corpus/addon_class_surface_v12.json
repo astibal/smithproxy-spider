@@ -1,0 +1,23 @@
+{
+  "classes": {
+    "Client": ["address", "alpn", "alpn_offers", "alpn_proto_negotiated", "certificate_list", "cipher", "cipher_list", "cipher_name", "clientcert", "connected", "copy", "error", "from_state", "get_state", "mitmcert", "proxy_mode", "set_state", "sni", "state", "timestamp_end", "timestamp_start", "timestamp_tls_setup", "tls", "tls_established", "tls_version", "transport_protocol"],
+    "Connection": ["alpn", "alpn_offers", "alpn_proto_negotiated", "certificate_list", "cipher", "cipher_list", "connected", "copy", "error", "from_state", "get_state", "set_state", "sni", "state", "timestamp_end", "timestamp_start", "timestamp_tls_setup", "tls", "tls_established", "tls_version", "transport_protocol"],
+    "DNSFlow": ["backup", "copy", "error", "from_state", "get_state", "intercept", "kill", "killable", "marked", "modified", "response", "resume", "revert", "set_state", "timestamp_start", "type", "wait_for_resume"],
+    "DNSMessage": ["HEADER", "content", "copy", "fail", "from_json", "from_state", "get_state", "packed", "question", "set_state", "size", "succeed", "timestamp", "to_json", "unpack", "unpack_from"],
+    "Error": ["KILLED_MESSAGE", "copy", "from_state", "get_state", "set_state"],
+    "Flow": ["backup", "copy", "error", "from_state", "get_state", "intercept", "kill", "killable", "marked", "modified", "resume", "revert", "set_state", "timestamp_start", "wait_for_resume"],
+    "HTTPFlow": ["backup", "copy", "error", "from_state", "get_state", "intercept", "kill", "killable", "marked", "mode", "modified", "response", "resume", "revert", "set_state", "timestamp_start", "type", "wait_for_resume", "websocket"],
+    "Headers": ["add", "clear", "copy", "from_state", "get", "get_all", "get_state", "insert", "items", "keys", "pop", "popitem", "set_all", "set_state", "setdefault", "update", "values"],
+    "Message": ["content", "copy", "decode", "encode", "from_state", "get_content", "get_state", "get_text", "headers", "http_version", "is_http10", "is_http11", "is_http2", "is_http3", "json", "raw_content", "set_content", "set_state", "set_text", "stream", "text", "timestamp_end", "timestamp_start", "trailers"],
+    "Request": ["anticache", "anticomp", "authority", "constrain_encoding", "content", "cookies", "copy", "decode", "encode", "first_line_format", "from_state", "get_content", "get_state", "get_text", "headers", "host", "host_header", "http_version", "is_http10", "is_http11", "is_http2", "is_http3", "json", "make", "method", "multipart_form", "path", "path_components", "port", "pretty_host", "pretty_url", "query", "raw_content", "scheme", "set_content", "set_state", "set_text", "stream", "text", "timestamp_end", "timestamp_start", "trailers", "url", "urlencoded_form"],
+    "Response": ["content", "cookies", "copy", "decode", "encode", "from_state", "get_content", "get_state", "get_text", "headers", "http_version", "is_http10", "is_http11", "is_http2", "is_http3", "json", "make", "raw_content", "reason", "refresh", "set_content", "set_state", "set_text", "status_code", "stream", "text", "timestamp_end", "timestamp_start", "trailers"],
+    "Server": ["alpn", "alpn_offers", "alpn_proto_negotiated", "cert", "certificate_list", "cipher", "cipher_list", "connected", "copy", "error", "from_state", "get_state", "ip_address", "peername", "set_state", "sni", "sockname", "state", "timestamp_end", "timestamp_start", "timestamp_tcp_setup", "timestamp_tls_setup", "tls", "tls_established", "tls_version", "transport_protocol", "via"],
+    "TCPFlow": ["backup", "copy", "error", "from_state", "get_state", "intercept", "kill", "killable", "marked", "modified", "resume", "revert", "set_state", "timestamp_start", "type", "wait_for_resume"],
+    "TCPMessage": ["copy", "from_state", "get_state", "set_state"],
+    "UDPFlow": ["backup", "copy", "error", "from_state", "get_state", "intercept", "kill", "killable", "marked", "modified", "resume", "revert", "set_state", "timestamp_start", "type", "wait_for_resume"],
+    "UDPMessage": ["copy", "from_state", "get_state", "set_state"],
+    "WebSocketData": ["close_code", "close_reason", "closed_by_client", "copy", "from_state", "get_state", "set_state", "timestamp_end"],
+    "WebSocketMessage": ["copy", "drop", "from_state", "get_state", "is_text", "kill", "set_state", "text"]
+  },
+  "reference": "mitmproxy 12.3.1"
+}

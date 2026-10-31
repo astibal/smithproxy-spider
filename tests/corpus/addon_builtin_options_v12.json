@@ -1,0 +1,226 @@
+{
+  "configured": {
+    "changed": {
+      "http2": true,
+      "listen_port": true,
+      "mode": true,
+      "server": false
+    },
+    "http2": false,
+    "listen_port": 9000,
+    "mode": [
+      "socks5"
+    ]
+  },
+  "empty_optmanager_keys": [],
+  "inventory": {
+    "add_upstream_certs_to_client_chain": {
+      "changed": false,
+      "choices": null,
+      "default": false,
+      "typespec": "<class 'bool'>",
+      "value": false
+    },
+    "allow_hosts": {
+      "changed": false,
+      "choices": null,
+      "default": [],
+      "typespec": "collections.abc.Sequence[str]",
+      "value": []
+    },
+    "cert_passphrase": {
+      "changed": false,
+      "choices": null,
+      "default": null,
+      "typespec": "str | None",
+      "value": null
+    },
+    "certs": {
+      "changed": false,
+      "choices": null,
+      "default": [],
+      "typespec": "collections.abc.Sequence[str]",
+      "value": []
+    },
+    "client_certs": {
+      "changed": false,
+      "choices": null,
+      "default": null,
+      "typespec": "str | None",
+      "value": null
+    },
+    "confdir": {
+      "changed": false,
+      "choices": null,
+      "default": "~/.mitmproxy",
+      "typespec": "<class 'str'>",
+      "value": "~/.mitmproxy"
+    },
+    "content_view_lines_cutoff": {
+      "changed": false,
+      "choices": null,
+      "default": 512,
+      "typespec": "<class 'int'>",
+      "value": 512
+    },
+    "http2": {
+      "changed": false,
+      "choices": null,
+      "default": true,
+      "typespec": "<class 'bool'>",
+      "value": true
+    },
+    "http2_ping_keepalive": {
+      "changed": false,
+      "choices": null,
+      "default": 58,
+      "typespec": "<class 'int'>",
+      "value": 58
+    },
+    "http3": {
+      "changed": false,
+      "choices": null,
+      "default": true,
+      "typespec": "<class 'bool'>",
+      "value": true
+    },
+    "http_connect_send_host_header": {
+      "changed": false,
+      "choices": null,
+      "default": true,
+      "typespec": "<class 'bool'>",
+      "value": true
+    },
+    "ignore_hosts": {
+      "changed": false,
+      "choices": null,
+      "default": [],
+      "typespec": "collections.abc.Sequence[str]",
+      "value": []
+    },
+    "key_size": {
+      "changed": false,
+      "choices": null,
+      "default": 2048,
+      "typespec": "<class 'int'>",
+      "value": 2048
+    },
+    "listen_host": {
+      "changed": false,
+      "choices": null,
+      "default": "",
+      "typespec": "<class 'str'>",
+      "value": ""
+    },
+    "listen_port": {
+      "changed": false,
+      "choices": null,
+      "default": null,
+      "typespec": "int | None",
+      "value": null
+    },
+    "mode": {
+      "changed": false,
+      "choices": null,
+      "default": [
+        "regular"
+      ],
+      "typespec": "collections.abc.Sequence[str]",
+      "value": [
+        "regular"
+      ]
+    },
+    "protobuf_definitions": {
+      "changed": false,
+      "choices": null,
+      "default": null,
+      "typespec": "str | None",
+      "value": null
+    },
+    "rawtcp": {
+      "changed": false,
+      "choices": null,
+      "default": true,
+      "typespec": "<class 'bool'>",
+      "value": true
+    },
+    "server": {
+      "changed": false,
+      "choices": null,
+      "default": true,
+      "typespec": "<class 'bool'>",
+      "value": true
+    },
+    "show_ignored_hosts": {
+      "changed": false,
+      "choices": null,
+      "default": false,
+      "typespec": "<class 'bool'>",
+      "value": false
+    },
+    "showhost": {
+      "changed": false,
+      "choices": null,
+      "default": false,
+      "typespec": "<class 'bool'>",
+      "value": false
+    },
+    "ssl_insecure": {
+      "changed": false,
+      "choices": null,
+      "default": false,
+      "typespec": "<class 'bool'>",
+      "value": false
+    },
+    "ssl_verify_upstream_trusted_ca": {
+      "changed": false,
+      "choices": null,
+      "default": null,
+      "typespec": "str | None",
+      "value": null
+    },
+    "ssl_verify_upstream_trusted_confdir": {
+      "changed": false,
+      "choices": null,
+      "default": null,
+      "typespec": "str | None",
+      "value": null
+    },
+    "tcp_hosts": {
+      "changed": false,
+      "choices": null,
+      "default": [],
+      "typespec": "collections.abc.Sequence[str]",
+      "value": []
+    },
+    "tcp_timeout": {
+      "changed": false,
+      "choices": null,
+      "default": 600,
+      "typespec": "<class 'int'>",
+      "value": 600
+    },
+    "udp_hosts": {
+      "changed": false,
+      "choices": null,
+      "default": [],
+      "typespec": "collections.abc.Sequence[str]",
+      "value": []
+    },
+    "upstream_cert": {
+      "changed": false,
+      "choices": null,
+      "default": true,
+      "typespec": "<class 'bool'>",
+      "value": true
+    },
+    "websocket": {
+      "changed": false,
+      "choices": null,
+      "default": true,
+      "typespec": "<class 'bool'>",
+      "value": true
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

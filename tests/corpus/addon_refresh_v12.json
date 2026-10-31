@@ -1,0 +1,122 @@
+{
+  "reference": "12.3.1",
+  "cases": {
+    "headers": [
+      [
+        null,
+        [
+          [
+            "Date",
+            "Wed, 21 Oct 2015 07:29:40 GMT"
+          ],
+          [
+            "Expires",
+            "Wed, 21 Oct 2015 08:29:40 GMT"
+          ],
+          [
+            "Last-Modified",
+            "Wed, 21 Oct 2015 06:29:40 GMT"
+          ],
+          [
+            "Age",
+            "42"
+          ],
+          [
+            "content-length",
+            "9"
+          ]
+        ],
+        100,
+        102,
+        "756e6368616e676564"
+      ],
+      [
+        null,
+        [
+          [
+            "Date",
+            "bad"
+          ],
+          [
+            "Expires",
+            "0"
+          ],
+          [
+            "content-length",
+            "9"
+          ]
+        ],
+        100,
+        102,
+        "756e6368616e676564"
+      ],
+      [
+        null,
+        [
+          [
+            "Date",
+            "Wed, 21 Oct 2015 07:29:40 GMT"
+          ],
+          [
+            "content-length",
+            "9"
+          ]
+        ],
+        100,
+        102,
+        "756e6368616e676564"
+      ],
+      [
+        null,
+        [
+          [
+            "Date",
+            "Wed, 21 Oct 2015 07:29:40 GMT"
+          ],
+          [
+            "content-length",
+            "9"
+          ]
+        ],
+        100,
+        102,
+        "756e6368616e676564"
+      ]
+    ],
+    "cookies": [
+      [
+        "a=1; Expires=Wed, 21 Oct 2015 07:29:40 GMT; Max-Age=10"
+      ],
+      [
+        "a=1; expires=Wed, 21 Oct 2015 07:29:40 GMT"
+      ],
+      [
+        "a=1"
+      ],
+      [
+        "a=1; Secure"
+      ],
+      [
+        "a=1, b=2"
+      ],
+      [
+        "a=\"a b\"; path=/"
+      ],
+      [
+        "nonsense"
+      ],
+      [
+        ""
+      ],
+      [
+        "a=; Expires=Wed, 21 Oct 2015 07:29:40 GMT"
+      ],
+      [
+        "a=; Expires=Wed, 21 Oct 2015 07:29:40 GMT"
+      ],
+      [
+        "=; Expires=Wed, 21 Oct 2015 07:28:00 GMT"
+      ]
+    ]
+  }
+}

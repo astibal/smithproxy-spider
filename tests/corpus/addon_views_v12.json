@@ -1,0 +1,1613 @@
+{
+  "reference": "12.3.1",
+  "cases": {
+    "query/add": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ],
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "query/insert": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "new"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "query/set": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "query/set_all": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "query/delete": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "query/clear": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "query/copy": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          true,
+          true,
+          true
+        ],
+        "is_owned": true
+      },
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "urlencoded/add": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ],
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "urlencoded/insert": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "new"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "urlencoded/set": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "urlencoded/set_all": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "urlencoded/delete": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "urlencoded/clear": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "urlencoded/copy": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          true,
+          true,
+          true
+        ],
+        "is_owned": true
+      },
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "multipart/add": {
+      "before": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": {
+        "error": "TypeError"
+      },
+      "after": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "multipart/insert": {
+      "before": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": {
+        "error": "TypeError"
+      },
+      "after": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "multipart/set": {
+      "before": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6e6577"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "multipart/set_all": {
+      "before": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6e6577"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "multipart/delete": {
+      "before": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "list",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "multipart/clear": {
+      "before": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "list",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "multipart/copy": {
+      "before": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6f6e65"
+            }
+          ],
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "74776f"
+            }
+          ]
+        ],
+        "serializable": [
+          true,
+          true,
+          true
+        ],
+        "is_owned": true
+      },
+      "after": {
+        "fields_type": "list",
+        "fields": [
+          [
+            {
+              "bytes": "61"
+            },
+            {
+              "bytes": "6e6577"
+            }
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "request_cookies/add": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ],
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "request_cookies/insert": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "new"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "request_cookies/set": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "request_cookies/set_all": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "request_cookies/delete": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "request_cookies/clear": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "request_cookies/copy": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          true,
+          true,
+          true
+        ],
+        "is_owned": true
+      },
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "new"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "response_cookies/add": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ],
+          [
+            "a",
+            [
+              "new",
+              []
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "response_cookies/insert": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "new",
+              []
+            ]
+          ],
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "response_cookies/set": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "new",
+              []
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "response_cookies/set_all": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "new",
+              []
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "response_cookies/delete": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "response_cookies/clear": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": null,
+      "after": {
+        "fields_type": "tuple",
+        "fields": [],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "response_cookies/copy": {
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "operation": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "one",
+              [
+                [
+                  "Path",
+                  "/"
+                ]
+              ]
+            ]
+          ]
+        ],
+        "serializable": [
+          true,
+          true,
+          true
+        ],
+        "is_owned": true
+      },
+      "after": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            [
+              "new",
+              []
+            ]
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      }
+    },
+    "custom/list": {
+      "read_identity": true,
+      "write_identity": true,
+      "before": {
+        "fields_type": "list",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "view_equals_owned": false,
+      "owned_equals_view": false
+    },
+    "custom/tuple": {
+      "read_identity": true,
+      "write_identity": true,
+      "before": {
+        "fields_type": "tuple",
+        "fields": [
+          [
+            "a",
+            "one"
+          ],
+          [
+            "a",
+            "two"
+          ]
+        ],
+        "serializable": [
+          false,
+          false,
+          false
+        ],
+        "is_owned": false
+      },
+      "view_equals_owned": true,
+      "owned_equals_view": false
+    }
+  }
+}

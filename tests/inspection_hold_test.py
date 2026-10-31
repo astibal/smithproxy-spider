@@ -29,6 +29,65 @@ def resume(held, data, info=None, enrichments=()):
 
 
 class HoldTests(unittest.TestCase):
+    def test_multiple_annotated_h1_messages_form_independent_groups(self):
+        first = b'POST /one HTTP/1.1\r\nHost: test\r\nContent-Length: 3\r\n\r\none'
+        second = b'GET /two HTTP/1.1\r\nHost: test\r\n\r\n'
+        wire = first + second
+        first_line = first.index(b'\r\n') + 2
+        first_head = first.index(b'\r\n\r\n') + 4
+        second_start = len(first)
+        second_line = second_start + second.index(b'\r\n') + 2
+        info = {'content_annotations': [
+            [0, first_line, 'http1.start_line'],
+            [first_line, first_head, 'http1.headers'],
+            [second_start, second_line, 'http1.start_line'],
+            [second_line, len(wire), 'http1.headers'],
+        ]}
+        msg = Message(wire, len(wire), info)
+        self.assertEqual([part.type for part in msg.parts], [
+            PartType.Http1.Header, PartType.Http1.Body,
+            PartType.Http1.Header, PartType.Http1.Body,
+        ])
+        self.assertEqual(msg.parts[0].http1.target, '/one')
+        self.assertEqual(msg.parts[2].http1.target, '/two')
+        msg.parts[1].set_bytes(b'changed')
+        msg.parts[2].http1.target = '/also-changed'
+        result = msg.commit()
+        self.assertIn(b'Content-Length: 7\r\n\r\nchanged', result)
+        self.assertTrue(result.endswith(
+            b'GET /also-changed HTTP/1.1\r\nHost: test\r\n\r\n'))
+
+    def test_h1_zero_body_request_and_bodyless_response_need_no_length(self):
+        cases = (
+            b'GET /ready HTTP/1.1\r\nHost: test\r\n\r\n',
+            b'HTTP/1.1 204 No Content\r\n\r\n',
+            b'HTTP/1.1 304 Not Modified\r\n\r\n',
+        )
+        for wire in cases:
+            start_end = wire.index(b'\r\n') + 2
+            info = {'content_annotations': [
+                [0, start_end, 'http1.start_line'],
+                [start_end, len(wire), 'http1.headers'],
+            ]}
+            with self.subTest(wire=wire):
+                message = Message(wire, len(wire), info)
+                self.assertEqual(
+                    [part.type for part in message.parts],
+                    [PartType.Http1.Header, PartType.Http1.Body],
+                )
+                self.assertTrue(message.parts[1].content.complete)
+                self.assertEqual(message.commit(), wire)
+
+        close_delimited = b'HTTP/1.1 200 OK\r\n\r\nbody'
+        start_end = close_delimited.index(b'\r\n') + 2
+        info = {'content_annotations': [
+            [0, start_end, 'http1.start_line'],
+            [start_end, close_delimited.index(b'\r\n\r\n') + 4, 'http1.headers'],
+        ]}
+        message = Message(close_delimited, len(close_delimited), info)
+        self.assertEqual(len(message.parts), 1)
+        self.assertEqual(message.parts[0].type, PartType.Opaque)
+
     def test_h1_adjacent_header_candidates_keep_annotation_order(self):
         from inspection_api import _h1_head_ranges
 

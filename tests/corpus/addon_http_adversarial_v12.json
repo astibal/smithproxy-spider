@@ -1,0 +1,74 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": {
+    "invalid header name": {
+      "value": null,
+      "error": [
+        "TypeError",
+        "Expected content to be str or bytes, but is dict."
+      ]
+    },
+    "invalid response content": {
+      "value": null,
+      "error": [
+        "TypeError",
+        "Expected content to be str or bytes, but is dict."
+      ]
+    },
+    "unknown content coding": {
+      "strict": {
+        "value": {
+          "bytes": "77697265"
+        },
+        "error": null
+      },
+      "permissive": "wire",
+      "content": "replacement",
+      "content_encoding": null,
+      "content_length": "11"
+    },
+    "empty encoded body": {
+      "raw_content": "",
+      "content_encoding": null,
+      "content_length": "0"
+    },
+    "text charset fallback": {
+      "raw_content": "70726963653a203130e282ac",
+      "content_type": "text/plain; format=flowed; charset=utf-8",
+      "text": "price: 10€"
+    },
+    "unsupported encode": {
+      "outcome": {
+        "value": null,
+        "error": [
+          "ValueError",
+          "Invalid content encoding 'unknown'"
+        ]
+      },
+      "content_encoding": null,
+      "raw_content": "body"
+    },
+    "h2 host header": {
+      "before": "authority.test:8443",
+      "cleared": [
+        "",
+        null
+      ],
+      "authority": "new.test:9443",
+      "host": null
+    },
+    "connect target": {
+      "first_line_format": "authority",
+      "url": "example.test:443",
+      "pretty_url": "example.test:443"
+    },
+    "invalid display host": {
+      "pretty_host": "[",
+      "pretty_url": "http://[/path"
+    },
+    "missing form body": {
+      "items": [],
+      "raw_content": null
+    }
+  }
+}

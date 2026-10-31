@@ -1,0 +1,43 @@
+{
+  "certificate_conversion": {
+    "from_matches_cryptography": true,
+    "from_serial": 73,
+    "public_surface": [
+      "altnames",
+      "cn",
+      "copy",
+      "crl_distribution_points",
+      "fingerprint",
+      "from_pem",
+      "from_pyopenssl",
+      "from_state",
+      "get_state",
+      "has_expired",
+      "is_ca",
+      "issuer",
+      "keyinfo",
+      "notafter",
+      "notbefore",
+      "organization",
+      "public_key",
+      "serial",
+      "set_state",
+      "subject",
+      "to_cryptography",
+      "to_pem",
+      "to_pyopenssl"
+    ],
+    "to_matches_cryptography": true,
+    "to_type": [
+      "OpenSSL.crypto",
+      "X509"
+    ],
+    "warnings": [
+      {
+        "category": "DeprecationWarning",
+        "message": "Use `to_cryptography` instead."
+      }
+    ]
+  },
+  "reference": "mitmproxy 12.3.1"
+}

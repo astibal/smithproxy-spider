@@ -1,0 +1,133 @@
+{
+  "cases": {
+    "dns_empty": {
+      "error": ["AttributeError", "'DNSFlow' object has no attribute 'request'"],
+      "events": [],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "dns_error": {
+      "error": null,
+      "events": [["dns_request", 72], ["dns_error", "dns failure"]],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "dns_response": {
+      "error": null,
+      "events": [["dns_request", 71], ["dns_response", 71]],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "foreign_object": {
+      "error": ["TypeError", "Unknown flow type: object"],
+      "events": [],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "http_callback_error": {
+      "error": null,
+      "events": [["requestheaders", "http"], ["request", "http"], ["failing_request", "http"], ["following_request", "http"]],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "http_empty": {
+      "error": ["AttributeError", "'HTTPFlow' object has no attribute 'request'"],
+      "events": [],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "http_error": {
+      "error": null,
+      "events": [["requestheaders", "http"], ["request", "http"], ["error", "http", "recorded failure"]],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "http_request": {
+      "error": null,
+      "events": [["requestheaders", "http"], ["request", "http"]],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "http_response": {
+      "error": null,
+      "events": [["requestheaders", "http"], ["request", "http"], ["responseheaders", "http"], ["response", "http"]],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "http_response_error": {
+      "error": null,
+      "events": [["requestheaders", "http"], ["request", "http"], ["responseheaders", "http"], ["response", "http"], ["error", "http", "late failure"]],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "tcp": {
+      "error": null,
+      "events": [["tcp_start", 0], ["tcp_message", true, "one", 1], ["tcp_message", false, "two", 2], ["tcp_end", 2]],
+      "post_message_count": 2,
+      "return_type": "NoneType",
+      "same_message_list": false,
+      "same_messages": true
+    },
+    "tcp_error": {
+      "error": null,
+      "events": [["tcp_start", 0], ["tcp_message", true, "broken", 1], ["tcp_error", 1, "tcp failure"]],
+      "post_message_count": 1,
+      "return_type": "NoneType",
+      "same_message_list": false,
+      "same_messages": true
+    },
+    "udp": {
+      "error": null,
+      "events": [["udp_start", 0], ["udp_message", true, "one", 1], ["udp_message", false, "two", 2], ["udp_end", 2]],
+      "post_message_count": 2,
+      "return_type": "NoneType",
+      "same_message_list": false,
+      "same_messages": true
+    },
+    "udp_error": {
+      "error": null,
+      "events": [["udp_start", 0], ["udp_message", false, "broken", 1], ["udp_error", 1, "udp failure"]],
+      "post_message_count": 1,
+      "return_type": "NoneType",
+      "same_message_list": false,
+      "same_messages": true
+    },
+    "websocket": {
+      "error": null,
+      "events": [["requestheaders", "http"], ["request", "http"], ["responseheaders", "http"], ["response", "http"], ["websocket_start", 0], ["websocket_message", true, "one", 1], ["websocket_message", false, "two", 2], ["websocket_end", 2, 1000]],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    },
+    "websocket_open": {
+      "error": null,
+      "events": [["requestheaders", "http"], ["request", "http"], ["responseheaders", "http"], ["response", "http"], ["websocket_start", 0], ["websocket_message", true, "open", 1], ["websocket_end", 1, null]],
+      "post_message_count": 0,
+      "return_type": "NoneType",
+      "same_message_list": null,
+      "same_messages": null
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

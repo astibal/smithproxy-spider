@@ -93,6 +93,119 @@ int main() {
     setup_reply = spider::process_webhook(store, decisions, setup, std::nullopt, nullptr, &runtime);
     assert(setup_reply.body["control"]["rewrite"] == false);
 
+    // The native webhook boundary carries an explicitly classified raw flow
+    // into the packaged addon worker. Spider does not infer the transport from
+    // the session label or payload bytes.
+    const json raw_transport = {
+        {"version", 1}, {"kind", "tcp"}, {"delivery", "raw"},
+        {"client", {{"peername", {"192.0.2.10", 41000}},
+                    {"sockname", {"192.0.2.20", 443}}}},
+        {"server", {{"address", {"198.51.100.30", 443}},
+                    {"peername", {"198.51.100.30", 443}},
+                    {"sockname", {"192.0.2.20", 52000}}}},
+    };
+    spider::Inspection raw_runtime;
+    auto raw_deployment = raw_runtime.configure({
+        {"operation", "deploy"},
+        {"revision", raw_runtime.status()["revision"]},
+        {"name", "raw lifecycle"},
+        {"script", "#!mitmproxy\n"
+                   "def tcp_message(flow):\n"
+                   "    message = flow.messages[-1]\n"
+                   "    message.content = b'raw:' + message.content.upper()\n"},
+        {"scope", "all"}, {"instancing", "flow"},
+    });
+    const auto raw_deployment_id = raw_deployment["chain"][0]["id"];
+    raw_runtime.configure({
+        {"operation", "enable"},
+        {"revision", raw_runtime.status()["revision"]},
+        {"id", raw_deployment_id}, {"enabled", true},
+    });
+    auto raw_setup = setup;
+    raw_setup["id"] = "native-raw";
+    raw_setup["details"]["info"]["raw_transport"] = raw_transport;
+    setup_reply = spider::process_webhook(
+        store, decisions, raw_setup, std::nullopt, nullptr, &raw_runtime);
+    assert(setup_reply.body["action"] == "accept");
+    assert(setup_reply.body["control"]["rewrite"] == true);
+
+    auto raw_content = event;
+    raw_content["id"] = "native-raw";
+    raw_content["details"]["info"]["content"] = spider::base64_encode("hello");
+    raw_content["details"]["info"]["webhook_control"] = {{"rewrite", true}};
+    auto raw_observation = raw_transport;
+    raw_observation["direction"] = "client-to-server";
+    raw_observation["sequence"] = 0;
+    raw_observation["unit"] = "stream-chunk";
+    raw_content["details"]["info"]["raw_transport"] = raw_observation;
+    const auto raw_reply = spider::process_webhook(
+        store, decisions, raw_content, std::nullopt, nullptr, &raw_runtime);
+    assert(raw_reply.body["action"] == "replace");
+    assert(raw_reply.body["content"] == spider::base64_encode("raw:HELLO"));
+
+    auto raw_stop = raw_setup;
+    raw_stop["action"] = "connection-stop";
+    auto raw_terminal = raw_transport;
+    raw_terminal["terminal"] = {{"state", "closed"}, {"message", ""}};
+    raw_stop["details"]["info"]["raw_transport"] = raw_terminal;
+    const auto raw_stop_reply = spider::process_webhook(
+        store, decisions, raw_stop, std::nullopt, nullptr, &raw_runtime);
+    assert(raw_stop_reply.status == 200);
+
+    // The webhook boundary exports a terminal close action only when the
+    // current callback advertised the literal connection-close capability.
+    spider::Inspection close_runtime;
+    auto close_deployment = close_runtime.configure({
+        {"operation", "deploy"},
+        {"revision", close_runtime.status()["revision"]},
+        {"name", "H1 close"},
+        {"script", "#!mitmproxy\ndef requestheaders(flow):\n    flow.kill()\n"},
+        {"scope", "all"}, {"instancing", "flow"},
+    });
+    close_runtime.configure({
+        {"operation", "enable"},
+        {"revision", close_runtime.status()["revision"]},
+        {"id", close_deployment["chain"][0]["id"]}, {"enabled", true},
+    });
+    auto close_setup = setup;
+    close_setup["id"] = "native-h1-close";
+    setup_reply = spider::process_webhook(
+        store, decisions, close_setup, std::nullopt, nullptr, &close_runtime);
+    assert(setup_reply.body["action"] == "accept");
+
+    const std::string close_request =
+        "GET /kill HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    const auto close_line = close_request.find("\r\n") + 2;
+    auto close_event = event;
+    close_event["id"] = "native-h1-close";
+    close_event["details"]["info"]["content"] =
+        spider::base64_encode(close_request);
+    close_event["details"]["info"]["content_annotations"] = {
+        {0, close_line, "http1.start_line"},
+        {close_line, close_request.size(), "http1.headers"},
+    };
+    close_event["details"]["info"]["webhook_control"] = {
+        {"version", 1}, {"sequence", 1}, {"mode", "regular"},
+        {"rewrite", true}, {"content-reverse", true},
+        {"connection-close", true},
+    };
+    const auto close_reply = spider::process_webhook(
+        store, decisions, close_event, std::nullopt, nullptr, &close_runtime);
+    assert(close_reply.status == 200);
+    assert(close_reply.body == json({
+        {"action", "close"},
+        {"control", {{"mode", "strict"}}},
+        {"reason", "Connection killed."},
+    }));
+    assert(!close_reply.body.contains("content"));
+    assert(!close_reply.body.contains("content-reverse"));
+
+    auto close_stop = close_setup;
+    close_stop["action"] = "connection-stop";
+    assert(spider::process_webhook(
+        store, decisions, close_stop, std::nullopt, nullptr,
+        &close_runtime).status == 200);
+
     // The complete backend path permits same-size raw edits without reserving
     // an output context. It must not silently attach a late rewrite opt-in.
     runtime.configure({{"script", "if api.phase == 'setup':\n    return\nreturn api.bytes.upper()"},

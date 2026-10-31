@@ -1,0 +1,245 @@
+{
+  "reference": "12.3.1",
+  "cases": {
+    "parsed": [
+      [
+        [
+          "a",
+          "1"
+        ],
+        [
+          "a",
+          "2"
+        ],
+        [
+          "b",
+          "3"
+        ]
+      ],
+      [
+        [
+          "a",
+          "hello world"
+        ],
+        [
+          "b",
+          "x;y"
+        ],
+        [
+          "c",
+          "a\"b"
+        ]
+      ],
+      [
+        [
+          "bare",
+          ""
+        ],
+        [
+          "",
+          "empty"
+        ],
+        [
+          "x",
+          ""
+        ],
+        [
+          "y",
+          "a=b"
+        ]
+      ],
+      [
+        [
+          "a ",
+          " b "
+        ],
+        [
+          "q ",
+          " \"x\" "
+        ]
+      ],
+      [
+        [
+          "a",
+          "one, b=two"
+        ]
+      ],
+      [
+        [
+          "a",
+          "unterminated"
+        ]
+      ],
+      [
+        [
+          "$Version",
+          "1"
+        ],
+        [
+          "a",
+          "2"
+        ],
+        [
+          "$Path",
+          "/"
+        ]
+      ],
+      [
+        [
+          "x",
+          "anb"
+        ]
+      ],
+      [
+        [
+          "x",
+          "a;b"
+        ]
+      ],
+      [
+        [
+          "x",
+          "a\\b"
+        ]
+      ],
+      [
+        [
+          "x",
+          "a"
+        ],
+        [
+          "unk",
+          ""
+        ],
+        [
+          "y",
+          "2"
+        ]
+      ],
+      [
+        [
+          "a",
+          "1"
+        ]
+      ],
+      [
+        [
+          "a",
+          "1\t"
+        ],
+        [
+          "b",
+          "2"
+        ]
+      ],
+      [
+        [
+          "a",
+          "x"
+        ]
+      ]
+    ],
+    "formatted": [
+      [
+        "x=; x=second"
+      ],
+      [
+        "x=plain; x=second"
+      ],
+      [
+        "x=\"a b\"; x=second"
+      ],
+      [
+        "x=\"a;b\"; x=second"
+      ],
+      [
+        "x=\"a\\\"b\"; x=second"
+      ],
+      [
+        "x=\"a\\\\b\"; x=second"
+      ],
+      [
+        "x=\"café\"; x=second"
+      ],
+      [
+        "x=a=b; x=second"
+      ],
+      [
+        "x=\"a\tb\"; x=second"
+      ],
+      [
+        "x=\"a,b\"; x=second"
+      ],
+      [
+        "x=a/b; x=second"
+      ],
+      [
+        "x=a@b; x=second"
+      ],
+      [
+        "x=\"ab\"; x=second"
+      ]
+    ],
+    "multiple": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ],
+      [
+        "a",
+        "3"
+      ]
+    ],
+    "changed": [
+      "a=first; b=2; a=last"
+    ],
+    "live": [
+      [
+        "external",
+        "yes"
+      ]
+    ],
+    "cleared": [
+      ""
+    ],
+    "preserved_input": {
+      "values": [
+        "first",
+        "second",
+        "third"
+      ],
+      "first": [
+        [
+          "a",
+          "first"
+        ],
+        [
+          "a",
+          "second"
+        ],
+        [
+          "a",
+          "third"
+        ]
+      ],
+      "second": [
+        [
+          "a",
+          "first"
+        ],
+        [
+          "a",
+          "second"
+        ],
+        [
+          "a",
+          "third"
+        ]
+      ]
+    }
+  }
+}

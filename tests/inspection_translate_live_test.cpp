@@ -99,6 +99,109 @@ int main() {
     assert(prefix.body["content"] == spider::base64_encode(preface));
     auto completed = send("fragmented", 4, first.substr(8));
     assert(completed.status == 200 && completed.body["action"] == "replace");
+    // A connection-scoped failure plan must survive the production C++ state
+    // boundary. The worker selects the earlier request, consumes GOAWAY and
+    // returns a generated response through the ordinary replacement channel.
+    configure({{"operation", "remove"}, {"id", id}});
+    const std::string fail_pending_script =
+        "if api.side == 'R':\n"
+        "    for part in api.message.parts:\n"
+        "        if part.complete and part.frame_type == 7:\n"
+        "            api.connection.http2.fail_pending_requests(\n"
+        "                part, status=502, body=b'upstream closed')\n"
+        "            break\n"
+        "return api.message.translate()";
+    state = configure({{"operation", "deploy"}, {"name", "fail pending"},
+                       {"script", fail_pending_script}, {"scope", "all"},
+                       {"instancing", "flow"}});
+    id = state["chain"][0]["id"];
+    configure({{"operation", "enable"}, {"id", id}, {"enabled", true}});
+    assert(send("goaway-native", 1, preface, false, true, "L", true, true).status == 200);
+    // Static-table GET, https and / fields are sufficient for the native
+    // lifecycle ledger; stream 1 ends with its initial HEADERS.
+    auto pending_request = frame(std::string("\x82\x87\x84", 3), 1, 5);
+    pending_request[8] = 1;
+    assert(send("goaway-native", 2, pending_request, false, true,
+                "L", true, true).status == 200);
+    auto goaway_wire = frame(std::string(8, '\0'), 7, 0);
+    goaway_wire[8] = 0;
+    auto failed_pending = send("goaway-native", 3, goaway_wire, false, true,
+                               "R", true, true);
+    assert(failed_pending.status == 200);
+    assert(failed_pending.body["action"] == "replace");
+    assert(failed_pending.body["content"].get<std::string>() !=
+           spider::base64_encode(goaway_wire));
+    assert(failed_pending.body["control"]["mode"] == "strict");
+    // A stream-local failure uses the same production state boundary without
+    // exposing or reconstructing a stream identifier outside native Parts.
+    configure({{"operation", "remove"}, {"id", id}});
+    const std::string fail_reset_script =
+        "if api.side == 'R':\n"
+        "    for part in api.message.parts:\n"
+        "        if part.complete and part.frame_type == 3:\n"
+        "            api.connection.http2.fail_reset_stream(\n"
+        "                part, status=502, body=b'upstream reset')\n"
+        "            break\n"
+        "return api.message.translate()";
+    state = configure({{"operation", "deploy"}, {"name", "fail reset"},
+                       {"script", fail_reset_script}, {"scope", "all"},
+                       {"instancing", "flow"}});
+    id = state["chain"][0]["id"];
+    configure({{"operation", "enable"}, {"id", id}, {"enabled", true}});
+    assert(send("reset-native", 1, preface, false, true, "L", true, true).status == 200);
+    assert(send("reset-native", 2, pending_request, false, true,
+                "L", true, true).status == 200);
+    auto reset_wire = frame(std::string("\0\0\0\7", 4), 3, 0);
+    reset_wire[8] = 1;
+    auto failed_reset = send("reset-native", 3, reset_wire, false, true,
+                             "R", true, true);
+    assert(failed_reset.status == 200);
+    assert(failed_reset.body["action"] == "replace");
+    assert(failed_reset.body["content"].get<std::string>() !=
+           spider::base64_encode(reset_wire));
+    assert(failed_reset.body["control"]["mode"] == "strict");
+    // Informational responses use the same production checkpoint boundary in
+    // both directions. A local 100 is returned through content-reverse; an
+    // upstream 103 advances source HPACK state without reaching the client.
+    configure({{"operation", "remove"}, {"id", id}});
+    const std::string informational_script =
+        "for part in api.message.parts:\n"
+        "    if not part.complete or part.frame_type != 1:\n"
+        "        continue\n"
+        "    if api.side == 'L':\n"
+        "        api.connection.http2.emit_informational_response(part)\n"
+        "        break\n"
+        "    statuses = [field.value for field in part.headers.entries "
+        "if field.name == b':status']\n"
+        "    if statuses == [b'103']:\n"
+        "        api.connection.http2.suppress_informational_response(part)\n"
+        "        break\n"
+        "return api.message.translate()";
+    state = configure({{"operation", "deploy"}, {"name", "informational"},
+                       {"script", informational_script}, {"scope", "all"},
+                       {"instancing", "flow"}});
+    id = state["chain"][0]["id"];
+    configure({{"operation", "enable"}, {"id", id}, {"enabled", true}});
+    assert(send("informational-native", 1, preface, false, true,
+                "L", true, true).status == 200);
+    auto continued = send("informational-native", 2, pending_request,
+                          false, true, "L", true, true);
+    assert(continued.status == 200);
+    assert(continued.body["action"] == "replace");
+    assert(continued.body.contains("content-reverse"));
+    assert(!continued.body["content-reverse"].get<std::string>().empty());
+    const auto early_hints = frame(std::string("\x48\x03" "103", 5));
+    auto suppressed = send("informational-native", 3, early_hints,
+                           false, true, "R", true, true);
+    assert(suppressed.status == 200);
+    assert(suppressed.body["action"] == "replace");
+    assert(suppressed.body["content"] == "");
+    const auto final_response = frame(std::string("\x88", 1), 1, 5);
+    auto final = send("informational-native", 4, final_response,
+                      false, true, "R", true, true);
+    assert(final.status == 200);
+    assert(final.body["content"].get<std::string>() ==
+           spider::base64_encode(final_response));
     // Reservations are admitted by the backend under the deployment serial
     // transaction. Two workers/connections cannot promise the same capacity.
     configure({{"operation", "remove"}, {"id", id}});

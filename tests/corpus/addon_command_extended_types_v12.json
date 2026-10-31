@@ -1,0 +1,453 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "argument/bytes/0": {
+      "value": "called",
+      "argument": {
+        "bytes": [
+          104,
+          101,
+          108,
+          108,
+          111
+        ]
+      }
+    },
+    "argument/bytes/1": {
+      "value": "called",
+      "argument": {
+        "bytes": [
+          108,
+          105,
+          110,
+          101,
+          10,
+          110,
+          101,
+          120,
+          116
+        ]
+      }
+    },
+    "argument/bytes/2": {
+      "value": "called",
+      "argument": {
+        "bytes": [
+          196,
+          141,
+          97,
+          106
+        ]
+      }
+    },
+    "argument/bytes/3": {
+      "value": "called",
+      "argument": {
+        "bytes": [
+          255
+        ]
+      }
+    },
+    "argument/bytes/4": {
+      "value": "called",
+      "argument": {
+        "bytes": [
+          92,
+          117,
+          48,
+          48,
+          52,
+          49
+        ]
+      }
+    },
+    "argument/bytes/5": {
+      "value": "called",
+      "argument": {
+        "bytes": [
+          92,
+          113
+        ]
+      }
+    },
+    "argument/bytes/6": {
+      "error": "CommandError",
+      "message": "Trailing \\ in string"
+    },
+    "argument/bytes/7": {
+      "error": "CommandError",
+      "message": "invalid \\x escape at position 0"
+    },
+    "argument/args/0": {
+      "value": "called",
+      "argument": "hello"
+    },
+    "argument/args/1": {
+      "value": "called",
+      "argument": "two words"
+    },
+    "argument/args/2": {
+      "value": "called",
+      "argument": "line\\nnext"
+    },
+    "argument/args/3": {
+      "value": "called",
+      "argument": "\"quoted\""
+    },
+    "argument/args/4": {
+      "value": "called",
+      "argument": "$HOME"
+    },
+    "argument/args/5": {
+      "value": "called",
+      "argument": ""
+    },
+    "argument/command/0": {
+      "value": "called",
+      "argument": "probe.existing"
+    },
+    "argument/command/1": {
+      "error": "CommandError",
+      "message": "Unknown command: probe.missing"
+    },
+    "argument/command/2": {
+      "error": "CommandError",
+      "message": "Unknown command: "
+    },
+    "argument/path/0": {
+      "value": "called",
+      "argument": "relative.txt"
+    },
+    "argument/path/1": {
+      "value": "called",
+      "argument": "<HOME>/file"
+    },
+    "argument/path/2": {
+      "value": "called",
+      "argument": "~not-a-user/file"
+    },
+    "argument/path/3": {
+      "value": "called",
+      "argument": "$HOME/file"
+    },
+    "argument/path/4": {
+      "value": "called",
+      "argument": "a b"
+    },
+    "argument/path/5": {
+      "value": "called",
+      "argument": "a\\nb"
+    },
+    "argument/marker/0": {
+      "value": "called",
+      "argument": ":default:"
+    },
+    "argument/marker/1": {
+      "value": "called",
+      "argument": ""
+    },
+    "argument/marker/2": {
+      "value": "called",
+      "argument": "a"
+    },
+    "argument/marker/3": {
+      "value": "called",
+      "argument": "A"
+    },
+    "argument/marker/4": {
+      "value": "called",
+      "argument": "9"
+    },
+    "argument/marker/5": {
+      "value": "called",
+      "argument": ":warning:"
+    },
+    "argument/marker/6": {
+      "error": "CommandError",
+      "message": "Invalid choice."
+    },
+    "argument/marker/7": {
+      "error": "CommandError",
+      "message": "Invalid choice."
+    },
+    "argument/marker/8": {
+      "error": "CommandError",
+      "message": "Invalid choice."
+    },
+    "argument/cut/0": {
+      "value": "called",
+      "argument": [
+        "request.method"
+      ]
+    },
+    "argument/cut/1": {
+      "value": "called",
+      "argument": [
+        "request.method",
+        "response.status_code"
+      ]
+    },
+    "argument/cut/2": {
+      "value": "called",
+      "argument": [
+        "a",
+        "b",
+        ""
+      ]
+    },
+    "argument/cut/3": {
+      "value": "called",
+      "argument": [
+        "a\\",
+        "b"
+      ]
+    },
+    "argument/cut/4": {
+      "value": "called",
+      "argument": [
+        ""
+      ]
+    },
+    "argument/data/0": {
+      "error": "CommandError",
+      "message": "data cannot be passed as argument"
+    },
+    "argument/choice/0": {
+      "value": "called",
+      "argument": "one"
+    },
+    "argument/choice/1": {
+      "value": "called",
+      "argument": "two"
+    },
+    "argument/choice/2": {
+      "error": "CommandError",
+      "message": "Invalid choice."
+    },
+    "argument/choice/3": {
+      "error": "CommandError",
+      "message": "Invalid choice."
+    },
+    "return/bytes/good": {
+      "value": {
+        "bytes": [
+          118,
+          97,
+          108,
+          117,
+          101
+        ]
+      }
+    },
+    "return/bytes/bad": {
+      "error": "CommandError",
+      "message": "probe.return.bytes.bad returned unexpected data - expected bytes"
+    },
+    "return/args/good": {
+      "value": "value"
+    },
+    "return/path/good": {
+      "value": "value"
+    },
+    "return/marker/good": {
+      "error": "CommandError",
+      "message": "probe.return.marker.good returned unexpected data - expected marker"
+    },
+    "return/command/good": {
+      "value": "probe.existing"
+    },
+    "return/command/missing": {
+      "error": "CommandError",
+      "message": "probe.return.command.missing returned unexpected data - expected cmd"
+    },
+    "return/cut/parsed": {
+      "error": "CommandError",
+      "message": "probe.return.cut.parsed returned unexpected data - expected cut[]"
+    },
+    "return/data/string": {
+      "value": "value"
+    },
+    "return/data/nested": {
+      "value": [
+        [
+          "first",
+          "second"
+        ]
+      ]
+    },
+    "return/data/mapping": {
+      "value": {
+        "first": 1
+      }
+    },
+    "return/data/bad": {
+      "error": "CommandError",
+      "message": "probe.return.data.bad returned unexpected data - expected data[][]"
+    },
+    "typed/bytes": {
+      "value": "called",
+      "identity": true
+    },
+    "typed/args": {
+      "value": "called",
+      "identity": true
+    },
+    "typed/command": {
+      "value": "called",
+      "identity": true
+    },
+    "typed/path": {
+      "value": "called",
+      "identity": true
+    },
+    "typed/marker": {
+      "value": "called",
+      "identity": true
+    },
+    "typed/cut": {
+      "value": "called",
+      "identity": true
+    },
+    "typed/data": {
+      "value": "called",
+      "identity": true
+    },
+    "typed/choice": {
+      "value": "called",
+      "identity": true
+    },
+    "metadata/bytes": {
+      "present": true,
+      "display": "bytes",
+      "choice_instance_lookup": null
+    },
+    "metadata/args": {
+      "present": true,
+      "display": "arg",
+      "choice_instance_lookup": null
+    },
+    "metadata/command": {
+      "present": true,
+      "display": "cmd",
+      "choice_instance_lookup": null
+    },
+    "metadata/path": {
+      "present": true,
+      "display": "path",
+      "choice_instance_lookup": null
+    },
+    "metadata/marker": {
+      "present": true,
+      "display": "marker",
+      "choice_instance_lookup": null
+    },
+    "metadata/cut": {
+      "present": true,
+      "display": "cut[]",
+      "choice_instance_lookup": null
+    },
+    "metadata/data": {
+      "present": true,
+      "display": "data[][]",
+      "choice_instance_lookup": null
+    },
+    "metadata/choice": {
+      "present": true,
+      "display": "choice",
+      "choice_instance_lookup": true
+    },
+    "metadata/bool/completion": [
+      "false",
+      "true"
+    ],
+    "metadata/command/completion": [
+      "probe.existing",
+      "probe.choices",
+      "probe.argument.bytes.0",
+      "probe.argument.bytes.1",
+      "probe.argument.bytes.2",
+      "probe.argument.bytes.3",
+      "probe.argument.bytes.4",
+      "probe.argument.bytes.5",
+      "probe.argument.bytes.6",
+      "probe.argument.bytes.7",
+      "probe.argument.args.0",
+      "probe.argument.args.1",
+      "probe.argument.args.2",
+      "probe.argument.args.3",
+      "probe.argument.args.4",
+      "probe.argument.args.5",
+      "probe.argument.command.0",
+      "probe.argument.command.1",
+      "probe.argument.command.2",
+      "probe.argument.path.0",
+      "probe.argument.path.1",
+      "probe.argument.path.2",
+      "probe.argument.path.3",
+      "probe.argument.path.4",
+      "probe.argument.path.5",
+      "probe.argument.marker.0",
+      "probe.argument.marker.1",
+      "probe.argument.marker.2",
+      "probe.argument.marker.3",
+      "probe.argument.marker.4",
+      "probe.argument.marker.5",
+      "probe.argument.marker.6",
+      "probe.argument.marker.7",
+      "probe.argument.marker.8",
+      "probe.argument.cut.0",
+      "probe.argument.cut.1",
+      "probe.argument.cut.2",
+      "probe.argument.cut.3",
+      "probe.argument.cut.4",
+      "probe.argument.data.0",
+      "probe.argument.choice.0",
+      "probe.argument.choice.1",
+      "probe.argument.choice.2",
+      "probe.argument.choice.3",
+      "probe.return.bytes.good",
+      "probe.return.bytes.bad",
+      "probe.return.args.good",
+      "probe.return.path.good",
+      "probe.return.marker.good",
+      "probe.return.command.good",
+      "probe.return.command.missing",
+      "probe.return.cut.parsed",
+      "probe.return.data.string",
+      "probe.return.data.nested",
+      "probe.return.data.mapping",
+      "probe.return.data.bad",
+      "probe.typed.bytes",
+      "probe.typed.args",
+      "probe.typed.command",
+      "probe.typed.path",
+      "probe.typed.marker",
+      "probe.typed.cut",
+      "probe.typed.data",
+      "probe.typed.choice"
+    ],
+    "metadata/choice/completion": [
+      "one",
+      "two"
+    ],
+    "metadata/unknown/default": "fallback",
+    "metadata/unhashable/default": {
+      "error": "TypeError",
+      "message": "cannot use 'list' as a dict key (unhashable type: 'list')"
+    },
+    "metadata/string/parse": {
+      "value": "value"
+    },
+    "metadata/string/is-valid": {
+      "value": [
+        true,
+        false
+      ]
+    },
+    "metadata/string/completion": {
+      "value": []
+    },
+    "metadata/custom/replacement": "Replacement",
+    "metadata/custom/missing": "fallback"
+  }
+}

@@ -1,0 +1,352 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "collect": {
+      "value": null
+    },
+    "call/string": {
+      "value": "hello"
+    },
+    "call/string_type": {
+      "value": 42
+    },
+    "call/add": {
+      "value": 7
+    },
+    "call/default": {
+      "value": 5
+    },
+    "call/missing": {
+      "error": "CommandError",
+      "message": "command argument mismatch: missing a required argument: 'first'"
+    },
+    "call/extra": {
+      "error": "CommandError",
+      "message": "command argument mismatch: too many positional arguments"
+    },
+    "call/unknown": {
+      "error": "CommandError",
+      "message": "Unknown command: probe.unknown"
+    },
+    "call/failure": {
+      "error": "ValueError",
+      "message": "callback failed"
+    },
+    "strings/add": {
+      "value": 7
+    },
+    "strings/default": {
+      "value": 5
+    },
+    "strings/bad_int": {
+      "error": "CommandError",
+      "message": "invalid literal for int() with base 10: 'three'"
+    },
+    "strings/flag_true": {
+      "value": true
+    },
+    "strings/flag_false": {
+      "value": false
+    },
+    "strings/flag_upper": {
+      "error": "CommandError",
+      "message": "Booleans are 'true' or 'false', got True"
+    },
+    "strings/flag_one": {
+      "error": "CommandError",
+      "message": "Booleans are 'true' or 'false', got 1"
+    },
+    "strings/echo_quoted": {
+      "value": "\"two words\""
+    },
+    "strings/echo_escape": {
+      "value": "line\nnext"
+    },
+    "strings/echo_quoted_escape": {
+      "value": "\"line\nnext\""
+    },
+    "strings/echo_unicode": {
+      "value": "čaj"
+    },
+    "strings/echo_bad_hex": {
+      "error": "CommandError",
+      "message": "'unicodeescape' codec can't decode bytes in position 0-1: truncated \\xXX escape"
+    },
+    "strings/echo_trailing_slash": {
+      "value": "tail\\"
+    },
+    "execute/probe.echo hello": {
+      "value": "hello"
+    },
+    "execute/probe.echo \"two words\"": {
+      "value": "two words"
+    },
+    "execute/probe.add 3 4": {
+      "value": 7
+    },
+    "execute/probe.echo": {
+      "error": "CommandError",
+      "message": "Command argument mismatch: \n    Expected: OrderedDict({'text': <Parameter \"text: str\">})\n    Received: []"
+    },
+    "execute/probe.missing": {
+      "error": "CommandError",
+      "message": "Unknown command: probe.missing"
+    },
+    "execute/": {
+      "error": "CommandError",
+      "message": "Invalid command: ''"
+    },
+    "execute/probe.echo \"\"": {
+      "value": ""
+    },
+    "execute/probe.echo ''": {
+      "value": ""
+    },
+    "execute/  probe.echo hello  ": {
+      "value": "hello"
+    },
+    "execute/probe.echo \"unfinished": {
+      "value": "\"unfinished"
+    },
+    "execute/probe.echo 'unfinished": {
+      "value": "'unfinished"
+    },
+    "execute/probe.echo one\\ two": {
+      "error": "CommandError",
+      "message": "Command argument mismatch: \n    Expected: OrderedDict({'text': <Parameter \"text: str\">})\n    Received: ['one\\\\', 'two']"
+    },
+    "execute/probe.echo \"line\\nnext\"": {
+      "value": "line\nnext"
+    },
+    "execute/probe.echo 'line\\nnext'": {
+      "value": "line\nnext"
+    },
+    "execute/probe.echo \"a\\\"b\"": {
+      "error": "CommandError",
+      "message": "Command argument mismatch: \n    Expected: OrderedDict({'text': <Parameter \"text: str\">})\n    Received: ['a\\\\', 'b', '\"']"
+    },
+    "execute/probe.echo a\"b\"": {
+      "error": "CommandError",
+      "message": "Command argument mismatch: \n    Expected: OrderedDict({'text': <Parameter \"text: str\">})\n    Received: ['a', 'b']"
+    },
+    "execute/probe.echo \"a\"b": {
+      "error": "CommandError",
+      "message": "Command argument mismatch: \n    Expected: OrderedDict({'text': <Parameter \"text: str\">})\n    Received: ['a', 'b']"
+    },
+    "execute/probe.echo #text": {
+      "value": "#text"
+    },
+    "execute/probe.echo \"\\x41\"": {
+      "value": "A"
+    },
+    "execute/probe.echo \"\\u0041\"": {
+      "value": "A"
+    },
+    "execute/probe.echo \"\\q\"": {
+      "value": "\\q"
+    },
+    "execute/probe.echo $HOME": {
+      "value": "$HOME"
+    },
+    "execute/probe.echo a;b": {
+      "value": "a;b"
+    },
+    "execute/probe.echo a|b": {
+      "value": "a|b"
+    },
+    "execute/probe.echo a\tb": {
+      "error": "CommandError",
+      "message": "Command argument mismatch: \n    Expected: OrderedDict({'text': <Parameter \"text: str\">})\n    Received: ['a', 'b']"
+    },
+    "execute/probe.echo \"two\nlines\"": {
+      "value": "two\nlines"
+    },
+    "execute/probe.echo \"unfinished words": {
+      "value": "\"unfinished words"
+    },
+    "execute/probe.echo line\\nnext": {
+      "value": "line\nnext"
+    },
+    "execute/probe.echo čaj": {
+      "value": "čaj"
+    },
+    "execute/probe.echo \"čaj\"": {
+      "value": "čaj"
+    },
+    "execute/probe.echo \"\\xZZ\"": {
+      "error": "CommandError",
+      "message": "'unicodeescape' codec can't decode bytes in position 0-1: truncated \\xXX escape"
+    },
+    "register/wrong_result": {
+      "value": null
+    },
+    "result/typed": {
+      "value": "not an integer"
+    },
+    "result/strings": {
+      "error": "CommandError",
+      "message": "probe.result returned unexpected data - expected int"
+    },
+    "register/replacement": {
+      "value": null
+    },
+    "result/replaced": {
+      "value": "replacement"
+    },
+    "register/float": {
+      "error": "CommandError",
+      "message": "Argument value has an unknown type <class 'float'> in <function collect.<locals>.float_value at 0xADDRESS>."
+    },
+    "float/strings": {
+      "error": "CommandError",
+      "message": "Unknown command: probe.float"
+    },
+    "register/bad_return": {
+      "error": "CommandError",
+      "message": "Return type has an unknown type (<class 'float'>) in <function collect.<locals>.bad_return at 0xADDRESS>."
+    },
+    "register/untyped": {
+      "error": "CommandError",
+      "message": "Argument value has an unknown type <class 'inspect._empty'> in <function collect.<locals>.untyped at 0xADDRESS>."
+    },
+    "collect/mixed": {
+      "value": null
+    },
+    "collect/invalid_lookup": {
+      "error": "CommandError",
+      "message": "Unknown command: probe.invalid"
+    },
+    "collect/valid_lookup": {
+      "value": "still available"
+    },
+    "register/failed_replace": {
+      "error": "CommandError",
+      "message": "Return type has an unknown type (<class 'float'>) in <function collect.<locals>.bad_return at 0xADDRESS>."
+    },
+    "register/retained_after_failure": {
+      "value": "replacement"
+    },
+    "text/'\\\\nč'": {
+      "value": "\nč"
+    },
+    "text/'\\\\č'": {
+      "value": "\\č"
+    },
+    "text/'\\\\\\\\č'": {
+      "value": "\\č"
+    },
+    "text/'\\\\qč'": {
+      "value": "\\qč"
+    },
+    "text/'\\\\xFFč'": {
+      "value": "ÿč"
+    },
+    "text/'\\\\u0041č'": {
+      "value": "Ač"
+    },
+    "text/'\\\\\\\\u0041č'": {
+      "value": "\\u0041č"
+    },
+    "text/'é\\\\nč'": {
+      "value": "é\nč"
+    },
+    "text/'é\\\\č'": {
+      "value": "é\\č"
+    },
+    "text/'é\\\\\\\\č'": {
+      "value": "é\\č"
+    },
+    "text/'é\\\\qč'": {
+      "value": "é\\qč"
+    },
+    "text/'é\\\\xFFč'": {
+      "value": "éÿč"
+    },
+    "text/'é\\\\u0041č'": {
+      "value": "éAč"
+    },
+    "text/'é\\\\\\\\u0041č'": {
+      "value": "é\\u0041č"
+    },
+    "text/'č\\\\nč'": {
+      "value": "č\nč"
+    },
+    "text/'č\\\\č'": {
+      "value": "č\\č"
+    },
+    "text/'č\\\\\\\\č'": {
+      "value": "č\\č"
+    },
+    "text/'č\\\\qč'": {
+      "value": "č\\qč"
+    },
+    "text/'č\\\\xFFč'": {
+      "value": "čÿč"
+    },
+    "text/'č\\\\u0041č'": {
+      "value": "čAč"
+    },
+    "text/'č\\\\\\\\u0041č'": {
+      "value": "č\\u0041č"
+    },
+    "text/'😀\\\\nč'": {
+      "value": "😀\nč"
+    },
+    "text/'😀\\\\č'": {
+      "value": "😀\\č"
+    },
+    "text/'😀\\\\\\\\č'": {
+      "value": "😀\\č"
+    },
+    "text/'😀\\\\qč'": {
+      "value": "😀\\qč"
+    },
+    "text/'😀\\\\xFFč'": {
+      "value": "😀ÿč"
+    },
+    "text/'😀\\\\u0041č'": {
+      "value": "😀Ač"
+    },
+    "text/'😀\\\\\\\\u0041č'": {
+      "value": "😀\\u0041č"
+    }
+  },
+  "lifecycle": [
+    [
+      "during_load",
+      "CommandError"
+    ],
+    [
+      "after_explicit_registration",
+      "explicit"
+    ],
+    [
+      "after_add",
+      "owner"
+    ],
+    [
+      "during_done",
+      "owner"
+    ],
+    [
+      "after_remove",
+      "owner"
+    ],
+    [
+      "during_load",
+      "owner"
+    ],
+    [
+      "after_explicit_registration",
+      "explicit"
+    ],
+    [
+      "during_done",
+      "owner"
+    ],
+    [
+      "after_clear",
+      "owner"
+    ]
+  ]
+}

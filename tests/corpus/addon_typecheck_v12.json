@@ -1,0 +1,87 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "typecheck": {
+    "accepted": {
+      "abc_sequence_str": ["empty_list", "text_list", "text_tuple"],
+      "bool": ["true"],
+      "float": ["true", "zero", "float"],
+      "int": ["true", "zero"],
+      "list_str": [],
+      "optional_bool": ["none", "true"],
+      "optional_int": ["none", "true", "zero"],
+      "optional_str": ["none", "text"],
+      "sequence_int": ["empty_list", "int_list"],
+      "sequence_str": ["empty_list", "text_list", "text_tuple"],
+      "str": ["text"],
+      "str_or_int": ["true", "zero", "text"]
+    },
+    "labels": {
+      "abc_sequence_str": {"value": "sequence of str"},
+      "bool": {"value": "bool"},
+      "float": {"value": "float"},
+      "int": {"value": "int"},
+      "list_str": {"error": "NotImplementedError", "message": ""},
+      "optional_bool": {"error": "NotImplementedError", "message": ""},
+      "optional_int": {"value": "optional int"},
+      "optional_str": {"value": "optional str"},
+      "sequence_int": {"error": "NotImplementedError", "message": ""},
+      "sequence_str": {"value": "sequence of str"},
+      "str": {"value": "str"},
+      "str_or_int": {"error": "NotImplementedError", "message": ""}
+    },
+    "nested_sequence_error": {
+      "error": "TypeError",
+      "message": "Expected <class 'str'> for probe, but got <class 'int'>."
+    },
+    "representative_errors": {
+      "abc_sequence_str": {
+        "error": "TypeError",
+        "message": "Expected collections.abc.Sequence[str] for probe, but got <class 'NoneType'>."
+      },
+      "bool": {
+        "error": "TypeError",
+        "message": "Expected <class 'bool'> for probe, but got <class 'NoneType'>."
+      },
+      "float": {
+        "error": "TypeError",
+        "message": "Expected <class 'float'> for probe, but got <class 'NoneType'>."
+      },
+      "int": {
+        "error": "TypeError",
+        "message": "Expected <class 'int'> for probe, but got <class 'NoneType'>."
+      },
+      "list_str": {
+        "error": "TypeError",
+        "message": "isinstance() argument 2 cannot be a parameterized generic"
+      },
+      "optional_bool": {
+        "error": "TypeError",
+        "message": "Expected bool | None for probe, but got <class 'int'>."
+      },
+      "optional_int": {
+        "error": "TypeError",
+        "message": "Expected int | None for probe, but got <class 'float'>."
+      },
+      "optional_str": {
+        "error": "TypeError",
+        "message": "Expected str | None for probe, but got <class 'bool'>."
+      },
+      "sequence_int": {
+        "error": "TypeError",
+        "message": "Expected typing.Sequence[int] for probe, but got <class 'NoneType'>."
+      },
+      "sequence_str": {
+        "error": "TypeError",
+        "message": "Expected typing.Sequence[str] for probe, but got <class 'NoneType'>."
+      },
+      "str": {
+        "error": "TypeError",
+        "message": "Expected <class 'str'> for probe, but got <class 'NoneType'>."
+      },
+      "str_or_int": {
+        "error": "TypeError",
+        "message": "Expected str | int for probe, but got <class 'NoneType'>."
+      }
+    }
+  }
+}

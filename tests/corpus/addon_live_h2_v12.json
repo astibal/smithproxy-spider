@@ -1,0 +1,64 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "request": {
+    "body": "request-1",
+    "headers": [
+      [
+        "x-client",
+        "1"
+      ],
+      [
+        "content-type",
+        "application/octet-stream"
+      ],
+      [
+        "content-length",
+        "9"
+      ],
+      [
+        "x-addon-count",
+        "1"
+      ],
+      [
+        "x-addon-duplicate",
+        "first"
+      ],
+      [
+        "x-addon-duplicate",
+        "second"
+      ]
+    ],
+    "method": "PUT",
+    "path": "/addon/1?source=compat"
+  },
+  "response": {
+    "body": "response-1",
+    "headers": [
+      [
+        "content-type",
+        "text/plain"
+      ],
+      [
+        "x-origin",
+        "1"
+      ],
+      [
+        "content-length",
+        "10"
+      ],
+      [
+        "x-addon-count",
+        "1"
+      ],
+      [
+        "x-addon-duplicate",
+        "first"
+      ],
+      [
+        "x-addon-duplicate",
+        "second"
+      ]
+    ],
+    "status": 211
+  }
+}

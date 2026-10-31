@@ -1,0 +1,6 @@
+# Use the same runtime dependencies as deployed workers.
+-r ../deploy/requirements-addon.txt
+# Independent HTTP/2 peers; never a second proxy.
+h2>=4.3,<5
+# The newer independent peer requires this version; production also supports 4.0.
+hpack>=4.1,<5

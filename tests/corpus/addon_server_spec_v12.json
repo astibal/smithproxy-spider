@@ -1,0 +1,5400 @@
+{
+  "cases": {
+    "' example.com:80' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "' example.com:80' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname:  example.com"
+    },
+    "' example.com:80' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname:  example.com"
+    },
+    "' example.com:80' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname:  example.com"
+    },
+    "' example.com:80' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname:  example.com"
+    },
+    "' example.com:80' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname:  example.com"
+    },
+    "' example.com:80' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname:  example.com"
+    },
+    "' example.com:80' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname:  example.com"
+    },
+    "' example.com:80' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname:  example.com"
+    },
+    "' example.com:80' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname:  example.com"
+    },
+    "'' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: "
+    },
+    "'-example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'-example.com' / dns": {
+      "value": [
+        "dns",
+        [
+          "-example.com",
+          53
+        ]
+      ]
+    },
+    "'-example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'-example.com' / http": {
+      "value": [
+        "http",
+        [
+          "-example.com",
+          80
+        ]
+      ]
+    },
+    "'-example.com' / http3": {
+      "value": [
+        "http3",
+        [
+          "-example.com",
+          443
+        ]
+      ]
+    },
+    "'-example.com' / https": {
+      "value": [
+        "https",
+        [
+          "-example.com",
+          443
+        ]
+      ]
+    },
+    "'-example.com' / quic": {
+      "value": [
+        "quic",
+        [
+          "-example.com",
+          443
+        ]
+      ]
+    },
+    "'-example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'-example.com' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'-example.com' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'.example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'.example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: .example.com"
+    },
+    "'.example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: .example.com"
+    },
+    "'.example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: .example.com"
+    },
+    "'.example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: .example.com"
+    },
+    "'.example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: .example.com"
+    },
+    "'.example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: .example.com"
+    },
+    "'.example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: .example.com"
+    },
+    "'.example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: .example.com"
+    },
+    "'.example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: .example.com"
+    },
+    "'0.0.0.0:0' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'0.0.0.0:0' / dns": {
+      "value": [
+        "dns",
+        [
+          "0.0.0.0",
+          0
+        ]
+      ]
+    },
+    "'0.0.0.0:0' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "0.0.0.0",
+          0
+        ]
+      ]
+    },
+    "'0.0.0.0:0' / http": {
+      "value": [
+        "http",
+        [
+          "0.0.0.0",
+          0
+        ]
+      ]
+    },
+    "'0.0.0.0:0' / http3": {
+      "value": [
+        "http3",
+        [
+          "0.0.0.0",
+          0
+        ]
+      ]
+    },
+    "'0.0.0.0:0' / https": {
+      "value": [
+        "https",
+        [
+          "0.0.0.0",
+          0
+        ]
+      ]
+    },
+    "'0.0.0.0:0' / quic": {
+      "value": [
+        "quic",
+        [
+          "0.0.0.0",
+          0
+        ]
+      ]
+    },
+    "'0.0.0.0:0' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "0.0.0.0",
+          0
+        ]
+      ]
+    },
+    "'0.0.0.0:0' / tls": {
+      "value": [
+        "tls",
+        [
+          "0.0.0.0",
+          0
+        ]
+      ]
+    },
+    "'0.0.0.0:0' / udp": {
+      "value": [
+        "udp",
+        [
+          "0.0.0.0",
+          0
+        ]
+      ]
+    },
+    "'127.0.0.1.' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'127.0.0.1.' / dns": {
+      "value": [
+        "dns",
+        [
+          "127.0.0.1.",
+          53
+        ]
+      ]
+    },
+    "'127.0.0.1.' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'127.0.0.1.' / http": {
+      "value": [
+        "http",
+        [
+          "127.0.0.1.",
+          80
+        ]
+      ]
+    },
+    "'127.0.0.1.' / http3": {
+      "value": [
+        "http3",
+        [
+          "127.0.0.1.",
+          443
+        ]
+      ]
+    },
+    "'127.0.0.1.' / https": {
+      "value": [
+        "https",
+        [
+          "127.0.0.1.",
+          443
+        ]
+      ]
+    },
+    "'127.0.0.1.' / quic": {
+      "value": [
+        "quic",
+        [
+          "127.0.0.1.",
+          443
+        ]
+      ]
+    },
+    "'127.0.0.1.' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'127.0.0.1.' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'127.0.0.1.' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'127.0.0.1:3128' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'127.0.0.1:3128' / dns": {
+      "value": [
+        "dns",
+        [
+          "127.0.0.1",
+          3128
+        ]
+      ]
+    },
+    "'127.0.0.1:3128' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "127.0.0.1",
+          3128
+        ]
+      ]
+    },
+    "'127.0.0.1:3128' / http": {
+      "value": [
+        "http",
+        [
+          "127.0.0.1",
+          3128
+        ]
+      ]
+    },
+    "'127.0.0.1:3128' / http3": {
+      "value": [
+        "http3",
+        [
+          "127.0.0.1",
+          3128
+        ]
+      ]
+    },
+    "'127.0.0.1:3128' / https": {
+      "value": [
+        "https",
+        [
+          "127.0.0.1",
+          3128
+        ]
+      ]
+    },
+    "'127.0.0.1:3128' / quic": {
+      "value": [
+        "quic",
+        [
+          "127.0.0.1",
+          3128
+        ]
+      ]
+    },
+    "'127.0.0.1:3128' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "127.0.0.1",
+          3128
+        ]
+      ]
+    },
+    "'127.0.0.1:3128' / tls": {
+      "value": [
+        "tls",
+        [
+          "127.0.0.1",
+          3128
+        ]
+      ]
+    },
+    "'127.0.0.1:3128' / udp": {
+      "value": [
+        "udp",
+        [
+          "127.0.0.1",
+          3128
+        ]
+      ]
+    },
+    "'127.00.0.1' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'127.00.0.1' / dns": {
+      "value": [
+        "dns",
+        [
+          "127.00.0.1",
+          53
+        ]
+      ]
+    },
+    "'127.00.0.1' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'127.00.0.1' / http": {
+      "value": [
+        "http",
+        [
+          "127.00.0.1",
+          80
+        ]
+      ]
+    },
+    "'127.00.0.1' / http3": {
+      "value": [
+        "http3",
+        [
+          "127.00.0.1",
+          443
+        ]
+      ]
+    },
+    "'127.00.0.1' / https": {
+      "value": [
+        "https",
+        [
+          "127.00.0.1",
+          443
+        ]
+      ]
+    },
+    "'127.00.0.1' / quic": {
+      "value": [
+        "quic",
+        [
+          "127.00.0.1",
+          443
+        ]
+      ]
+    },
+    "'127.00.0.1' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'127.00.0.1' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'127.00.0.1' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'1http://example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'1http://example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'1http://example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'1http://example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'1http://example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'1http://example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'1http://example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'1http://example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'1http://example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'1http://example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: 1http"
+    },
+    "'256.1.1.1' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'256.1.1.1' / dns": {
+      "value": [
+        "dns",
+        [
+          "256.1.1.1",
+          53
+        ]
+      ]
+    },
+    "'256.1.1.1' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'256.1.1.1' / http": {
+      "value": [
+        "http",
+        [
+          "256.1.1.1",
+          80
+        ]
+      ]
+    },
+    "'256.1.1.1' / http3": {
+      "value": [
+        "http3",
+        [
+          "256.1.1.1",
+          443
+        ]
+      ]
+    },
+    "'256.1.1.1' / https": {
+      "value": [
+        "https",
+        [
+          "256.1.1.1",
+          443
+        ]
+      ]
+    },
+    "'256.1.1.1' / quic": {
+      "value": [
+        "quic",
+        [
+          "256.1.1.1",
+          443
+        ]
+      ]
+    },
+    "'256.1.1.1' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'256.1.1.1' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'256.1.1.1' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'://example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'://example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'://example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'://example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'://example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'://example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'://example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'://example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'://example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'://example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ://example.com"
+    },
+    "'::1' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1"
+    },
+    "'::1]' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'::1]' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'::1]' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'::1]' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'::1]' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'::1]' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'::1]' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'::1]' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'::1]' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'::1]' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: ::1]"
+    },
+    "'HTTP://example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'HTTP://example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'HTTP://example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'HTTP://example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'HTTP://example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'HTTP://example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'HTTP://example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'HTTP://example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'HTTP://example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'HTTP://example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: HTTP"
+    },
+    "'LOCALHOST:443' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'LOCALHOST:443' / dns": {
+      "value": [
+        "dns",
+        [
+          "LOCALHOST",
+          443
+        ]
+      ]
+    },
+    "'LOCALHOST:443' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "LOCALHOST",
+          443
+        ]
+      ]
+    },
+    "'LOCALHOST:443' / http": {
+      "value": [
+        "http",
+        [
+          "LOCALHOST",
+          443
+        ]
+      ]
+    },
+    "'LOCALHOST:443' / http3": {
+      "value": [
+        "http3",
+        [
+          "LOCALHOST",
+          443
+        ]
+      ]
+    },
+    "'LOCALHOST:443' / https": {
+      "value": [
+        "https",
+        [
+          "LOCALHOST",
+          443
+        ]
+      ]
+    },
+    "'LOCALHOST:443' / quic": {
+      "value": [
+        "quic",
+        [
+          "LOCALHOST",
+          443
+        ]
+      ]
+    },
+    "'LOCALHOST:443' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "LOCALHOST",
+          443
+        ]
+      ]
+    },
+    "'LOCALHOST:443' / tls": {
+      "value": [
+        "tls",
+        [
+          "LOCALHOST",
+          443
+        ]
+      ]
+    },
+    "'LOCALHOST:443' / udp": {
+      "value": [
+        "udp",
+        [
+          "LOCALHOST",
+          443
+        ]
+      ]
+    },
+    "'[::1' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: [::1"
+    },
+    "'[::1]' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[::1]' / dns": {
+      "value": [
+        "dns",
+        [
+          "::1",
+          53
+        ]
+      ]
+    },
+    "'[::1]' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'[::1]' / http": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::1]' / http3": {
+      "value": [
+        "http3",
+        [
+          "::1",
+          443
+        ]
+      ]
+    },
+    "'[::1]' / https": {
+      "value": [
+        "https",
+        [
+          "::1",
+          443
+        ]
+      ]
+    },
+    "'[::1]' / quic": {
+      "value": [
+        "quic",
+        [
+          "::1",
+          443
+        ]
+      ]
+    },
+    "'[::1]' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'[::1]' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'[::1]' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'[::1]:0' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[::1]:0' / dns": {
+      "value": [
+        "dns",
+        [
+          "::1",
+          0
+        ]
+      ]
+    },
+    "'[::1]:0' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "::1",
+          0
+        ]
+      ]
+    },
+    "'[::1]:0' / http": {
+      "value": [
+        "http",
+        [
+          "::1",
+          0
+        ]
+      ]
+    },
+    "'[::1]:0' / http3": {
+      "value": [
+        "http3",
+        [
+          "::1",
+          0
+        ]
+      ]
+    },
+    "'[::1]:0' / https": {
+      "value": [
+        "https",
+        [
+          "::1",
+          0
+        ]
+      ]
+    },
+    "'[::1]:0' / quic": {
+      "value": [
+        "quic",
+        [
+          "::1",
+          0
+        ]
+      ]
+    },
+    "'[::1]:0' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          0
+        ]
+      ]
+    },
+    "'[::1]:0' / tls": {
+      "value": [
+        "tls",
+        [
+          "::1",
+          0
+        ]
+      ]
+    },
+    "'[::1]:0' / udp": {
+      "value": [
+        "udp",
+        [
+          "::1",
+          0
+        ]
+      ]
+    },
+    "'[::1]:65535' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[::1]:65535' / dns": {
+      "value": [
+        "dns",
+        [
+          "::1",
+          65535
+        ]
+      ]
+    },
+    "'[::1]:65535' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "::1",
+          65535
+        ]
+      ]
+    },
+    "'[::1]:65535' / http": {
+      "value": [
+        "http",
+        [
+          "::1",
+          65535
+        ]
+      ]
+    },
+    "'[::1]:65535' / http3": {
+      "value": [
+        "http3",
+        [
+          "::1",
+          65535
+        ]
+      ]
+    },
+    "'[::1]:65535' / https": {
+      "value": [
+        "https",
+        [
+          "::1",
+          65535
+        ]
+      ]
+    },
+    "'[::1]:65535' / quic": {
+      "value": [
+        "quic",
+        [
+          "::1",
+          65535
+        ]
+      ]
+    },
+    "'[::1]:65535' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          65535
+        ]
+      ]
+    },
+    "'[::1]:65535' / tls": {
+      "value": [
+        "tls",
+        [
+          "::1",
+          65535
+        ]
+      ]
+    },
+    "'[::1]:65535' / udp": {
+      "value": [
+        "udp",
+        [
+          "::1",
+          65535
+        ]
+      ]
+    },
+    "'[::1]:65536' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[::1]:65536' / dns": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'[::1]:65536' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'[::1]:65536' / http": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'[::1]:65536' / http3": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'[::1]:65536' / https": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'[::1]:65536' / quic": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'[::1]:65536' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'[::1]:65536' / tls": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'[::1]:65536' / udp": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'[::1]:80' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[::1]:80' / dns": {
+      "value": [
+        "dns",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::1]:80' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::1]:80' / http": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::1]:80' / http3": {
+      "value": [
+        "http3",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::1]:80' / https": {
+      "value": [
+        "https",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::1]:80' / quic": {
+      "value": [
+        "quic",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::1]:80' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::1]:80' / tls": {
+      "value": [
+        "tls",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::1]:80' / udp": {
+      "value": [
+        "udp",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'[::ffff:192.0.2.1]:80' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[::ffff:192.0.2.1]:80' / dns": {
+      "value": [
+        "dns",
+        [
+          "::ffff:192.0.2.1",
+          80
+        ]
+      ]
+    },
+    "'[::ffff:192.0.2.1]:80' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "::ffff:192.0.2.1",
+          80
+        ]
+      ]
+    },
+    "'[::ffff:192.0.2.1]:80' / http": {
+      "value": [
+        "http",
+        [
+          "::ffff:192.0.2.1",
+          80
+        ]
+      ]
+    },
+    "'[::ffff:192.0.2.1]:80' / http3": {
+      "value": [
+        "http3",
+        [
+          "::ffff:192.0.2.1",
+          80
+        ]
+      ]
+    },
+    "'[::ffff:192.0.2.1]:80' / https": {
+      "value": [
+        "https",
+        [
+          "::ffff:192.0.2.1",
+          80
+        ]
+      ]
+    },
+    "'[::ffff:192.0.2.1]:80' / quic": {
+      "value": [
+        "quic",
+        [
+          "::ffff:192.0.2.1",
+          80
+        ]
+      ]
+    },
+    "'[::ffff:192.0.2.1]:80' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "::ffff:192.0.2.1",
+          80
+        ]
+      ]
+    },
+    "'[::ffff:192.0.2.1]:80' / tls": {
+      "value": [
+        "tls",
+        [
+          "::ffff:192.0.2.1",
+          80
+        ]
+      ]
+    },
+    "'[::ffff:192.0.2.1]:80' / udp": {
+      "value": [
+        "udp",
+        [
+          "::ffff:192.0.2.1",
+          80
+        ]
+      ]
+    },
+    "'[]:80' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[]:80' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: "
+    },
+    "'[]:80' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: "
+    },
+    "'[]:80' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: "
+    },
+    "'[]:80' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: "
+    },
+    "'[]:80' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: "
+    },
+    "'[]:80' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: "
+    },
+    "'[]:80' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: "
+    },
+    "'[]:80' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: "
+    },
+    "'[]:80' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: "
+    },
+    "'[fe80::1%25eth0]:53' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[fe80::1%25eth0]:53' / dns": {
+      "value": [
+        "dns",
+        [
+          "fe80::1%25eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%25eth0]:53' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "fe80::1%25eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%25eth0]:53' / http": {
+      "value": [
+        "http",
+        [
+          "fe80::1%25eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%25eth0]:53' / http3": {
+      "value": [
+        "http3",
+        [
+          "fe80::1%25eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%25eth0]:53' / https": {
+      "value": [
+        "https",
+        [
+          "fe80::1%25eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%25eth0]:53' / quic": {
+      "value": [
+        "quic",
+        [
+          "fe80::1%25eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%25eth0]:53' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "fe80::1%25eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%25eth0]:53' / tls": {
+      "value": [
+        "tls",
+        [
+          "fe80::1%25eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%25eth0]:53' / udp": {
+      "value": [
+        "udp",
+        [
+          "fe80::1%25eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%eth0]:53' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[fe80::1%eth0]:53' / dns": {
+      "value": [
+        "dns",
+        [
+          "fe80::1%eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%eth0]:53' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "fe80::1%eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%eth0]:53' / http": {
+      "value": [
+        "http",
+        [
+          "fe80::1%eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%eth0]:53' / http3": {
+      "value": [
+        "http3",
+        [
+          "fe80::1%eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%eth0]:53' / https": {
+      "value": [
+        "https",
+        [
+          "fe80::1%eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%eth0]:53' / quic": {
+      "value": [
+        "quic",
+        [
+          "fe80::1%eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%eth0]:53' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "fe80::1%eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%eth0]:53' / tls": {
+      "value": [
+        "tls",
+        [
+          "fe80::1%eth0",
+          53
+        ]
+      ]
+    },
+    "'[fe80::1%eth0]:53' / udp": {
+      "value": [
+        "udp",
+        [
+          "fe80::1%eth0",
+          53
+        ]
+      ]
+    },
+    "'[v1.example]:80' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'[v1.example]:80' / dns": {
+      "value": [
+        "dns",
+        [
+          "v1.example",
+          80
+        ]
+      ]
+    },
+    "'[v1.example]:80' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "v1.example",
+          80
+        ]
+      ]
+    },
+    "'[v1.example]:80' / http": {
+      "value": [
+        "http",
+        [
+          "v1.example",
+          80
+        ]
+      ]
+    },
+    "'[v1.example]:80' / http3": {
+      "value": [
+        "http3",
+        [
+          "v1.example",
+          80
+        ]
+      ]
+    },
+    "'[v1.example]:80' / https": {
+      "value": [
+        "https",
+        [
+          "v1.example",
+          80
+        ]
+      ]
+    },
+    "'[v1.example]:80' / quic": {
+      "value": [
+        "quic",
+        [
+          "v1.example",
+          80
+        ]
+      ]
+    },
+    "'[v1.example]:80' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "v1.example",
+          80
+        ]
+      ]
+    },
+    "'[v1.example]:80' / tls": {
+      "value": [
+        "tls",
+        [
+          "v1.example",
+          80
+        ]
+      ]
+    },
+    "'[v1.example]:80' / udp": {
+      "value": [
+        "udp",
+        [
+          "v1.example",
+          80
+        ]
+      ]
+    },
+    "'\\texample.com:80' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'\\texample.com:80' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: \texample.com"
+    },
+    "'\\texample.com:80' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: \texample.com"
+    },
+    "'\\texample.com:80' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: \texample.com"
+    },
+    "'\\texample.com:80' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: \texample.com"
+    },
+    "'\\texample.com:80' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: \texample.com"
+    },
+    "'\\texample.com:80' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: \texample.com"
+    },
+    "'\\texample.com:80' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: \texample.com"
+    },
+    "'\\texample.com:80' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: \texample.com"
+    },
+    "'\\texample.com:80' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: \texample.com"
+    },
+    "'_service.example' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'_service.example' / dns": {
+      "value": [
+        "dns",
+        [
+          "_service.example",
+          53
+        ]
+      ]
+    },
+    "'_service.example' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'_service.example' / http": {
+      "value": [
+        "http",
+        [
+          "_service.example",
+          80
+        ]
+      ]
+    },
+    "'_service.example' / http3": {
+      "value": [
+        "http3",
+        [
+          "_service.example",
+          443
+        ]
+      ]
+    },
+    "'_service.example' / https": {
+      "value": [
+        "https",
+        [
+          "_service.example",
+          443
+        ]
+      ]
+    },
+    "'_service.example' / quic": {
+      "value": [
+        "quic",
+        [
+          "_service.example",
+          443
+        ]
+      ]
+    },
+    "'_service.example' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'_service.example' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'_service.example' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / dns": {
+      "value": [
+        "dns",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          53
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / http": {
+      "value": [
+        "http",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          80
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / http3": {
+      "value": [
+        "http3",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          443
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / https": {
+      "value": [
+        "https",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          443
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / quic": {
+      "value": [
+        "quic",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          443
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / dns": {
+      "value": [
+        "dns",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          53
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / http": {
+      "value": [
+        "http",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          80
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / http3": {
+      "value": [
+        "http3",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          443
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / https": {
+      "value": [
+        "https",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          443
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / quic": {
+      "value": [
+        "quic",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          443
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / dns": {
+      "value": [
+        "dns",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+          53
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / http": {
+      "value": [
+        "http",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+          80
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / http3": {
+      "value": [
+        "http3",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+          443
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / https": {
+      "value": [
+        "https",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+          443
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / quic": {
+      "value": [
+        "quic",
+        [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example",
+          443
+        ]
+      ]
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example"
+    },
+    "'caf\u00e9.example' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'caf\u00e9.example' / dns": {
+      "value": [
+        "dns",
+        [
+          "caf\u00e9.example",
+          53
+        ]
+      ]
+    },
+    "'caf\u00e9.example' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'caf\u00e9.example' / http": {
+      "value": [
+        "http",
+        [
+          "caf\u00e9.example",
+          80
+        ]
+      ]
+    },
+    "'caf\u00e9.example' / http3": {
+      "value": [
+        "http3",
+        [
+          "caf\u00e9.example",
+          443
+        ]
+      ]
+    },
+    "'caf\u00e9.example' / https": {
+      "value": [
+        "https",
+        [
+          "caf\u00e9.example",
+          443
+        ]
+      ]
+    },
+    "'caf\u00e9.example' / quic": {
+      "value": [
+        "quic",
+        [
+          "caf\u00e9.example",
+          443
+        ]
+      ]
+    },
+    "'caf\u00e9.example' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'caf\u00e9.example' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'caf\u00e9.example' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dns://8.8.8.8' / bogus": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dns://8.8.8.8' / dns": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dns://8.8.8.8' / dtls": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dns://8.8.8.8' / http": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dns://8.8.8.8' / http3": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dns://8.8.8.8' / https": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dns://8.8.8.8' / quic": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dns://8.8.8.8' / tcp": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dns://8.8.8.8' / tls": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dns://8.8.8.8' / udp": {
+      "value": [
+        "dns",
+        [
+          "8.8.8.8",
+          53
+        ]
+      ]
+    },
+    "'dtls://example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dtls://example.com' / dns": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dtls://example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dtls://example.com' / http": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dtls://example.com' / http3": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dtls://example.com' / https": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dtls://example.com' / quic": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dtls://example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dtls://example.com' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'dtls://example.com' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example-.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example-.com' / dns": {
+      "value": [
+        "dns",
+        [
+          "example-.com",
+          53
+        ]
+      ]
+    },
+    "'example-.com' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example-.com' / http": {
+      "value": [
+        "http",
+        [
+          "example-.com",
+          80
+        ]
+      ]
+    },
+    "'example-.com' / http3": {
+      "value": [
+        "http3",
+        [
+          "example-.com",
+          443
+        ]
+      ]
+    },
+    "'example-.com' / https": {
+      "value": [
+        "https",
+        [
+          "example-.com",
+          443
+        ]
+      ]
+    },
+    "'example-.com' / quic": {
+      "value": [
+        "quic",
+        [
+          "example-.com",
+          443
+        ]
+      ]
+    },
+    "'example-.com' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example-.com' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example-.com' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example..com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example..com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example..com"
+    },
+    "'example..com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example..com"
+    },
+    "'example..com' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example..com"
+    },
+    "'example..com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example..com"
+    },
+    "'example..com' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example..com"
+    },
+    "'example..com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example..com"
+    },
+    "'example..com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example..com"
+    },
+    "'example..com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example..com"
+    },
+    "'example..com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example..com"
+    },
+    "'example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example.com' / dns": {
+      "value": [
+        "dns",
+        [
+          "example.com",
+          53
+        ]
+      ]
+    },
+    "'example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example.com' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com' / http3": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com' / https": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com' / quic": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example.com' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example.com' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example.com.' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example.com.' / dns": {
+      "value": [
+        "dns",
+        [
+          "example.com.",
+          53
+        ]
+      ]
+    },
+    "'example.com.' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example.com.' / http": {
+      "value": [
+        "http",
+        [
+          "example.com.",
+          80
+        ]
+      ]
+    },
+    "'example.com.' / http3": {
+      "value": [
+        "http3",
+        [
+          "example.com.",
+          443
+        ]
+      ]
+    },
+    "'example.com.' / https": {
+      "value": [
+        "https",
+        [
+          "example.com.",
+          443
+        ]
+      ]
+    },
+    "'example.com.' / quic": {
+      "value": [
+        "quic",
+        [
+          "example.com.",
+          443
+        ]
+      ]
+    },
+    "'example.com.' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example.com.' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example.com.' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example.com:' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:"
+    },
+    "'example.com:+1' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:+1' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:+1' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:+1' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:+1' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:+1' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:+1' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:+1' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:+1' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:+1' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:+1"
+    },
+    "'example.com:-1' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:-1' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:-1' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:-1' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:-1' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:-1' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:-1' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:-1' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:-1' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:-1' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:-1"
+    },
+    "'example.com:0' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example.com:0' / dns": {
+      "value": [
+        "dns",
+        [
+          "example.com",
+          0
+        ]
+      ]
+    },
+    "'example.com:0' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "example.com",
+          0
+        ]
+      ]
+    },
+    "'example.com:0' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          0
+        ]
+      ]
+    },
+    "'example.com:0' / http3": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          0
+        ]
+      ]
+    },
+    "'example.com:0' / https": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          0
+        ]
+      ]
+    },
+    "'example.com:0' / quic": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          0
+        ]
+      ]
+    },
+    "'example.com:0' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "example.com",
+          0
+        ]
+      ]
+    },
+    "'example.com:0' / tls": {
+      "value": [
+        "tls",
+        [
+          "example.com",
+          0
+        ]
+      ]
+    },
+    "'example.com:0' / udp": {
+      "value": [
+        "udp",
+        [
+          "example.com",
+          0
+        ]
+      ]
+    },
+    "'example.com:01' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example.com:01' / dns": {
+      "value": [
+        "dns",
+        [
+          "example.com",
+          1
+        ]
+      ]
+    },
+    "'example.com:01' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "example.com",
+          1
+        ]
+      ]
+    },
+    "'example.com:01' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          1
+        ]
+      ]
+    },
+    "'example.com:01' / http3": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          1
+        ]
+      ]
+    },
+    "'example.com:01' / https": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          1
+        ]
+      ]
+    },
+    "'example.com:01' / quic": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          1
+        ]
+      ]
+    },
+    "'example.com:01' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "example.com",
+          1
+        ]
+      ]
+    },
+    "'example.com:01' / tls": {
+      "value": [
+        "tls",
+        [
+          "example.com",
+          1
+        ]
+      ]
+    },
+    "'example.com:01' / udp": {
+      "value": [
+        "udp",
+        [
+          "example.com",
+          1
+        ]
+      ]
+    },
+    "'example.com:443' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example.com:443' / dns": {
+      "value": [
+        "dns",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com:443' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com:443' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com:443' / http3": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com:443' / https": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com:443' / quic": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com:443' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com:443' / tls": {
+      "value": [
+        "tls",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com:443' / udp": {
+      "value": [
+        "udp",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'example.com:65535' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example.com:65535' / dns": {
+      "value": [
+        "dns",
+        [
+          "example.com",
+          65535
+        ]
+      ]
+    },
+    "'example.com:65535' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "example.com",
+          65535
+        ]
+      ]
+    },
+    "'example.com:65535' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          65535
+        ]
+      ]
+    },
+    "'example.com:65535' / http3": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          65535
+        ]
+      ]
+    },
+    "'example.com:65535' / https": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          65535
+        ]
+      ]
+    },
+    "'example.com:65535' / quic": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          65535
+        ]
+      ]
+    },
+    "'example.com:65535' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "example.com",
+          65535
+        ]
+      ]
+    },
+    "'example.com:65535' / tls": {
+      "value": [
+        "tls",
+        [
+          "example.com",
+          65535
+        ]
+      ]
+    },
+    "'example.com:65535' / udp": {
+      "value": [
+        "udp",
+        [
+          "example.com",
+          65535
+        ]
+      ]
+    },
+    "'example.com:65536' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example.com:65536' / dns": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'example.com:65536' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'example.com:65536' / http": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'example.com:65536' / http3": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'example.com:65536' / https": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'example.com:65536' / quic": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'example.com:65536' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'example.com:65536' / tls": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'example.com:65536' / udp": {
+      "error": "ValueError",
+      "message": "Invalid port: 65536"
+    },
+    "'example.com:80 ' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80 ' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80 ' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80 ' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80 ' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80 ' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80 ' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80 ' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80 ' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80 ' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: example.com:80 "
+    },
+    "'example.com:80\\n' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example.com:80\\n' / dns": {
+      "value": [
+        "dns",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com:80\\n' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com:80\\n' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com:80\\n' / http3": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com:80\\n' / https": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com:80\\n' / quic": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com:80\\n' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com:80\\n' / tls": {
+      "value": [
+        "tls",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com:80\\n' / udp": {
+      "value": [
+        "udp",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'example.com\\x00:80' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example.com\\x00:80' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com\u0000"
+    },
+    "'example.com\\x00:80' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com\u0000"
+    },
+    "'example.com\\x00:80' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com\u0000"
+    },
+    "'example.com\\x00:80' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com\u0000"
+    },
+    "'example.com\\x00:80' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com\u0000"
+    },
+    "'example.com\\x00:80' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com\u0000"
+    },
+    "'example.com\\x00:80' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com\u0000"
+    },
+    "'example.com\\x00:80' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com\u0000"
+    },
+    "'example.com\\x00:80' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com\u0000"
+    },
+    "'example\u3002com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'example\u3002com' / dns": {
+      "value": [
+        "dns",
+        [
+          "example\u3002com",
+          53
+        ]
+      ]
+    },
+    "'example\u3002com' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example\u3002com' / http": {
+      "value": [
+        "http",
+        [
+          "example\u3002com",
+          80
+        ]
+      ]
+    },
+    "'example\u3002com' / http3": {
+      "value": [
+        "http3",
+        [
+          "example\u3002com",
+          443
+        ]
+      ]
+    },
+    "'example\u3002com' / https": {
+      "value": [
+        "https",
+        [
+          "example\u3002com",
+          443
+        ]
+      ]
+    },
+    "'example\u3002com' / quic": {
+      "value": [
+        "quic",
+        [
+          "example\u3002com",
+          443
+        ]
+      ]
+    },
+    "'example\u3002com' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example\u3002com' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'example\u3002com' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'ftp://example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'ftp://example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'ftp://example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'ftp://example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'ftp://example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'ftp://example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'ftp://example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'ftp://example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'ftp://example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'ftp://example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: ftp"
+    },
+    "'http+unix://example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http+unix://example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http+unix://example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http+unix://example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http+unix://example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http+unix://example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http+unix://example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http+unix://example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http+unix://example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http+unix://example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http+unix://example.com"
+    },
+    "'http3://example.com' / bogus": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http3://example.com' / dns": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http3://example.com' / dtls": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http3://example.com' / http": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http3://example.com' / http3": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http3://example.com' / https": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http3://example.com' / quic": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http3://example.com' / tcp": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http3://example.com' / tls": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http3://example.com' / udp": {
+      "value": [
+        "http3",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'http://' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http://' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http://' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http://' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http://' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http://' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http://' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http://' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http://' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http://' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://"
+    },
+    "'http:///example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http:///example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http:///example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http:///example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http:///example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http:///example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http:///example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http:///example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http:///example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http:///example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:///example.com"
+    },
+    "'http://[::1]' / bogus": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]' / dns": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]' / dtls": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]' / http": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]' / http3": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]' / https": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]' / quic": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]' / tcp": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]' / tls": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]' / udp": {
+      "value": [
+        "http",
+        [
+          "::1",
+          80
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / bogus": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / dns": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / dtls": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / http": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / http3": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / https": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / quic": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / tcp": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / tls": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://[::1]:8080' / udp": {
+      "value": [
+        "http",
+        [
+          "::1",
+          8080
+        ]
+      ]
+    },
+    "'http://a:b' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://a:b' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://a:b' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://a:b' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://a:b' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://a:b' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://a:b' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://a:b' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://a:b' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://a:b' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://a:b"
+    },
+    "'http://example.com#' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#"
+    },
+    "'http://example.com#fragment' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com#fragment' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com#fragment' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com#fragment' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com#fragment' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com#fragment' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com#fragment' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com#fragment' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com#fragment' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com#fragment' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com#fragment"
+    },
+    "'http://example.com' / bogus": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com' / dns": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com' / dtls": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com' / http3": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com' / https": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com' / quic": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com' / tcp": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com' / tls": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com' / udp": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / bogus": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / dns": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / dtls": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / http3": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / https": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / quic": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / tcp": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / tls": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/' / udp": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com/path' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com/path' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com/path' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com/path' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com/path' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com/path' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com/path' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com/path' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com/path' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com/path' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com/path"
+    },
+    "'http://example.com:' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:"
+    },
+    "'http://example.com:00080' / bogus": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:00080' / dns": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:00080' / dtls": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:00080' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:00080' / http3": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:00080' / https": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:00080' / quic": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:00080' / tcp": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:00080' / tls": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:00080' / udp": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          80
+        ]
+      ]
+    },
+    "'http://example.com:80#fragment' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80#fragment' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80#fragment' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80#fragment' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80#fragment' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80#fragment' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80#fragment' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80#fragment' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80#fragment' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80#fragment' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80#fragment"
+    },
+    "'http://example.com:80/path' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:80/path' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:80/path' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:80/path' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:80/path' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:80/path' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:80/path' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:80/path' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:80/path' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:80/path' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80/path"
+    },
+    "'http://example.com:8080' / bogus": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:8080' / dns": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:8080' / dtls": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:8080' / http": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:8080' / http3": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:8080' / https": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:8080' / quic": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:8080' / tcp": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:8080' / tls": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:8080' / udp": {
+      "value": [
+        "http",
+        [
+          "example.com",
+          8080
+        ]
+      ]
+    },
+    "'http://example.com:80?query' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:80?query' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:80?query' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:80?query' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:80?query' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:80?query' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:80?query' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:80?query' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:80?query' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:80?query' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://example.com:80?query"
+    },
+    "'http://example.com:999999999999999999999' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com:999999999999999999999' / dns": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com:999999999999999999999' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com:999999999999999999999' / http": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com:999999999999999999999' / http3": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com:999999999999999999999' / https": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com:999999999999999999999' / quic": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com:999999999999999999999' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com:999999999999999999999' / tls": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com:999999999999999999999' / udp": {
+      "error": "ValueError",
+      "message": "Invalid port: 999999999999999999999"
+    },
+    "'http://example.com?' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?"
+    },
+    "'http://example.com?query' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://example.com?query' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://example.com?query' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://example.com?query' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://example.com?query' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://example.com?query' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://example.com?query' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://example.com?query' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://example.com?query' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://example.com?query' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: example.com?query"
+    },
+    "'http://user:pass@example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user:pass@example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user:pass@example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user:pass@example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user:pass@example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user:pass@example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user:pass@example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user:pass@example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user:pass@example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user:pass@example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http://user:pass@example.com"
+    },
+    "'http://user@example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http://user@example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http://user@example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http://user@example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http://user@example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http://user@example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http://user@example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http://user@example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http://user@example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http://user@example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid hostname: user@example.com"
+    },
+    "'http:example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'http:example.com' / dns": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'http:example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'http:example.com' / http": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'http:example.com' / http3": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'http:example.com' / https": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'http:example.com' / quic": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'http:example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'http:example.com' / tls": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'http:example.com' / udp": {
+      "error": "ValueError",
+      "message": "Invalid server specification: http:example.com"
+    },
+    "'https://example.com' / bogus": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'https://example.com' / dns": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'https://example.com' / dtls": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'https://example.com' / http": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'https://example.com' / http3": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'https://example.com' / https": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'https://example.com' / quic": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'https://example.com' / tcp": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'https://example.com' / tls": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'https://example.com' / udp": {
+      "value": [
+        "https",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'localhost' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'localhost' / dns": {
+      "value": [
+        "dns",
+        [
+          "localhost",
+          53
+        ]
+      ]
+    },
+    "'localhost' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'localhost' / http": {
+      "value": [
+        "http",
+        [
+          "localhost",
+          80
+        ]
+      ]
+    },
+    "'localhost' / http3": {
+      "value": [
+        "http3",
+        [
+          "localhost",
+          443
+        ]
+      ]
+    },
+    "'localhost' / https": {
+      "value": [
+        "https",
+        [
+          "localhost",
+          443
+        ]
+      ]
+    },
+    "'localhost' / quic": {
+      "value": [
+        "quic",
+        [
+          "localhost",
+          443
+        ]
+      ]
+    },
+    "'localhost' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'localhost' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'localhost' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'localhost.' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'localhost.' / dns": {
+      "value": [
+        "dns",
+        [
+          "localhost.",
+          53
+        ]
+      ]
+    },
+    "'localhost.' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'localhost.' / http": {
+      "value": [
+        "http",
+        [
+          "localhost.",
+          80
+        ]
+      ]
+    },
+    "'localhost.' / http3": {
+      "value": [
+        "http3",
+        [
+          "localhost.",
+          443
+        ]
+      ]
+    },
+    "'localhost.' / https": {
+      "value": [
+        "https",
+        [
+          "localhost.",
+          443
+        ]
+      ]
+    },
+    "'localhost.' / quic": {
+      "value": [
+        "quic",
+        [
+          "localhost.",
+          443
+        ]
+      ]
+    },
+    "'localhost.' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'localhost.' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'localhost.' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'localhost:1234' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'localhost:1234' / dns": {
+      "value": [
+        "dns",
+        [
+          "localhost",
+          1234
+        ]
+      ]
+    },
+    "'localhost:1234' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "localhost",
+          1234
+        ]
+      ]
+    },
+    "'localhost:1234' / http": {
+      "value": [
+        "http",
+        [
+          "localhost",
+          1234
+        ]
+      ]
+    },
+    "'localhost:1234' / http3": {
+      "value": [
+        "http3",
+        [
+          "localhost",
+          1234
+        ]
+      ]
+    },
+    "'localhost:1234' / https": {
+      "value": [
+        "https",
+        [
+          "localhost",
+          1234
+        ]
+      ]
+    },
+    "'localhost:1234' / quic": {
+      "value": [
+        "quic",
+        [
+          "localhost",
+          1234
+        ]
+      ]
+    },
+    "'localhost:1234' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "localhost",
+          1234
+        ]
+      ]
+    },
+    "'localhost:1234' / tls": {
+      "value": [
+        "tls",
+        [
+          "localhost",
+          1234
+        ]
+      ]
+    },
+    "'localhost:1234' / udp": {
+      "value": [
+        "udp",
+        [
+          "localhost",
+          1234
+        ]
+      ]
+    },
+    "'quic://example.com' / bogus": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com' / dns": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com' / dtls": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com' / http": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com' / http3": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com' / https": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com' / quic": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com' / tcp": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com' / tls": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com' / udp": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / bogus": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / dns": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / dtls": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / http": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / http3": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / https": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / quic": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / tcp": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / tls": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'quic://example.com:8443' / udp": {
+      "value": [
+        "quic",
+        [
+          "example.com",
+          8443
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / bogus": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / dns": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / dtls": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / http": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / http3": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / https": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / quic": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / tls": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://[::1]:42' / udp": {
+      "value": [
+        "tcp",
+        [
+          "::1",
+          42
+        ]
+      ]
+    },
+    "'tcp://example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tcp://example.com' / dns": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tcp://example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tcp://example.com' / http": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tcp://example.com' / http3": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tcp://example.com' / https": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tcp://example.com' / quic": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tcp://example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tcp://example.com' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tcp://example.com' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / dns": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / http": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / http3": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / https": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / quic": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'tls://example.com' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'t\u00e4st.example:443' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'t\u00e4st.example:443' / dns": {
+      "value": [
+        "dns",
+        [
+          "t\u00e4st.example",
+          443
+        ]
+      ]
+    },
+    "'t\u00e4st.example:443' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "t\u00e4st.example",
+          443
+        ]
+      ]
+    },
+    "'t\u00e4st.example:443' / http": {
+      "value": [
+        "http",
+        [
+          "t\u00e4st.example",
+          443
+        ]
+      ]
+    },
+    "'t\u00e4st.example:443' / http3": {
+      "value": [
+        "http3",
+        [
+          "t\u00e4st.example",
+          443
+        ]
+      ]
+    },
+    "'t\u00e4st.example:443' / https": {
+      "value": [
+        "https",
+        [
+          "t\u00e4st.example",
+          443
+        ]
+      ]
+    },
+    "'t\u00e4st.example:443' / quic": {
+      "value": [
+        "quic",
+        [
+          "t\u00e4st.example",
+          443
+        ]
+      ]
+    },
+    "'t\u00e4st.example:443' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "t\u00e4st.example",
+          443
+        ]
+      ]
+    },
+    "'t\u00e4st.example:443' / tls": {
+      "value": [
+        "tls",
+        [
+          "t\u00e4st.example",
+          443
+        ]
+      ]
+    },
+    "'t\u00e4st.example:443' / udp": {
+      "value": [
+        "udp",
+        [
+          "t\u00e4st.example",
+          443
+        ]
+      ]
+    },
+    "'udp://example.com' / bogus": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'udp://example.com' / dns": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'udp://example.com' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'udp://example.com' / http": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'udp://example.com' / http3": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'udp://example.com' / https": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'udp://example.com' / quic": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'udp://example.com' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'udp://example.com' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'udp://example.com' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'xn--tst-qla.example:443' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'xn--tst-qla.example:443' / dns": {
+      "value": [
+        "dns",
+        [
+          "xn--tst-qla.example",
+          443
+        ]
+      ]
+    },
+    "'xn--tst-qla.example:443' / dtls": {
+      "value": [
+        "dtls",
+        [
+          "xn--tst-qla.example",
+          443
+        ]
+      ]
+    },
+    "'xn--tst-qla.example:443' / http": {
+      "value": [
+        "http",
+        [
+          "xn--tst-qla.example",
+          443
+        ]
+      ]
+    },
+    "'xn--tst-qla.example:443' / http3": {
+      "value": [
+        "http3",
+        [
+          "xn--tst-qla.example",
+          443
+        ]
+      ]
+    },
+    "'xn--tst-qla.example:443' / https": {
+      "value": [
+        "https",
+        [
+          "xn--tst-qla.example",
+          443
+        ]
+      ]
+    },
+    "'xn--tst-qla.example:443' / quic": {
+      "value": [
+        "quic",
+        [
+          "xn--tst-qla.example",
+          443
+        ]
+      ]
+    },
+    "'xn--tst-qla.example:443' / tcp": {
+      "value": [
+        "tcp",
+        [
+          "xn--tst-qla.example",
+          443
+        ]
+      ]
+    },
+    "'xn--tst-qla.example:443' / tls": {
+      "value": [
+        "tls",
+        [
+          "xn--tst-qla.example",
+          443
+        ]
+      ]
+    },
+    "'xn--tst-qla.example:443' / udp": {
+      "value": [
+        "udp",
+        [
+          "xn--tst-qla.example",
+          443
+        ]
+      ]
+    },
+    "'\u2603.example' / bogus": {
+      "error": "ValueError",
+      "message": "Invalid server scheme: bogus"
+    },
+    "'\u2603.example' / dns": {
+      "value": [
+        "dns",
+        [
+          "\u2603.example",
+          53
+        ]
+      ]
+    },
+    "'\u2603.example' / dtls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'\u2603.example' / http": {
+      "value": [
+        "http",
+        [
+          "\u2603.example",
+          80
+        ]
+      ]
+    },
+    "'\u2603.example' / http3": {
+      "value": [
+        "http3",
+        [
+          "\u2603.example",
+          443
+        ]
+      ]
+    },
+    "'\u2603.example' / https": {
+      "value": [
+        "https",
+        [
+          "\u2603.example",
+          443
+        ]
+      ]
+    },
+    "'\u2603.example' / quic": {
+      "value": [
+        "quic",
+        [
+          "\u2603.example",
+          443
+        ]
+      ]
+    },
+    "'\u2603.example' / tcp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'\u2603.example' / tls": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    },
+    "'\u2603.example' / udp": {
+      "error": "ValueError",
+      "message": "Port specification missing."
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

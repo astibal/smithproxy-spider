@@ -1,0 +1,7 @@
+{
+  "client_response": false,
+  "error": "NotImplementedError: HTTP trailers are not implemented yet.",
+  "outcome": "proxy-error",
+  "reference": "mitmproxy 12.3.1",
+  "request_forwarded": false
+}

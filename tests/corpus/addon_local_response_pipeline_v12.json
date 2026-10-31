@@ -1,0 +1,103 @@
+{
+  "hooks": [
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/pipeline-first",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "request",
+      "path": "/pipeline-first",
+      "status": null
+    },
+    {
+      "body": "first local response",
+      "hook": "responseheaders",
+      "path": "/pipeline-first",
+      "status": 200
+    },
+    {
+      "body": "first local response",
+      "hook": "response",
+      "path": "/pipeline-first",
+      "status": 200
+    },
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/pipeline-second",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "request",
+      "path": "/pipeline-second",
+      "status": null
+    },
+    {
+      "body": "second local response",
+      "hook": "responseheaders",
+      "path": "/pipeline-second",
+      "status": 201
+    },
+    {
+      "body": "second local response",
+      "hook": "response",
+      "path": "/pipeline-second",
+      "status": 201
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "responses": [
+    {
+      "body": "first local response | response hook",
+      "headers": [
+        [
+          "X-Origin",
+          "pipeline-first"
+        ],
+        [
+          "content-length",
+          "36"
+        ],
+        [
+          "X-Response-Headers",
+          "seen"
+        ],
+        [
+          "X-Response",
+          "seen"
+        ]
+      ],
+      "reason": "OK",
+      "status": 200,
+      "version": "HTTP/1.1"
+    },
+    {
+      "body": "second local response | response hook",
+      "headers": [
+        [
+          "X-Origin",
+          "pipeline-second"
+        ],
+        [
+          "content-length",
+          "37"
+        ],
+        [
+          "X-Response-Headers",
+          "seen"
+        ],
+        [
+          "X-Response",
+          "seen"
+        ]
+      ],
+      "reason": "Created",
+      "status": 201,
+      "version": "HTTP/1.1"
+    }
+  ]
+}

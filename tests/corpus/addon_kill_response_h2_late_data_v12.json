@@ -1,0 +1,186 @@
+{
+  "client_streams": {
+    "1": {
+      "body": "",
+      "ended": false,
+      "path": "/kill-response-headers",
+      "reset": 2,
+      "status": null
+    },
+    "3": {
+      "body": "origin-3",
+      "ended": true,
+      "path": "/survive-headers",
+      "reset": null,
+      "status": "200"
+    },
+    "5": {
+      "body": "",
+      "ended": false,
+      "path": "/kill-response",
+      "reset": 2,
+      "status": null
+    },
+    "7": {
+      "body": "origin-7",
+      "ended": true,
+      "path": "/survive-response",
+      "reset": null,
+      "status": "200"
+    }
+  },
+  "hooks": {
+    "/kill-response": [
+      {
+        "error": null,
+        "hook": "requestheaders",
+        "killable": true,
+        "live": true,
+        "path": "/kill-response"
+      },
+      {
+        "error": null,
+        "hook": "request",
+        "killable": true,
+        "live": true,
+        "path": "/kill-response"
+      },
+      {
+        "error": null,
+        "hook": "responseheaders",
+        "killable": true,
+        "live": true,
+        "path": "/kill-response"
+      },
+      {
+        "error": null,
+        "hook": "response",
+        "killable": true,
+        "live": true,
+        "path": "/kill-response"
+      },
+      {
+        "error": "Connection killed.",
+        "hook": "response-after-kill",
+        "killable": false,
+        "live": false,
+        "path": "/kill-response"
+      }
+    ],
+    "/kill-response-headers": [
+      {
+        "error": null,
+        "hook": "requestheaders",
+        "killable": true,
+        "live": true,
+        "path": "/kill-response-headers"
+      },
+      {
+        "error": null,
+        "hook": "request",
+        "killable": true,
+        "live": true,
+        "path": "/kill-response-headers"
+      },
+      {
+        "error": null,
+        "hook": "responseheaders",
+        "killable": true,
+        "live": true,
+        "path": "/kill-response-headers"
+      },
+      {
+        "error": "Connection killed.",
+        "hook": "responseheaders-after-kill",
+        "killable": false,
+        "live": false,
+        "path": "/kill-response-headers"
+      },
+      {
+        "error": "Connection killed.",
+        "hook": "error",
+        "killable": false,
+        "live": false,
+        "path": "/kill-response-headers"
+      }
+    ],
+    "/survive-headers": [
+      {
+        "error": null,
+        "hook": "requestheaders",
+        "killable": true,
+        "live": true,
+        "path": "/survive-headers"
+      },
+      {
+        "error": null,
+        "hook": "request",
+        "killable": true,
+        "live": true,
+        "path": "/survive-headers"
+      },
+      {
+        "error": null,
+        "hook": "responseheaders",
+        "killable": true,
+        "live": true,
+        "path": "/survive-headers"
+      },
+      {
+        "error": null,
+        "hook": "response",
+        "killable": true,
+        "live": true,
+        "path": "/survive-headers"
+      }
+    ],
+    "/survive-response": [
+      {
+        "error": null,
+        "hook": "requestheaders",
+        "killable": true,
+        "live": true,
+        "path": "/survive-response"
+      },
+      {
+        "error": null,
+        "hook": "request",
+        "killable": true,
+        "live": true,
+        "path": "/survive-response"
+      },
+      {
+        "error": null,
+        "hook": "responseheaders",
+        "killable": true,
+        "live": true,
+        "path": "/survive-response"
+      },
+      {
+        "error": null,
+        "hook": "response",
+        "killable": true,
+        "live": true,
+        "path": "/survive-response"
+      }
+    ]
+  },
+  "origin_late_data": [
+    {
+      "body": "late",
+      "end_stream": false
+    },
+    {
+      "body": "body",
+      "end_stream": true
+    }
+  ],
+  "origin_paths": [
+    "/kill-response-headers",
+    "/survive-headers",
+    "/kill-response",
+    "/survive-response"
+  ],
+  "origin_resets": [],
+  "reference": "mitmproxy 12.3.1"
+}

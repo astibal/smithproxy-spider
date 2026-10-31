@@ -242,7 +242,7 @@ class RewritePart:
     """Assembler-level H2 or Opaque part. No implicit future-message translation."""
     type: str = documented('opaque, http2.header, http2.data, or http2.frame.', 'if part.type == PartType.Http2.Data:\n    part.set_bytes(b"new body")')
     stream_id: int = documented('H2 stream identifier, or 1 for Opaque. Zero remains zero.', 'part.stream_id = 3', access='mutable rewrite draft')
-    frame_type: int | None = documented('Numeric frame type; None for Opaque.', 'api.print(part.frame_type) ', access='mutable rewrite draft')
+    frame_type: int | None = documented('Numeric frame type; None for Opaque.', 'api.print(part.frame_type)', access='mutable rewrite draft')
     flags: int = documented('Frame flags; END_HEADERS is rebuilt when a header block is edited.', 'part.flags |= 1  # END_STREAM on DATA/HEADERS', access='mutable rewrite draft')
     complete: bool = documented('Complete frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.', 'if part.complete:\n    api.print(part.get_bytes()[:16].hex())')
     content: PartContent = documented('Separate whole-content completeness, based on original callback parts.', 'api.print(part.complete, part.content.complete)')

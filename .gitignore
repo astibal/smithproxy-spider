@@ -6,4 +6,5 @@
 compile_commands.json
 __pycache__/
 *.pyc
+.coverage
 /tools/editor/node_modules/

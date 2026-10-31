@@ -1,0 +1,46 @@
+{
+  "logging": {
+    "add_log_hook": {
+      "args_are_entry": true,
+      "name": "add_log",
+      "repr": "AddLogHook(entry=LogEntry(hook message, warn))"
+    },
+    "alert": 21,
+    "colors": {
+      "21": "magenta",
+      "30": "yellow",
+      "40": "red"
+    },
+    "entry": {
+      "repr": "LogEntry(hook message, warn)",
+      "state": {
+        "level": "warn",
+        "msg": "hook message"
+      }
+    },
+    "levels": [
+      "error",
+      "warn",
+      "info",
+      "alert",
+      "debug"
+    ],
+    "python_levels": {
+      "10": "debug",
+      "20": "info",
+      "21": "alert",
+      "30": "warn",
+      "40": "error"
+    },
+    "tiers": {
+      "'alert'": 2,
+      "'debug'": 3,
+      "'error'": 0,
+      "'info'": 2,
+      "'unknown'": null,
+      "'warn'": 1,
+      "20": null
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

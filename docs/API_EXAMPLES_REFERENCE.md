@@ -274,6 +274,47 @@ if api.instance.mode == "flow":
     return api.message.translate()
 ```
 
+### Message.terminate
+
+Stage termination of the H2 message identified by its initial HEADERS Part. The returned Translate result suppresses that message and emits one protocol-owned RST_STREAM atomically. The reason is bounded diagnostic metadata; http2_error is the HTTP/2 error code sent on the wire.
+
+Availability: Live translated H2 flow with content-reverse from activation. The Part must be callback-local complete initial request headers or final response headers, and the stream must not have been published, cancelled or retired.
+
+Access: stage one protocol-owned stream termination; type/result: `None`.
+
+Easy: The initial headers and all callback-local content for the message are suppressed. Late DATA is discarded and credited without another reset. Other multiplexed streams and both HPACK histories remain usable.
+
+Expert: The same validation, atomicity and flow-control rules apply. Expert does not expose raw RST_STREAM construction or permit terminating informational responses and trailers.
+
+```python
+for part in api.message.parts:
+    if part.frame_type == 1 and part.complete and part.headers is not None:
+        api.message.terminate(part)
+        return api.message.translate()
+```
+
+### Message.respond
+
+Stage a complete local response for one retained request. With request=None, exactly one complete request must be present. Commit suppresses that request and publishes the response in the opposite direction atomically. Content-Length, framing, ordering, HPACK and flow control remain protocol-owned.
+
+Availability: Live H1 or H2 flow with content-reverse from activation. The selected complete request and all of its content must still be retained and unpublished. H2 callers return translate(); H1 callers return commit().
+
+Access: stage one protocol-owned local response; type/result: `None`.
+
+Easy: H2 header names must be lowercase. Connection-specific fields and pseudo-headers are rejected. H1 uses the request version and an optional reason phrase. Content-Length or chunked framing is repaired. Explicit bodies on HEAD, 204 and 304 are preserved as an intentional compatibility policy.
+
+Expert: The same transport, validation, quota and atomicity rules apply. Expert does not expose raw reverse bytes or bypass stream state.
+
+```python
+if api.instance.mode != "flow":
+    return None
+api.message.respond(status=403, headers=[(b"content-type", b"text/plain")], body=b"blocked")
+if any(part.is_a(PartType.Http2.Part) for part in api.message.parts):
+    api.connection.set_mode(Mode.Translate)
+    return api.message.translate()
+return api.message.commit()
+```
+
 ### Message.snapshot
 
 Create an independent editable draft of this callback. No live bytes change until the script returns draft.commit().
@@ -1143,6 +1184,77 @@ if draft.http1.available and draft.http1.target is not None:
     draft.http1.target = "/inspection"
 ```
 
+### Http1Draft.method
+
+Request method, or None for a response. Assign a valid HTTP token to edit the request line.
+
+Availability: Always available for a content callback.
+
+Access: mutable private draft; type/result: `str | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+draft = api.message.snapshot()
+if draft.http1.method is not None:
+    draft.http1.method = "HEAD"
+```
+
+### Http1Draft.status_code
+
+Response status code, or None for a request. Assign an integer in 100..599 to edit the response line.
+
+Availability: Always available for a content callback.
+
+Access: mutable private draft; type/result: `int | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+draft = api.message.snapshot()
+if draft.http1.status_code is not None:
+    draft.http1.status_code = 404
+```
+
+### Http1Draft.reason
+
+Response reason phrase, or None for a request. Control bytes are forbidden.
+
+Availability: Always available for a content callback.
+
+Access: mutable private draft; type/result: `str | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+draft = api.message.snapshot()
+if draft.http1.reason is not None:
+    draft.http1.reason = "Not Found"
+```
+
+### Http1Draft.http_version
+
+Observed HTTP/1.0 or HTTP/1.1 version. Assign either spelling to edit the start line.
+
+Availability: Always available for a content callback.
+
+Access: mutable private draft; type/result: `str | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+draft = api.message.snapshot()
+api.print(draft.http1.http_version)
+```
+
 ### Http1Draft.set_header
 
 Replace all case-insensitive occurrences at the first occurrence, or append a new header. Validation happens at commit.
@@ -1182,6 +1294,24 @@ Expert: This member has the same behavior in both modes. It does not select or p
 draft = api.message.snapshot()
 if draft.http1.available:
     draft.http1.remove_header("X-Debug")
+```
+
+### Http1Draft.replace_headers
+
+Replace the complete ordered header list, preserving duplicate names. Validation happens at commit.
+
+Availability: On a private HTTP/1 draft.
+
+Access: edit private draft; type/result: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+draft = api.message.snapshot()
+if draft.http1.available:
+    draft.http1.replace_headers([("Host", "example.test"), ("X-Test", "one"), ("X-Test", "two")])
 ```
 
 ## CommitException
@@ -1240,7 +1370,7 @@ Easy: This member has the same behavior in both modes. It does not select or per
 Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
 
 ```python
-api.print(part.frame_type) 
+api.print(part.frame_type)
 ```
 
 ### RewritePart.flags
@@ -1424,6 +1554,214 @@ Expert: Allow H1 semantic inconsistencies and oversized H2 control frames; permi
 ```python
 wire = part.commit()
 api.print(len(wire))
+```
+
+## H1ChunkedBody
+
+Complete logical body and trailers of one HTTP/1 chunked message.
+
+### H1ChunkedBody.type
+
+opaque, http2.header, http2.data, or http2.frame.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `str`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if part.type == PartType.Http2.Data:
+    part.set_bytes(b"new body")
+```
+
+### H1ChunkedBody.stream_id
+
+H2 stream identifier, or 1 for Opaque. Zero remains zero.
+
+Availability: Always available for a content callback.
+
+Access: mutable rewrite draft; type/result: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+part.stream_id = 3
+```
+
+### H1ChunkedBody.frame_type
+
+Numeric frame type; None for Opaque.
+
+Availability: Always available for a content callback.
+
+Access: mutable rewrite draft; type/result: `int | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(part.frame_type)
+```
+
+### H1ChunkedBody.flags
+
+Frame flags; END_HEADERS is rebuilt when a header block is edited.
+
+Availability: Always available for a content callback.
+
+Access: mutable rewrite draft; type/result: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+part.flags |= 1  # END_STREAM on DATA/HEADERS
+```
+
+### H1ChunkedBody.complete
+
+Complete frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `bool`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if part.complete:
+    api.print(part.get_bytes()[:16].hex())
+```
+
+### H1ChunkedBody.content
+
+Separate whole-content completeness, based on original callback parts.
+
+Availability: Always available for a content callback.
+
+Access: read-only snapshot; type/result: `PartContent`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.print(part.complete, part.content.complete)
+```
+
+### H1ChunkedBody.headers
+
+HPACK instructions for a complete parseable HEADERS or PUSH_PROMISE block; None otherwise. Active translate resolves logical names and values using the shared directional table.
+
+Availability: Always available for a content callback.
+
+Access: mutable rewrite draft; type/result: `H2Headers | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if part.headers is not None:
+    part.headers.set_header(b"x-test", b"yes")
+```
+
+### H1ChunkedBody.max_frame_size
+
+Output splitting limit, default 16384. Caller may set a known peer limit up to 16777215.
+
+Availability: Always available for a content callback.
+
+Access: mutable rewrite draft; type/result: `int`.
+
+Easy: Commit accepts 16384..16777215 and rejects oversized control/unknown frames.
+
+Expert: Commit accepts 1..16777215 for fragmentation and permits control/unknown frames above this limit. Positive frame capacity, wire representation and output quota remain mandatory.
+
+```python
+part.max_frame_size = 16384
+```
+
+### H1ChunkedBody.http1
+
+H1 header draft for an annotated Content-Length or chunked message; None on other parts. Edit the body through its Body part.
+
+Availability: Always available for a content callback.
+
+Access: mutable rewrite draft; type/result: `Http1Draft | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+for part in api.message.parts:
+    if part.http1 is not None:
+        part.http1.set_header("X-Test", "held")
+```
+
+### H1ChunkedBody.chunks
+
+Physical data-chunk views owned by a chunked H1 Body; empty on other parts. Edit chunk bytes or the whole Body, never both. Do not emit these views separately or reorder them.
+
+Availability: Always available for a content callback.
+
+Access: read-only tuple of editable views; type/result: `tuple[RewritePart, ...]`.
+
+Easy: Rebuild changed chunk sizes. Body edits with trailers are rejected until trailer dependencies can be repaired.
+
+Expert: Rebuild changed chunk sizes and preserve trailers unchanged; their meaning is the caller responsibility. Framing, completeness and quotas remain enforced.
+
+```python
+for chunk in part.chunks:
+    api.print(chunk.get_bytes().hex())
+```
+
+### H1ChunkedBody.get_trailers
+
+Return validated HTTP/1 chunked trailers in wire order. Duplicate names and observed casing are preserved.
+
+Availability: On a complete HTTP/1 chunked Body part.
+
+Access: read private draft; type/result: `tuple[Header, ...]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if not hasattr(part, "get_trailers"):
+    return None
+for trailer in part.get_trailers():
+    api.print(trailer.name, trailer.value)
+```
+
+### H1ChunkedBody.replace_trailers
+
+Replace ordered HTTP/1 chunked trailers and repair the Trailer declaration at commit. Duplicate fields are preserved; framing, routing and representation-control fields are rejected.
+
+Availability: On a complete HTTP/1 chunked Body part.
+
+Access: edit private draft; type/result: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if not hasattr(part, "replace_trailers"):
+    return None
+part.replace_trailers([("X-Checksum", "complete")])
+return api.message.commit()
 ```
 
 ## H2Body
@@ -1779,6 +2117,48 @@ return api.message.translate()
 
 Persistent HTTP/2 policy, applied only by an explicitly returned translate result.
 
+### ConnectionHttp2.replace_body
+
+Replace a complete retained H2 message body, including adding DATA to a header-only message. Decoded bytes use the current Content-Encoding; encoded=True accepts already encoded entity bytes. Existing Parts and flags remain untouched. The complete message must be in the emitted prefix of the returned Translate result. Cannot combine with direct DATA or logical Body edits. Existing Content-Length is repaired.
+
+Availability: Live H2 flow with content-reverse from activation. Complete initial headers, body and trailers must remain available together. Native output windows, quotas and cancellation still apply.
+
+Access: staged complete-message body replacement; type/result: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.connection.set_mode(Mode.Translate)
+for part in api.message.parts:
+    if part.frame_type == 1 and part.complete and part.content.complete is True:
+        api.connection.http2.replace_body(part, b"replacement")
+        break
+return api.message.translate()
+```
+
+### ConnectionHttp2.replace_trailers
+
+Replace, add or remove the trailers of a complete retained H2 message. Use literal Header fields; None removes trailers and an empty list emits an empty trailing block. Framing fields and pseudo-headers are rejected. Parts remain unchanged until explicit Translate publication; the whole message must be in the emitted prefix.
+
+Availability: Live H2 flow with content-reverse from activation. Complete initial headers, body and trailers must remain available together.
+
+Access: staged complete-message trailer replacement; type/result: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.connection.set_mode(Mode.Translate)
+for part in api.message.parts:
+    if part.frame_type == 1 and part.complete and part.content.complete is True:
+        api.connection.http2.replace_trailers(part, [api.http2.Header(b"x-test", b"done")])
+        break
+return api.message.translate()
+```
+
 ### ConnectionHttp2.reserve_body
 
 Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available, including END_STREAM trailers. Limits count original encoded DATA including padding and are immutable: at most 32 reservations and 256 KiB combined per direction. Backend capacity is released after both directions settle their reserved bodies, input ownership and early credit.
@@ -1799,6 +2179,105 @@ for part in api.message.parts:
         api.connection.http2.reserve_body(part, 128 * 1024)
         break
 return api.message.translate()
+```
+
+### ConnectionHttp2.emit_informational_response
+
+Stage one protocol-owned informational response for a callback-local H2 request. The response is emitted in the reverse direction without ending the stream. Publication and both HPACK checkpoints remain atomic until message.translate().
+
+Availability: Live client-to-server H2 flow with content-reverse from activation. The anchor must be callback-local complete initial request HEADERS. Status 101, bodies, trailers and END_STREAM are not supported.
+
+Access: staged reverse informational response; type/result: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.connection.set_mode(Mode.Translate)
+request = next(part for part in api.message.parts if part.frame_type == 1 and part.complete)
+stream = api.connection.http2.emit_informational_response(
+    request, status=100,
+)
+api.print("Continued stream", stream)
+return api.message.translate()
+```
+
+### ConnectionHttp2.suppress_informational_response
+
+Consume one callback-local upstream informational response without publishing it downstream. The source HPACK decoder advances while the downstream encoder remains unchanged. Publication stays atomic until message.translate().
+
+Availability: Live server-to-client H2 flow with content-reverse from activation. The anchor must be an original complete informational HEADERS block in the prefix published by this Translate result.
+
+Access: staged informational response suppression; type/result: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.connection.set_mode(Mode.Translate)
+for part in api.message.parts:
+    fields = () if part.headers is None else part.headers.entries
+    informational = any(
+        field.name == b":status" and field.value[:1] == b"1"
+        for field in fields
+    )
+    if part.frame_type == 1 and part.complete and informational:
+        api.connection.http2.suppress_informational_response(part)
+return api.message.translate()
+```
+
+### ConnectionHttp2.fail_pending_requests
+
+Replace every observed client request still awaiting final response when this upstream GOAWAY arrived. The GOAWAY is consumed, selected streams receive protocol-owned responses, and later source frames for those streams are discarded. Publication remains atomic until message.translate().
+
+Availability: Live server-to-client H2 flow with content-reverse from activation. The anchor must be a complete callback-local GOAWAY. Existing flow-control, HPACK and aggregate output limits apply.
+
+Access: staged connection failure response; type/result: `tuple[int, ...]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.connection.set_mode(Mode.Translate)
+goaway = next((part for part in api.message.parts if part.frame_type == 7 and part.complete), None)
+if goaway is not None:
+    failed = api.connection.http2.fail_pending_requests(
+        goaway,
+        status=502,
+        headers=[(b"content-type", b"text/plain")],
+        body=b"upstream connection closed",
+    )
+    api.print("Failed streams", failed)
+    return api.message.translate()
+```
+
+### ConnectionHttp2.fail_reset_stream
+
+Consume one complete upstream RST_STREAM and replace it with a protocol-owned failure response for the pending request on that stream. Later source frames are discarded. Publication remains atomic until message.translate().
+
+Availability: Live server-to-client H2 flow with content-reverse from activation. The anchor must be a complete callback-local RST_STREAM for an observed request without a final response.
+
+Access: staged stream failure response; type/result: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.connection.set_mode(Mode.Translate)
+reset = next((part for part in api.message.parts if part.frame_type == 3 and part.complete), None)
+if reset is not None:
+    stream = api.connection.http2.fail_reset_stream(
+        reset,
+        status=502,
+        headers=[(b"content-type", b"text/plain")],
+        body=b"upstream stream failed",
+    )
+    api.print("Failed stream", stream)
+    return api.message.translate()
 ```
 
 ### ConnectionHttp2.enforce_header_table_limit

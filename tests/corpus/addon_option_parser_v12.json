@@ -1,0 +1,222 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": {
+    "actions": [
+      {
+        "options": [
+          "--no-enabled"
+        ],
+        "kind": "_StoreFalseAction",
+        "dest": "enabled",
+        "type": null,
+        "metavar": null,
+        "help": null,
+        "default": null
+      },
+      {
+        "options": [
+          "--enabled"
+        ],
+        "kind": "_StoreTrueAction",
+        "dest": "enabled",
+        "type": null,
+        "metavar": null,
+        "help": "Enable the feature",
+        "default": null
+      },
+      {
+        "options": [
+          "--count"
+        ],
+        "kind": "_StoreAction",
+        "dest": "count",
+        "type": "int",
+        "metavar": null,
+        "help": "Count",
+        "default": null
+      },
+      {
+        "options": [
+          "--port"
+        ],
+        "kind": "_StoreAction",
+        "dest": "port",
+        "type": "int",
+        "metavar": null,
+        "help": "Port",
+        "default": null
+      },
+      {
+        "options": [
+          "--label"
+        ],
+        "kind": "_StoreAction",
+        "dest": "label",
+        "type": "str",
+        "metavar": null,
+        "help": "Label",
+        "default": null
+      },
+      {
+        "options": [
+          "--maybe"
+        ],
+        "kind": "_StoreAction",
+        "dest": "maybe",
+        "type": "str",
+        "metavar": null,
+        "help": "Optional label",
+        "default": null
+      },
+      {
+        "options": [
+          "--names"
+        ],
+        "kind": "_AppendAction",
+        "dest": "names",
+        "type": "str",
+        "metavar": null,
+        "help": "Names May be passed multiple times.",
+        "default": null
+      },
+      {
+        "options": [
+          "--http2-ping-keepalive",
+          "-p"
+        ],
+        "kind": "_StoreAction",
+        "dest": "http2_ping_keepalive",
+        "type": "int",
+        "metavar": "SECONDS",
+        "help": "Ping interval",
+        "default": null
+      }
+    ],
+    "cases": [
+      {
+        "arguments": [],
+        "parsed": {
+          "enabled": null,
+          "count": null,
+          "port": null,
+          "label": null,
+          "maybe": null,
+          "names": null,
+          "http2_ping_keepalive": null
+        }
+      },
+      {
+        "arguments": [
+          "--enabled"
+        ],
+        "parsed": {
+          "enabled": true,
+          "count": null,
+          "port": null,
+          "label": null,
+          "maybe": null,
+          "names": null,
+          "http2_ping_keepalive": null
+        }
+      },
+      {
+        "arguments": [
+          "--no-enabled"
+        ],
+        "parsed": {
+          "enabled": false,
+          "count": null,
+          "port": null,
+          "label": null,
+          "maybe": null,
+          "names": null,
+          "http2_ping_keepalive": null
+        }
+      },
+      {
+        "arguments": [
+          "--count",
+          "3",
+          "--port",
+          "8443",
+          "--label",
+          "test"
+        ],
+        "parsed": {
+          "enabled": null,
+          "count": 3,
+          "port": 8443,
+          "label": "test",
+          "maybe": null,
+          "names": null,
+          "http2_ping_keepalive": null
+        }
+      },
+      {
+        "arguments": [
+          "--maybe",
+          "value",
+          "--names",
+          "one",
+          "--names",
+          "two"
+        ],
+        "parsed": {
+          "enabled": null,
+          "count": null,
+          "port": null,
+          "label": null,
+          "maybe": "value",
+          "names": [
+            "one",
+            "two"
+          ],
+          "http2_ping_keepalive": null
+        }
+      },
+      {
+        "arguments": [
+          "-p",
+          "20"
+        ],
+        "parsed": {
+          "enabled": null,
+          "count": null,
+          "port": null,
+          "label": null,
+          "maybe": null,
+          "names": null,
+          "http2_ping_keepalive": 20
+        }
+      }
+    ],
+    "unknown_returned_none": true,
+    "unknown_added_action": false,
+    "unsupported": [
+      {
+        "name": "floating",
+        "error": "ValueError",
+        "message": "Unsupported option type: <class 'float'>",
+        "added_action": false
+      },
+      {
+        "name": "binary",
+        "error": "ValueError",
+        "message": "Unsupported option type: <class 'bytes'>",
+        "added_action": false
+      },
+      {
+        "name": "integer_names",
+        "error": "ValueError",
+        "message": "Unsupported option type: collections.abc.Sequence[int]",
+        "added_action": false
+      },
+      {
+        "name": "optional_enabled",
+        "error": "ValueError",
+        "message": "Unsupported option type: bool | None",
+        "added_action": false
+      }
+    ]
+  }
+}

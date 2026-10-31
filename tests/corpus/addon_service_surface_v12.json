@@ -1,0 +1,20 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "provenance": "Independent dir() observations of public service classes; no reference implementation source.",
+  "classes": {
+    "AddonManager": [
+      "add", "clear", "get", "handle_lifecycle", "invoke_addon",
+      "invoke_addon_sync", "register", "remove", "trigger", "trigger_event"
+    ],
+    "CommandManager": [
+      "add", "call", "call_strings", "collect_commands", "dump", "execute",
+      "parse_partial"
+    ],
+    "Loader": ["add_command", "add_option"],
+    "OptManager": [
+      "add_option", "default", "has_changed", "items", "keys", "make_parser",
+      "merge", "process_deferred", "reset", "rollback", "set", "setter",
+      "subscribe", "toggler", "update", "update_defer", "update_known"
+    ]
+  }
+}

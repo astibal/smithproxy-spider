@@ -1,0 +1,49 @@
+{
+  "hooks": [
+    {
+      "answer_after": null,
+      "answer_before": null,
+      "flow_type": "dns",
+      "hook": "dns_request",
+      "question": "probe.invalid",
+      "request_query": true,
+      "response_code": null,
+      "response_present": false
+    },
+    {
+      "answer_after": "192.0.2.99",
+      "answer_before": "192.0.2.10",
+      "flow_type": "dns",
+      "hook": "dns_response",
+      "question": "probe.invalid",
+      "request_query": true,
+      "response_code": 0,
+      "response_present": true
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "wire": {
+    "answer": [
+      "probe.invalid",
+      1,
+      1,
+      30,
+      "192.0.2.99"
+    ],
+    "counts": [
+      1,
+      1,
+      0,
+      0
+    ],
+    "id": 4660,
+    "query": false,
+    "question": [
+      "probe.invalid",
+      1,
+      1
+    ],
+    "recursion_available": true,
+    "response_code": 0
+  }
+}

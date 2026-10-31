@@ -18,7 +18,25 @@ if(NOT nlohmann_json_FOUND)
 endif()
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(ADDON_WORKER_MODULE_MANIFEST
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/addon_worker_modules.txt")
+file(STRINGS "${ADDON_WORKER_MODULE_MANIFEST}" ADDON_WORKER_MODULE_NAMES)
+set(ADDON_WORKER_MODULES)
+foreach(module_name IN LISTS ADDON_WORKER_MODULE_NAMES)
+    if(NOT module_name MATCHES "^[A-Za-z_][A-Za-z0-9_]*\\.py$")
+        message(FATAL_ERROR "Invalid addon worker module in manifest: ${module_name}")
+    endif()
+    list(APPEND ADDON_WORKER_MODULES "src/${module_name}")
+endforeach()
+set(ADDON_WORKER_ARGUMENTS)
+foreach(module IN LISTS ADDON_WORKER_MODULES)
+    list(APPEND ADDON_WORKER_ARGUMENTS --module "${CMAKE_CURRENT_SOURCE_DIR}/${module}")
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${ADDON_WORKER_MODULE_MANIFEST}" ${ADDON_WORKER_MODULES})
 execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/pack-inspection-worker.py"
+    --arguments-json
+    ${ADDON_WORKER_ARGUMENTS}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_api.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_h2.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_hold.py"
@@ -27,10 +45,24 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/too
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_language.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_sandbox.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/inspection_worker.py"
-    OUTPUT_VARIABLE INSPECTION_WORKER_SOURCE RESULT_VARIABLE WORKER_PACK_RESULT)
+    OUTPUT_VARIABLE INSPECTION_WORKER_ARGUMENT_JSON RESULT_VARIABLE WORKER_PACK_RESULT)
 if(NOT WORKER_PACK_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot package inspection worker")
 endif()
+string(JSON INSPECTION_WORKER_ARGUMENT_COUNT LENGTH "${INSPECTION_WORKER_ARGUMENT_JSON}")
+if(INSPECTION_WORKER_ARGUMENT_COUNT LESS 3)
+    message(FATAL_ERROR "Inspection worker package has no payload")
+endif()
+string(JSON INSPECTION_WORKER_LOADER GET "${INSPECTION_WORKER_ARGUMENT_JSON}" 0)
+math(EXPR INSPECTION_WORKER_LAST_ARGUMENT "${INSPECTION_WORKER_ARGUMENT_COUNT} - 1")
+set(INSPECTION_WORKER_DATA_ARGUMENTS "")
+foreach(index RANGE 1 ${INSPECTION_WORKER_LAST_ARGUMENT})
+    string(JSON argument GET "${INSPECTION_WORKER_ARGUMENT_JSON}" ${index})
+    string(APPEND INSPECTION_WORKER_DATA_ARGUMENTS
+        "    R\"SPIDER_ARG(${argument})SPIDER_ARG\",\n")
+endforeach()
+math(EXPR INSPECTION_WORKER_DATA_ARGUMENT_COUNT
+    "${INSPECTION_WORKER_ARGUMENT_COUNT} - 1")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tools/pack-inspection-worker.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_translate.py)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/inspection_hold.py)
@@ -52,6 +84,7 @@ target_compile_options(spider_protocol PRIVATE -Wall -Wextra -Wpedantic -Wconver
 add_library(spider_core
     src/inspection.cpp
     src/inspection_pool.cpp
+    src/inspection_cpu_guard.cpp
     src/collection.cpp
     src/decision_broker.cpp
     src/content_decoding_enrichment.cpp
@@ -86,6 +119,108 @@ target_compile_options(smithproxy-spider PRIVATE -Wall -Wextra -Wpedantic -Wconv
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(addon_selection_tests tests/addon_selection_test.cpp)
+    target_link_libraries(addon_selection_tests PRIVATE spider_core)
+    target_compile_options(addon_selection_tests PRIVATE -UNDEBUG)
+    add_test(NAME addon_selection_tests COMMAND addon_selection_tests)
+    set_tests_properties(addon_selection_tests PROPERTIES TIMEOUT 20)
+    add_executable(addon_deployment_tests tests/addon_deployment_test.cpp)
+    target_link_libraries(addon_deployment_tests PRIVATE spider_core)
+    target_compile_options(addon_deployment_tests PRIVATE -UNDEBUG)
+    add_test(NAME addon_deployment_tests COMMAND addon_deployment_tests)
+    set_tests_properties(addon_deployment_tests PROPERTIES TIMEOUT 30)
+    add_executable(inspection_cpu_guard_tests tests/inspection_cpu_guard_test.cpp)
+    target_link_libraries(inspection_cpu_guard_tests PRIVATE spider_core)
+    target_compile_options(inspection_cpu_guard_tests PRIVATE -UNDEBUG)
+    add_test(NAME inspection_cpu_guard_tests COMMAND inspection_cpu_guard_tests)
+    set_tests_properties(inspection_cpu_guard_tests PROPERTIES TIMEOUT 15)
+    add_test(NAME addon_loader_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_loader_test.py)
+    add_test(NAME addon_contentviews_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_contentviews_test.py)
+    add_test(NAME addon_http_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_http_test.py)
+    add_test(NAME addon_message_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_message_test.py)
+    add_test(NAME addon_flow_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_flow_test.py)
+    add_test(NAME addon_flow_state_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_flow_state_test.py)
+    add_test(NAME addon_public_surface_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_public_surface_test.py)
+    add_test(NAME addon_clean_room_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_clean_room_test.py)
+    add_test(NAME addon_serializable_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_serializable_test.py)
+    add_test(NAME addon_io_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_io_test.py)
+    add_test(NAME addon_concurrent_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_concurrent_test.py)
+    add_test(NAME addon_connection_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_connection_test.py)
+    add_test(NAME addon_encoding_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_encoding_test.py)
+    add_test(NAME addon_human_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_human_test.py)
+    add_test(NAME addon_typecheck_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_typecheck_test.py)
+    add_test(NAME addon_signal_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_signal_test.py)
+    add_test(NAME addon_version_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_version_test.py)
+    add_test(NAME addon_http_header_helpers_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_http_header_helpers_test.py)
+    add_test(NAME addon_http_validate_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_http_validate_test.py)
+    add_test(NAME addon_multipart_helpers_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_multipart_helpers_test.py)
+    add_test(NAME addon_status_codes_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_status_codes_test.py)
+    add_test(NAME addon_cookie_helpers_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_cookie_helpers_test.py)
+    add_test(NAME addon_url_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_url_test.py)
+    add_test(NAME addon_server_spec_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_server_spec_test.py)
+    add_test(NAME addon_runtime_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_runtime_test.py)
+    add_test(NAME addon_options_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_options_test.py)
+    add_test(NAME addon_sandbox_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_sandbox_test.py)
+    set_tests_properties(addon_sandbox_tests PROPERTIES TIMEOUT 30)
+    option(SPIDER_TEST_ADDON_COMPAT "Run addon contracts (requires tests/requirements-addon.txt)" ON)
+    if(SPIDER_TEST_ADDON_COMPAT)
+        execute_process(COMMAND ${Python3_EXECUTABLE} -c "import h2.connection, hpack, brotli, zstandard, wsproto.frame_protocol; from cryptography import x509; assert tuple(int(item) for item in brotli.__version__.split('.')[:3]) >= (1, 2, 1); assert hasattr(x509.Certificate, 'not_valid_after_utc')"
+                        RESULT_VARIABLE ADDON_TEST_IMPORT_RESULT ERROR_QUIET)
+        if(NOT ADDON_TEST_IMPORT_RESULT EQUAL 0)
+            message(FATAL_ERROR "Addon protocol tests require tests/requirements-addon.txt; no mitmproxy package is needed")
+        endif()
+        add_test(NAME addon_parts_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_parts_test.py)
+        add_test(NAME addon_raw_events_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_raw_events_test.py)
+        add_test(NAME addon_command_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_command_test.py)
+        add_test(NAME addon_log_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_log_test.py)
+        add_test(NAME addon_flowfilter_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_flowfilter_test.py)
+        add_test(NAME addon_strutils_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_strutils_test.py)
+        add_test(NAME addon_certs_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_certs_test.py)
+    add_test(NAME addon_websocket_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_websocket_test.py)
+    add_test(NAME addon_dns_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_test.py)
+        add_test(NAME addon_worker_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_worker_test.py)
+        add_test(NAME inspection_translate_message_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_message_test.py)
+        set_tests_properties(addon_parts_tests addon_raw_events_tests addon_dns_tests addon_worker_tests inspection_translate_message_tests
+                             PROPERTIES TIMEOUT 45 LABELS "addon;protocol")
+    endif()
     add_executable(inspection_tests tests/inspection_test.cpp)
     target_link_libraries(inspection_tests PRIVATE spider_core)
     target_compile_options(inspection_tests PRIVATE -UNDEBUG)
@@ -107,9 +242,19 @@ if(BUILD_TESTING)
                  COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_flow_control_test.py)
         set_tests_properties(inspection_translate_flow_control_tests
                              PROPERTIES TIMEOUT 30 LABELS "experimental;protocol")
-        add_test(NAME inspection_translate_windows_tests
-                 COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_windows_test.py)
-        set_tests_properties(inspection_translate_windows_tests PROPERTIES TIMEOUT 45 LABELS "experimental;protocol")
+        add_test(NAME inspection_translate_windows_easy_tests
+                 COMMAND Python3::Interpreter
+                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_windows_test.py
+                         WindowsTests)
+        add_test(NAME inspection_translate_windows_expert_tests
+                 COMMAND Python3::Interpreter
+                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_windows_test.py
+                         ExpertWindowsTests)
+        set_tests_properties(
+            inspection_translate_windows_easy_tests
+            inspection_translate_windows_expert_tests
+            PROPERTIES TIMEOUT 45 LABELS "experimental;protocol"
+        )
     endif()
     if(SPIDER_TEST_TRANSLATE_POC)
         execute_process(COMMAND ${Python3_EXECUTABLE} -c "import hpack"
@@ -285,7 +430,10 @@ if(BUILD_TESTING)
     target_compile_options(capture_library_tests PRIVATE -UNDEBUG)
     add_test(NAME capture_library_tests COMMAND capture_library_tests)
     set_tests_properties(inspection_instances_tests PROPERTIES TIMEOUT 45)
-    set_tests_properties(inspection_tests PROPERTIES TIMEOUT 15)
+    # This integration test intentionally exercises repeated worker startup and
+    # teardown. Debug builds are close to 15 seconds on normal developer hosts,
+    # so leave scheduling headroom without weakening any internal deadline.
+    set_tests_properties(inspection_tests PROPERTIES TIMEOUT 30)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(spider_tests tests/session_store_test.cpp)
     target_link_libraries(spider_tests PRIVATE spider_core)

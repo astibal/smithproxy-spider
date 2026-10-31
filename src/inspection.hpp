@@ -23,6 +23,7 @@ public:
     }
     nlohmann::json run(nlohmann::json request);
     nlohmann::json language(nlohmann::json request);
+    nlohmann::json content_view(const nlohmann::json& request);
     nlohmann::json automatic(const nlohmann::json& event, const nlohmann::json& enrichments);
     bool translation_required(const nlohmann::json& event) const;
     Collection collection;
@@ -33,10 +34,12 @@ private:
         std::size_t bytes{2};
         nlohmann::json holds = nlohmann::json::object(); // L/R typed Parts checkpoints
         nlohmann::json translations = nlohmann::json::object(); // L/R HPACK tables
+        nlohmann::json h1_responses = nullptr; // ordered origin/local response slots
         bool hold_credit_reserved = false; // backend-owned until this instance ends
     };
     static std::size_t state_charge(const nlohmann::json& state, const nlohmann::json& holds,
-                                   const nlohmann::json& translations, bool reserved);
+                                   const nlohmann::json& translations,
+                                   const nlohmann::json& h1_responses, bool reserved);
     struct Runtime {
         std::shared_ptr<InspectionPool> pool;
         std::timed_mutex serial;
@@ -44,14 +47,19 @@ private:
         std::atomic_bool retired{};
         std::atomic_uint64_t rejected{}, state_bytes{};
         std::map<std::string, Instance> states; // guarded by serial
+        std::set<std::string> addon_connections; // guarded by serial; successful setup only
+        bool addon{}; // fixed before publication
         unsigned consecutive_errors{}, consecutive_slow{};
     };
     nlohmann::json run_instance(const nlohmann::json& item, const nlohmann::json& event,
                                const nlohmann::json& enrichments, int remaining, bool hold_allowed,
                                bool translate_allowed = false, bool translate_active = false);
+    nlohmann::json run_addon_preview(nlohmann::json request);
     nlohmann::json run_request(nlohmann::json request, const std::shared_ptr<InspectionPool>& pool);
+    nlohmann::json record_result(const nlohmann::json& request, nlohmann::json result);
     void expire_instances(Runtime& runtime, int idle_seconds) const;
     void clear_flow(const std::string& id);
+    void record_shutdown(const std::string& id, const std::shared_ptr<InspectionPool>& pool);
     std::map<std::string, std::shared_ptr<Runtime>> runtimes_;
     std::shared_ptr<InspectionPool> legacy_pool_;
     std::filesystem::path storage_root_;

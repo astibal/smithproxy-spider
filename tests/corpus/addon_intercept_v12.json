@@ -1,0 +1,62 @@
+{
+  "client": {
+    "body": "resumed",
+    "status_line": "HTTP/1.1 200 OK"
+  },
+  "hooks": [
+    {
+      "error": null,
+      "hook": "requestheaders",
+      "intercepted": false,
+      "live": true,
+      "path": "/intercept"
+    },
+    {
+      "error": null,
+      "hook": "request",
+      "intercepted": false,
+      "live": true,
+      "path": "/intercept"
+    },
+    {
+      "error": null,
+      "hook": "after-intercept",
+      "intercepted": true,
+      "live": true,
+      "path": "/intercept"
+    },
+    {
+      "error": null,
+      "hook": "before-resume",
+      "intercepted": true,
+      "live": true,
+      "path": "/intercept"
+    },
+    {
+      "error": null,
+      "hook": "after-resume",
+      "intercepted": false,
+      "live": true,
+      "path": "/intercept"
+    },
+    {
+      "error": null,
+      "hook": "responseheaders",
+      "intercepted": false,
+      "live": true,
+      "path": "/intercept"
+    },
+    {
+      "error": null,
+      "hook": "response",
+      "intercepted": false,
+      "live": true,
+      "path": "/intercept"
+    }
+  ],
+  "origin": {
+    "request_line": "GET /intercept HTTP/1.1",
+    "request_seen": true
+  },
+  "reference": "mitmproxy 12.3.1"
+}

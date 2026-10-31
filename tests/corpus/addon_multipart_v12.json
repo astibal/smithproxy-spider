@@ -1,0 +1,881 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "read/ordinary": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/empty": [],
+    "read/missing": [],
+    "read/binary": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "00ff6e657874"
+        }
+      ]
+    ],
+    "read/padding": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "202076616c756520"
+        }
+      ]
+    ],
+    "read/filename": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/missing_name": [],
+    "read/unquoted_name": [],
+    "read/upper_header": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/other_disposition": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/transfer_base64": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "646d46736457553d"
+        }
+      ]
+    ],
+    "read/lf_only": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/no_close": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/preamble": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/wrong_boundary": [],
+    "read/empty_name": [],
+    "read/upper_name": [],
+    "read/other_header": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/filename_before_name": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/duplicate_name": [
+      [
+        {
+          "bytes": "6669727374"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/escaped_name": [
+      [
+        {
+          "bytes": "615c"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/name_in_other_header": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/folded_header": [],
+    "read/embedded_boundary": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "707265666978"
+        }
+      ]
+    ],
+    "read/duplicate_fields": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ],
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/name_only_second_header": [],
+    "read/leading_other_header": [],
+    "read/name_without_space": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "read/name_tab": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "type/": [],
+    "type/text/plain": [],
+    "type/multipart/form-data": [],
+    "type/multipart/form-data; boundary=": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "type/multipart/form-data; boundary=\"sample\"": [],
+    "type/MULTIPART/FORM-DATA; boundary=sample": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "type/multipart/form-data; BOUNDARY=sample": [],
+    "type/multipart/form-data; boundary =sample": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "type/multipart/form-data; boundary=wrong; boundary=sample": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "type/application/x-multipart/form-data; boundary=sample": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ]
+    ],
+    "write/0": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "3132"
+          }
+        ]
+      ],
+      "fields": []
+    },
+    "write/1": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2261220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a6f6e650d0a0d0a2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2261220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a74776f0d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "323136"
+          }
+        ]
+      ],
+      "fields": [
+        [
+          {
+            "bytes": "61"
+          },
+          {
+            "bytes": "6f6e65"
+          }
+        ],
+        [
+          {
+            "bytes": "61"
+          },
+          {
+            "bytes": "74776f"
+          }
+        ]
+      ]
+    },
+    "write/2": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2262696e617279220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a00ff0d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "313138"
+          }
+        ]
+      ],
+      "fields": [
+        [
+          {
+            "bytes": "62696e617279"
+          },
+          {
+            "bytes": "00ff"
+          }
+        ]
+      ]
+    },
+    "write/3": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d22612262220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "313138"
+          }
+        ]
+      ],
+      "fields": [
+        [
+          {
+            "bytes": "61"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    },
+    "write/4": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2261220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a6c696e650d0a6c696e650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "313231"
+          }
+        ]
+      ],
+      "fields": [
+        [
+          {
+            "bytes": "61"
+          },
+          {
+            "bytes": "6c696e656c696e65"
+          }
+        ]
+      ]
+    },
+    "write/5": {
+      "operation": {
+        "error": "ValueError"
+      },
+      "content": {
+        "bytes": "6f726967696e616c"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "38"
+          }
+        ]
+      ],
+      "fields": []
+    },
+    "write/6": {
+      "operation": {
+        "error": "TypeError"
+      },
+      "content": {
+        "bytes": "6f726967696e616c"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "38"
+          }
+        ]
+      ],
+      "fields": []
+    },
+    "write/7": {
+      "operation": {
+        "error": "TypeError"
+      },
+      "content": {
+        "bytes": "6f726967696e616c"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "38"
+          }
+        ]
+      ],
+      "fields": []
+    },
+    "write/8": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2261220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a782d2d73616d706c65780d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "313231"
+          }
+        ]
+      ],
+      "fields": [
+        [
+          {
+            "bytes": "61"
+          },
+          {
+            "bytes": "78"
+          }
+        ]
+      ]
+    },
+    "write/9": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2261220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a780d0a2d2d73616d706c650d0a790d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "313235"
+          }
+        ]
+      ],
+      "fields": [
+        [
+          {
+            "bytes": "61"
+          },
+          {
+            "bytes": "78"
+          }
+        ]
+      ]
+    },
+    "write/10": {
+      "operation": null,
+      "content": {
+        "bytes": "0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "3134"
+          }
+        ]
+      ],
+      "fields": []
+    },
+    "write/11": {
+      "operation": null,
+      "content": {
+        "bytes": "0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "3134"
+          }
+        ]
+      ],
+      "fields": []
+    },
+    "write/12": {
+      "operation": null,
+      "content": {
+        "bytes": "0d0a2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2261220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a790d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "headers": [
+        [
+          {
+            "bytes": "636f6e74656e742d74797065"
+          },
+          {
+            "bytes": "6d756c7469706172742f666f726d2d646174613b20626f756e646172793d73616d706c65"
+          }
+        ],
+        [
+          {
+            "bytes": "636f6e74656e742d6c656e677468"
+          },
+          {
+            "bytes": "313134"
+          }
+        ]
+      ],
+      "fields": [
+        [
+          {
+            "bytes": "61"
+          },
+          {
+            "bytes": "79"
+          }
+        ]
+      ]
+    },
+    "write_type/multipart/form-data": {
+      "operation": null,
+      "content": {
+        "bytes": ""
+      },
+      "fields": []
+    },
+    "write_type/multipart/form-data; boundary=\"sample\"": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d25323273616d706c652532320d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2261220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d25323273616d706c652532322d2d0d0a"
+      },
+      "fields": []
+    },
+    "write_type/multipart/form-data; boundary=": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d0d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2261220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d2d2d0d0a"
+      },
+      "fields": [
+        [
+          {
+            "bytes": "61"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    },
+    "view/duplicates": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "76616c7565"
+        }
+      ],
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "7365636f6e64"
+        }
+      ],
+      [
+        {
+          "bytes": "6578747261"
+        },
+        {
+          "bytes": "6e6577"
+        }
+      ]
+    ],
+    "view/live": [
+      [
+        {
+          "bytes": "6669656c64"
+        },
+        {
+          "bytes": "7265706c6163656d656e74"
+        }
+      ]
+    ],
+    "view/clear": {
+      "bytes": "2d2d73616d706c652d2d0d0a"
+    },
+    "write_name/66696c652e747874": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2266696c652e747874220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": [
+        [
+          {
+            "bytes": "66696c652e747874"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    },
+    "write_name/66696c652e68746d6c": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2266696c652e68746d6c220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": [
+        [
+          {
+            "bytes": "66696c652e68746d6c"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    },
+    "write_name/66696c652e6a736f6e": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2266696c652e6a736f6e220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": [
+        [
+          {
+            "bytes": "66696c652e6a736f6e"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    },
+    "write_name/66696c652e706e67": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2266696c652e706e67220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": [
+        [
+          {
+            "bytes": "66696c652e706e67"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    },
+    "write_name/66696c652e62696e": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2266696c652e62696e220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": [
+        [
+          {
+            "bytes": "66696c652e62696e"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    },
+    "write_name/66696c652e7461722e677a": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2266696c652e7461722e677a220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": [
+        [
+          {
+            "bytes": "66696c652e7461722e677a"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    },
+    "write_name/6c696e650d0a6e616d65": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d226c696e650d0a6e616d65220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": []
+    },
+    "write_name/71756f7465226e616d65": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d2271756f7465226e616d65220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": [
+        [
+          {
+            "bytes": "71756f7465"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    },
+    "write_name/": {
+      "operation": null,
+      "content": {
+        "bytes": "0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": []
+    },
+    "write_name/ff": {
+      "operation": null,
+      "content": {
+        "bytes": "2d2d73616d706c650d0a436f6e74656e742d446973706f736974696f6e3a20666f726d2d646174613b206e616d653d22ff220d0a436f6e74656e742d547970653a20746578742f706c61696e3b20636861727365743d7574662d380d0a0d0a76616c75650d0a0d0a2d2d73616d706c652d2d0d0a"
+      },
+      "fields": [
+        [
+          {
+            "bytes": "ff"
+          },
+          {
+            "bytes": "76616c7565"
+          }
+        ]
+      ]
+    }
+  }
+}

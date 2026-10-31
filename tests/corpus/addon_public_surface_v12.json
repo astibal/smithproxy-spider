@@ -1,0 +1,555 @@
+{
+  "data": {
+    "MessageData": {
+      "copy_has_independent_headers": true,
+      "copy_state": {
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "6f6e65"
+                }
+              ]
+            },
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "74776f"
+                }
+              ]
+            }
+          ]
+        },
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "timestamp_end": null,
+        "timestamp_start": 1.5,
+        "trailers": null
+      },
+      "partial_state": {
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "59"
+                },
+                {
+                  "bytes": "6368616e676564"
+                }
+              ]
+            }
+          ]
+        },
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "timestamp_end": null,
+        "timestamp_start": 1.5,
+        "trailers": null,
+        "unknown": 1
+      },
+      "roundtrip": {
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "6f6e65"
+                }
+              ]
+            },
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "74776f"
+                }
+              ]
+            }
+          ]
+        },
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "timestamp_end": null,
+        "timestamp_start": 1.5,
+        "trailers": null
+      },
+      "state": {
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "6f6e65"
+                }
+              ]
+            },
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "74776f"
+                }
+              ]
+            }
+          ]
+        },
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "timestamp_end": null,
+        "timestamp_start": 1.5,
+        "trailers": null
+      }
+    },
+    "RequestData": {
+      "copy_has_independent_headers": true,
+      "copy_state": {
+        "authority": {
+          "bytes": "6578616d706c652e74657374"
+        },
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "6f6e65"
+                }
+              ]
+            },
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "74776f"
+                }
+              ]
+            }
+          ]
+        },
+        "host": "example.test",
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "method": {
+          "bytes": "474554"
+        },
+        "path": {
+          "bytes": "2f78"
+        },
+        "port": 443,
+        "scheme": {
+          "bytes": "6874747073"
+        },
+        "timestamp_end": 2.5,
+        "timestamp_start": 1.5,
+        "trailers": null
+      },
+      "partial_state": {
+        "authority": {
+          "bytes": "6578616d706c652e74657374"
+        },
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "59"
+                },
+                {
+                  "bytes": "6368616e676564"
+                }
+              ]
+            }
+          ]
+        },
+        "host": "example.test",
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "method": {
+          "bytes": "474554"
+        },
+        "path": {
+          "bytes": "2f78"
+        },
+        "port": 443,
+        "scheme": {
+          "bytes": "6874747073"
+        },
+        "timestamp_end": 2.5,
+        "timestamp_start": 1.5,
+        "trailers": null,
+        "unknown": 1
+      },
+      "roundtrip": {
+        "authority": {
+          "bytes": "6578616d706c652e74657374"
+        },
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "6f6e65"
+                }
+              ]
+            },
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "74776f"
+                }
+              ]
+            }
+          ]
+        },
+        "host": "example.test",
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "method": {
+          "bytes": "474554"
+        },
+        "path": {
+          "bytes": "2f78"
+        },
+        "port": 443,
+        "scheme": {
+          "bytes": "6874747073"
+        },
+        "timestamp_end": 2.5,
+        "timestamp_start": 1.5,
+        "trailers": null
+      },
+      "state": {
+        "authority": {
+          "bytes": "6578616d706c652e74657374"
+        },
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "6f6e65"
+                }
+              ]
+            },
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "74776f"
+                }
+              ]
+            }
+          ]
+        },
+        "host": "example.test",
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "method": {
+          "bytes": "474554"
+        },
+        "path": {
+          "bytes": "2f78"
+        },
+        "port": 443,
+        "scheme": {
+          "bytes": "6874747073"
+        },
+        "timestamp_end": 2.5,
+        "timestamp_start": 1.5,
+        "trailers": null
+      }
+    },
+    "ResponseData": {
+      "copy_has_independent_headers": true,
+      "copy_state": {
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "6f6e65"
+                }
+              ]
+            },
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "74776f"
+                }
+              ]
+            }
+          ]
+        },
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "reason": {
+          "bytes": "43726561746564"
+        },
+        "status_code": 201,
+        "timestamp_end": 2.5,
+        "timestamp_start": 1.5,
+        "trailers": null
+      },
+      "partial_state": {
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "59"
+                },
+                {
+                  "bytes": "6368616e676564"
+                }
+              ]
+            }
+          ]
+        },
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "reason": {
+          "bytes": "43726561746564"
+        },
+        "status_code": 201,
+        "timestamp_end": 2.5,
+        "timestamp_start": 1.5,
+        "trailers": null,
+        "unknown": 1
+      },
+      "roundtrip": {
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "6f6e65"
+                }
+              ]
+            },
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "74776f"
+                }
+              ]
+            }
+          ]
+        },
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "reason": {
+          "bytes": "43726561746564"
+        },
+        "status_code": 201,
+        "timestamp_end": 2.5,
+        "timestamp_start": 1.5,
+        "trailers": null
+      },
+      "state": {
+        "content": {
+          "bytes": "626f6479"
+        },
+        "headers": {
+          "tuple": [
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "6f6e65"
+                }
+              ]
+            },
+            {
+              "tuple": [
+                {
+                  "bytes": "582d41"
+                },
+                {
+                  "bytes": "74776f"
+                }
+              ]
+            }
+          ]
+        },
+        "http_version": {
+          "bytes": "485454502f322e30"
+        },
+        "reason": {
+          "bytes": "43726561746564"
+        },
+        "status_code": 201,
+        "timestamp_end": 2.5,
+        "timestamp_start": 1.5,
+        "trailers": null
+      }
+    }
+  },
+  "exceptions": {
+    "AddonHalt": {
+      "message": "example",
+      "mro": [
+        "AddonHalt",
+        "MitmproxyException",
+        "Exception",
+        "BaseException",
+        "object"
+      ]
+    },
+    "AddonManagerError": {
+      "message": "example",
+      "mro": [
+        "AddonManagerError",
+        "MitmproxyException",
+        "Exception",
+        "BaseException",
+        "object"
+      ]
+    },
+    "CommandError": {
+      "message": "example",
+      "mro": [
+        "CommandError",
+        "Exception",
+        "BaseException",
+        "object"
+      ]
+    },
+    "ControlException": {
+      "message": "example",
+      "mro": [
+        "ControlException",
+        "MitmproxyException",
+        "Exception",
+        "BaseException",
+        "object"
+      ]
+    },
+    "FlowReadException": {
+      "message": "example",
+      "mro": [
+        "FlowReadException",
+        "MitmproxyException",
+        "Exception",
+        "BaseException",
+        "object"
+      ]
+    },
+    "MitmproxyException": {
+      "message": "example",
+      "mro": [
+        "MitmproxyException",
+        "Exception",
+        "BaseException",
+        "object"
+      ]
+    },
+    "OptionsError": {
+      "message": "example",
+      "mro": [
+        "OptionsError",
+        "MitmproxyException",
+        "Exception",
+        "BaseException",
+        "object"
+      ]
+    }
+  },
+  "http_exports": {
+    "MessageData": "mitmproxy.http",
+    "RequestData": "mitmproxy.http",
+    "ResponseData": "mitmproxy.http"
+  },
+  "options_export": "mitmproxy.options",
+  "reference": "mitmproxy 12.3.1"
+}

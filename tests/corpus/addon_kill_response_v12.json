@@ -1,0 +1,89 @@
+{
+  "clients": {
+    "/kill-response": {
+      "outcome": "eof",
+      "wire": ""
+    },
+    "/kill-response-headers": {
+      "outcome": "eof",
+      "wire": ""
+    }
+  },
+  "hooks": [
+    {
+      "error": null,
+      "hook": "requestheaders",
+      "killable": true,
+      "live": true,
+      "path": "/kill-response-headers"
+    },
+    {
+      "error": null,
+      "hook": "request",
+      "killable": true,
+      "live": true,
+      "path": "/kill-response-headers"
+    },
+    {
+      "error": null,
+      "hook": "responseheaders",
+      "killable": true,
+      "live": true,
+      "path": "/kill-response-headers"
+    },
+    {
+      "error": "Connection killed.",
+      "hook": "responseheaders-after-kill",
+      "killable": false,
+      "live": false,
+      "path": "/kill-response-headers"
+    },
+    {
+      "error": "Connection killed.",
+      "hook": "error",
+      "killable": false,
+      "live": false,
+      "path": "/kill-response-headers"
+    },
+    {
+      "error": null,
+      "hook": "requestheaders",
+      "killable": true,
+      "live": true,
+      "path": "/kill-response"
+    },
+    {
+      "error": null,
+      "hook": "request",
+      "killable": true,
+      "live": true,
+      "path": "/kill-response"
+    },
+    {
+      "error": null,
+      "hook": "responseheaders",
+      "killable": true,
+      "live": true,
+      "path": "/kill-response"
+    },
+    {
+      "error": null,
+      "hook": "response",
+      "killable": true,
+      "live": true,
+      "path": "/kill-response"
+    },
+    {
+      "error": "Connection killed.",
+      "hook": "response-after-kill",
+      "killable": false,
+      "live": false,
+      "path": "/kill-response"
+    }
+  ],
+  "origin_paths": [
+    "/kill-response-headers",
+    "/kill-response"
+  ],
+  "reference": "mitmproxy 12.3.1"
+}

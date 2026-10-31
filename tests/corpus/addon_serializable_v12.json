@@ -1,0 +1,939 @@
+{
+  "cases": {
+    "copy": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 9
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.5,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from/bad_enum": {
+      "error": "ValueError",
+      "message": "'other' is not a valid collect.<locals>.Choice"
+    },
+    "from/bad_literal": {
+      "error": "ValueError",
+      "message": "Invalid value for label: 'other' does not match any literal value."
+    },
+    "from/bytes_as_text": {
+      "error": "ValueError",
+      "message": "Invalid value for payload. Expected <class 'bytes'>, got payload (<class 'str'>)."
+    },
+    "from/extra": {
+      "error": "ValueError",
+      "message": "Invalid state for <class 'addon_serializable_contract.collect.<locals>.Sample'>: collect.<locals>.Sample.__init__() got an unexpected keyword argument 'extra' (state={'integer': 1, 'floating': 2.5, 'flag': True, 'text': 'text', 'payload': b'payload', 'optional': None, 'numbers': [3, 4], 'pair': ('pair', 5), 'mapping': {'key': 6}, 'sequence': [7, 8], 'choice': <Choice.SECOND: 'second'>, 'label': 'short', 'child': collect.<locals>.Child(value=9), 'children': [collect.<locals>.Child(value=10)], 'extra': 1})"
+    },
+    "from/flag_as_integer": {
+      "error": "ValueError",
+      "message": "Invalid value for flag. Expected <class 'bool'>, got 1 (<class 'int'>)."
+    },
+    "from/flag_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for flag. Expected <class 'bool'>, got yes (<class 'str'>)."
+    },
+    "from/float_as_integer": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 9
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.0,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from/float_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for floating. Expected <class 'float'>, got 2.5 (<class 'str'>)."
+    },
+    "from/integer_as_bool": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 9
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.5,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from/integer_as_float": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 9
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.5,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from/integer_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for integer. Expected <class 'int'>, got 1 (<class 'str'>)."
+    },
+    "from/list_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for numbers. Expected <class 'int'>, got 3 (<class 'str'>)."
+    },
+    "from/list_as_tuple": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 9
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.5,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from/mapping_as_pairs": {
+      "error": "AttributeError",
+      "message": "'list' object has no attribute 'items'"
+    },
+    "from/missing": {
+      "error": "KeyError",
+      "message": "'text'"
+    },
+    "from/nested_object_as_state": {
+      "error": "TypeError",
+      "message": "'Child' object is not subscriptable"
+    },
+    "from/nested_state": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 11
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.5,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from/sequence_as_list": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 9
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.5,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from/sequence_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for sequence. Expected <class 'int'>, got 7 (<class 'str'>)."
+    },
+    "from/sequence_as_tuple": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 9
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.5,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from/text_as_bytes": {
+      "error": "ValueError",
+      "message": "Invalid value for text. Expected <class 'str'>, got b'text' (<class 'bytes'>)."
+    },
+    "from/tuple_as_list": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 9
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.5,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from_state": {
+      "result": {
+        "object": "Sample",
+        "state": {
+          "child": {
+            "value": 9
+          },
+          "children": [
+            {
+              "value": 10
+            }
+          ],
+          "choice": "second",
+          "flag": true,
+          "floating": 2.5,
+          "integer": 1,
+          "label": "short",
+          "mapping": {
+            "key": 6
+          },
+          "numbers": [
+            3,
+            4
+          ],
+          "optional": null,
+          "pair": {
+            "tuple": [
+              "pair",
+              5
+            ]
+          },
+          "payload": {
+            "bytes": "7061796c6f6164"
+          },
+          "sequence": [
+            7,
+            8
+          ],
+          "text": "text"
+        }
+      }
+    },
+    "from_state_input_after": {
+      "child": {
+        "object": "Child",
+        "state": {
+          "value": 9
+        }
+      },
+      "children": [
+        {
+          "object": "Child",
+          "state": {
+            "value": 10
+          }
+        }
+      ],
+      "choice": {
+        "enum": "Choice",
+        "value": "second"
+      },
+      "flag": true,
+      "floating": 2.5,
+      "integer": 1,
+      "label": "short",
+      "mapping": {
+        "key": 6
+      },
+      "numbers": [
+        3,
+        4
+      ],
+      "optional": null,
+      "pair": {
+        "tuple": [
+          "pair",
+          5
+        ]
+      },
+      "payload": {
+        "bytes": "7061796c6f6164"
+      },
+      "sequence": [
+        7,
+        8
+      ],
+      "text": "text"
+    },
+    "get/any": {
+      "error": "TypeError",
+      "message": "Unexpected type for value: typing.Any"
+    },
+    "get/bad_enum": {
+      "error": "AttributeError",
+      "message": "'str' object has no attribute 'value'"
+    },
+    "get/bad_literal": {
+      "error": "ValueError",
+      "message": "Invalid value for label: 'other' does not match any literal value."
+    },
+    "get/broad_union": {
+      "error": "AssertionError",
+      "message": "value: only `x | None` union types are supported`"
+    },
+    "get/bytes_as_text": {
+      "error": "ValueError",
+      "message": "Invalid value for payload. Expected <class 'bytes'>, got payload (<class 'str'>)."
+    },
+    "get/flag_as_integer": {
+      "error": "ValueError",
+      "message": "Invalid value for flag. Expected <class 'bool'>, got 1 (<class 'int'>)."
+    },
+    "get/flag_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for flag. Expected <class 'bool'>, got yes (<class 'str'>)."
+    },
+    "get/float_as_integer": {
+      "result": {
+        "child": {
+          "value": 9
+        },
+        "children": [
+          {
+            "value": 10
+          }
+        ],
+        "choice": "second",
+        "flag": true,
+        "floating": 2.0,
+        "integer": 1,
+        "label": "short",
+        "mapping": {
+          "key": 6
+        },
+        "numbers": [
+          3,
+          4
+        ],
+        "optional": null,
+        "pair": {
+          "tuple": [
+            "pair",
+            5
+          ]
+        },
+        "payload": {
+          "bytes": "7061796c6f6164"
+        },
+        "sequence": [
+          7,
+          8
+        ],
+        "text": "text"
+      }
+    },
+    "get/float_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for floating. Expected <class 'float'>, got 2.5 (<class 'str'>)."
+    },
+    "get/integer_as_bool": {
+      "result": {
+        "child": {
+          "value": 9
+        },
+        "children": [
+          {
+            "value": 10
+          }
+        ],
+        "choice": "second",
+        "flag": true,
+        "floating": 2.5,
+        "integer": 1,
+        "label": "short",
+        "mapping": {
+          "key": 6
+        },
+        "numbers": [
+          3,
+          4
+        ],
+        "optional": null,
+        "pair": {
+          "tuple": [
+            "pair",
+            5
+          ]
+        },
+        "payload": {
+          "bytes": "7061796c6f6164"
+        },
+        "sequence": [
+          7,
+          8
+        ],
+        "text": "text"
+      }
+    },
+    "get/integer_as_float": {
+      "result": {
+        "child": {
+          "value": 9
+        },
+        "children": [
+          {
+            "value": 10
+          }
+        ],
+        "choice": "second",
+        "flag": true,
+        "floating": 2.5,
+        "integer": 1,
+        "label": "short",
+        "mapping": {
+          "key": 6
+        },
+        "numbers": [
+          3,
+          4
+        ],
+        "optional": null,
+        "pair": {
+          "tuple": [
+            "pair",
+            5
+          ]
+        },
+        "payload": {
+          "bytes": "7061796c6f6164"
+        },
+        "sequence": [
+          7,
+          8
+        ],
+        "text": "text"
+      }
+    },
+    "get/integer_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for integer. Expected <class 'int'>, got 1 (<class 'str'>)."
+    },
+    "get/list_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for numbers. Expected <class 'int'>, got 3 (<class 'str'>)."
+    },
+    "get/list_as_tuple": {
+      "result": {
+        "child": {
+          "value": 9
+        },
+        "children": [
+          {
+            "value": 10
+          }
+        ],
+        "choice": "second",
+        "flag": true,
+        "floating": 2.5,
+        "integer": 1,
+        "label": "short",
+        "mapping": {
+          "key": 6
+        },
+        "numbers": [
+          3,
+          4
+        ],
+        "optional": null,
+        "pair": {
+          "tuple": [
+            "pair",
+            5
+          ]
+        },
+        "payload": {
+          "bytes": "7061796c6f6164"
+        },
+        "sequence": [
+          7,
+          8
+        ],
+        "text": "text"
+      }
+    },
+    "get/mapping_as_pairs": {
+      "error": "AttributeError",
+      "message": "'list' object has no attribute 'items'"
+    },
+    "get/sequence_as_list": {
+      "result": {
+        "child": {
+          "value": 9
+        },
+        "children": [
+          {
+            "value": 10
+          }
+        ],
+        "choice": "second",
+        "flag": true,
+        "floating": 2.5,
+        "integer": 1,
+        "label": "short",
+        "mapping": {
+          "key": 6
+        },
+        "numbers": [
+          3,
+          4
+        ],
+        "optional": null,
+        "pair": {
+          "tuple": [
+            "pair",
+            5
+          ]
+        },
+        "payload": {
+          "bytes": "7061796c6f6164"
+        },
+        "sequence": [
+          7,
+          8
+        ],
+        "text": "text"
+      }
+    },
+    "get/sequence_as_string": {
+      "error": "ValueError",
+      "message": "Invalid value for sequence. Expected <class 'int'>, got 7 (<class 'str'>)."
+    },
+    "get/sequence_as_tuple": {
+      "result": {
+        "child": {
+          "value": 9
+        },
+        "children": [
+          {
+            "value": 10
+          }
+        ],
+        "choice": "second",
+        "flag": true,
+        "floating": 2.5,
+        "integer": 1,
+        "label": "short",
+        "mapping": {
+          "key": 6
+        },
+        "numbers": [
+          3,
+          4
+        ],
+        "optional": null,
+        "pair": {
+          "tuple": [
+            "pair",
+            5
+          ]
+        },
+        "payload": {
+          "bytes": "7061796c6f6164"
+        },
+        "sequence": [
+          7,
+          8
+        ],
+        "text": "text"
+      }
+    },
+    "get/text_as_bytes": {
+      "error": "ValueError",
+      "message": "Invalid value for text. Expected <class 'str'>, got b'text' (<class 'bytes'>)."
+    },
+    "get/tuple_as_list": {
+      "result": {
+        "child": {
+          "value": 9
+        },
+        "children": [
+          {
+            "value": 10
+          }
+        ],
+        "choice": "second",
+        "flag": true,
+        "floating": 2.5,
+        "integer": 1,
+        "label": "short",
+        "mapping": {
+          "key": 6
+        },
+        "numbers": [
+          3,
+          4
+        ],
+        "optional": null,
+        "pair": {
+          "tuple": [
+            "pair",
+            5
+          ]
+        },
+        "payload": {
+          "bytes": "7061796c6f6164"
+        },
+        "sequence": [
+          7,
+          8
+        ],
+        "text": "text"
+      }
+    },
+    "get/variadic_tuple": {
+      "error": "TypeError",
+      "message": "Unexpected type for value: Ellipsis"
+    },
+    "get_state": {
+      "result": {
+        "child": {
+          "value": 9
+        },
+        "children": [
+          {
+            "value": 10
+          }
+        ],
+        "choice": "second",
+        "flag": true,
+        "floating": 2.5,
+        "integer": 1,
+        "label": "short",
+        "mapping": {
+          "key": 6
+        },
+        "numbers": [
+          3,
+          4
+        ],
+        "optional": null,
+        "pair": {
+          "tuple": [
+            "pair",
+            5
+          ]
+        },
+        "payload": {
+          "bytes": "7061796c6f6164"
+        },
+        "sequence": [
+          7,
+          8
+        ],
+        "text": "text"
+      }
+    },
+    "set_state": {
+      "result": null
+    },
+    "set_state_input_after": {},
+    "set_state_target_after": {
+      "object": "Sample",
+      "state": {
+        "child": {
+          "value": 9
+        },
+        "children": [
+          {
+            "value": 10
+          }
+        ],
+        "choice": "second",
+        "flag": true,
+        "floating": 2.5,
+        "integer": 1,
+        "label": "short",
+        "mapping": {
+          "key": 6
+        },
+        "numbers": [
+          3,
+          4
+        ],
+        "optional": null,
+        "pair": {
+          "tuple": [
+            "pair",
+            5
+          ]
+        },
+        "payload": {
+          "bytes": "7061796c6f6164"
+        },
+        "sequence": [
+          7,
+          8
+        ],
+        "text": "text"
+      }
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

@@ -62,7 +62,9 @@ public:
                (m == "DELETE" && p == "/api/session-history") ||
                (m == "POST" && (p == "/api/config/smithproxy" || p == "/api/enrichment/replay")) ||
                (m == "POST" && (p == "/api/inspection" || p == "/api/inspection/run" || p == "/api/inspection/rules" ||
-                               p == "/api/inspection/saved-flows" || p == "/api/inspection/language" || p == "/api/inspection/heavy-traffic" || p == "/api/inspection/library")) ||
+                               p == "/api/inspection/saved-flows" || p == "/api/inspection/language" ||
+                               p == "/api/inspection/content-view" || p == "/api/inspection/heavy-traffic" ||
+                               p == "/api/inspection/library")) ||
                (m == "POST" && p == callback_path());
     }
 
@@ -77,9 +79,16 @@ public:
         auto& state = *static_cast<RequestState*>(*ptr);
 
         if (*upload_data_size > 0) {
-            const auto limit = (std::string_view(url) == "/api/enrichment/replay" ||
-                std::string_view(url) == "/api/inspection/saved-flows") &&
-                !config_.token.empty() && authenticated(connection) ? 64U * 1024U * 1024U : config_.max_body_bytes;
+            const std::string_view path(url);
+            std::size_t limit = config_.max_body_bytes;
+            if (!config_.token.empty() && authenticated(connection)) {
+                if (path == "/api/enrichment/replay" ||
+                    path == "/api/inspection/saved-flows") {
+                    limit = 64U * 1024U * 1024U;
+                } else if (path == "/api/inspection/content-view") {
+                    limit = 2U * 1024U * 1024U;
+                }
+            }
             if (state.request_data.size() + *upload_data_size > limit) {
                 state.too_large = true;
             } else if (!state.too_large) {
@@ -215,6 +224,7 @@ private:
                 if (url == "/api/inspection/saved-flows") return json_response(200, inspection_.collection.save_flow(request));
                 if (url == "/api/inspection/library") return json_response(200, inspection_.collection.edit_library(request));
                 if (url == "/api/inspection/run") return json_response(200, inspection_.run(request));
+                if (url == "/api/inspection/content-view") return json_response(200, inspection_.content_view(request));
                 if (url == "/api/inspection/language") return json_response(200, inspection_.language(request));
                 if (url == "/api/inspection/rules") return json_response(200, decisions_.set_traffic_rules(request));
                 if (url == "/api/inspection/heavy-traffic") return json_response(200, decisions_.heavy_traffic.configure(request));

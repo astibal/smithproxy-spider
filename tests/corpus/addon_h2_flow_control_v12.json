@@ -1,0 +1,37 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "responses": {
+    "/large": {
+      "body_length": 153600,
+      "body_sha256": "731e9cfb6ca9a814081690f89da44c7564ec3b111078f4f9bf241c8227aa5d2e",
+      "ended": true,
+      "headers": [
+        [
+          "x-flow-case",
+          "large"
+        ],
+        [
+          "content-length",
+          "153600"
+        ]
+      ],
+      "status": 200
+    },
+    "/small": {
+      "body_length": 13,
+      "body_sha256": "efbb441dabcc78345a18ff4af2304ddf2fb964cd316f1cbf7efcc0da0bfc5c65",
+      "ended": true,
+      "headers": [
+        [
+          "x-flow-case",
+          "small"
+        ],
+        [
+          "content-length",
+          "13"
+        ]
+      ],
+      "status": 201
+    }
+  }
+}

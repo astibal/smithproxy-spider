@@ -1,0 +1,36 @@
+{
+  "async": {
+    "error": null,
+    "events": [
+      "called",
+      "awaited"
+    ],
+    "returned_none": true
+  },
+  "async_custom": {
+    "error": null,
+    "events": [
+      "called custom",
+      "awaited custom"
+    ],
+    "returned_none": true
+  },
+  "reference": "mitmproxy 12.3.1",
+  "sync": {
+    "error": null,
+    "events": [
+      "called"
+    ],
+    "returned_none": true,
+    "warnings": [
+      "RuntimeWarning: coroutine '_late_callback' was never awaited"
+    ]
+  },
+  "sync_custom": {
+    "error": null,
+    "events": [
+      "called custom"
+    ],
+    "returned_none": true
+  }
+}

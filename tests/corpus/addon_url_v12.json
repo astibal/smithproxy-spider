@@ -1,0 +1,542 @@
+{
+  "cases": {
+    "authority:'':False": {
+      "ok": true,
+      "value": [
+        "",
+        null
+      ]
+    },
+    "authority:'':True": {
+      "message": "",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "authority:'::1':False": {
+      "ok": true,
+      "value": [
+        "::1",
+        null
+      ]
+    },
+    "authority:'::1':True": {
+      "message": "",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "authority:'[::1]':False": {
+      "ok": true,
+      "value": [
+        "::1",
+        null
+      ]
+    },
+    "authority:'[::1]':True": {
+      "ok": true,
+      "value": [
+        "::1",
+        null
+      ]
+    },
+    "authority:'[::1]:443':False": {
+      "ok": true,
+      "value": [
+        "::1",
+        443
+      ]
+    },
+    "authority:'[::1]:443':True": {
+      "ok": true,
+      "value": [
+        "::1",
+        443
+      ]
+    },
+    "authority:'bad:port':False": {
+      "ok": true,
+      "value": [
+        "bad:port",
+        null
+      ]
+    },
+    "authority:'bad:port':True": {
+      "message": "",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "authority:'example.com':False": {
+      "ok": true,
+      "value": [
+        "example.com",
+        null
+      ]
+    },
+    "authority:'example.com':True": {
+      "ok": true,
+      "value": [
+        "example.com",
+        null
+      ]
+    },
+    "authority:'example.com:443':False": {
+      "ok": true,
+      "value": [
+        "example.com",
+        443
+      ]
+    },
+    "authority:'example.com:443':True": {
+      "ok": true,
+      "value": [
+        "example.com",
+        443
+      ]
+    },
+    "authority:'example.com:65536':False": {
+      "ok": true,
+      "value": [
+        "example.com:65536",
+        null
+      ]
+    },
+    "authority:'example.com:65536':True": {
+      "message": "",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "authority:'user@example.com:80':False": {
+      "ok": true,
+      "value": [
+        "user@example.com:80",
+        null
+      ]
+    },
+    "authority:'user@example.com:80':True": {
+      "message": "",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "authority:b'example.com:443':False": {
+      "ok": true,
+      "value": [
+        "example.com",
+        443
+      ]
+    },
+    "authority:b'example.com:443':True": {
+      "ok": true,
+      "value": [
+        "example.com",
+        443
+      ]
+    },
+    "decode:''": {
+      "ok": true,
+      "value": []
+    },
+    "decode:'a+b=c%20d'": {
+      "ok": true,
+      "value": [
+        [
+          "a b",
+          "c d"
+        ]
+      ]
+    },
+    "decode:'a=&a=2'": {
+      "ok": true,
+      "value": [
+        [
+          "a",
+          ""
+        ],
+        [
+          "a",
+          "2"
+        ]
+      ]
+    },
+    "decode:'a=1&b=2'": {
+      "ok": true,
+      "value": [
+        [
+          "a",
+          "1"
+        ],
+        [
+          "b",
+          "2"
+        ]
+      ]
+    },
+    "decode:'bad=%zz'": {
+      "ok": true,
+      "value": [
+        [
+          "bad",
+          "%zz"
+        ]
+      ]
+    },
+    "decode:b'a=1'": {
+      "ok": true,
+      "value": [
+        [
+          {
+            "bytes": "61"
+          },
+          {
+            "bytes": "31"
+          }
+        ]
+      ]
+    },
+    "encode:([('a', '1'), ('b', '2')], None)": {
+      "ok": true,
+      "value": "a=1&b=2"
+    },
+    "encode:([('a', 'x y')], 'a+b=c+d')": {
+      "ok": true,
+      "value": "a=x+y"
+    },
+    "encode:([('a', 'x y')], None)": {
+      "ok": true,
+      "value": "a=x+y"
+    },
+    "encode:([('a', 'é')], None)": {
+      "ok": true,
+      "value": "a=%C3%A9"
+    },
+    "encode:([], None)": {
+      "ok": true,
+      "value": ""
+    },
+    "host:''": {
+      "ok": true,
+      "value": false
+    },
+    "host:'-'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'-bad.example'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'.'": {
+      "ok": true,
+      "value": false
+    },
+    "host:'::1'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'[::1]'": {
+      "ok": true,
+      "value": false
+    },
+    "host:'a-b.example'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'a..b'": {
+      "ok": true,
+      "value": false
+    },
+    "host:'bad host'": {
+      "ok": true,
+      "value": false
+    },
+    "host:'bad-.example'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'bücher.example'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'example.com'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'example.com.'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'example.com..'": {
+      "ok": true,
+      "value": false
+    },
+    "host:'slash/example'": {
+      "ok": true,
+      "value": false
+    },
+    "host:'under_score.example'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'xn--bcher-kva.example'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.example'": {
+      "ok": true,
+      "value": true
+    },
+    "host:'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.example'": {
+      "ok": true,
+      "value": false
+    },
+    "host:'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'": {
+      "ok": true,
+      "value": false
+    },
+    "host:1": {
+      "message": "'int' object has no attribute 'decode'",
+      "ok": false,
+      "type": "AttributeError"
+    },
+    "host:None": {
+      "message": "'NoneType' object has no attribute 'decode'",
+      "ok": false,
+      "type": "AttributeError"
+    },
+    "host:b'\\xff'": {
+      "ok": true,
+      "value": false
+    },
+    "host:b'b\\xc3\\xbccher.example'": {
+      "ok": true,
+      "value": false
+    },
+    "host:b'bad host'": {
+      "ok": true,
+      "value": false
+    },
+    "host:b'example.com'": {
+      "ok": true,
+      "value": true
+    },
+    "hostport:('http', 'example.com', 80)": {
+      "ok": true,
+      "value": "example.com"
+    },
+    "hostport:('http', 'example.com', 81)": {
+      "ok": true,
+      "value": "example.com:81"
+    },
+    "hostport:('https', '::1', 443)": {
+      "ok": true,
+      "value": "::1"
+    },
+    "hostport:('https', '::1', 444)": {
+      "ok": true,
+      "value": "::1:444"
+    },
+    "hostport:(b'http', b'example.com', 80)": {
+      "ok": true,
+      "value": {
+        "bytes": "6578616d706c652e636f6d"
+      }
+    },
+    "parse:'//example.com/path'": {
+      "ok": true,
+      "value": [
+        {
+          "bytes": ""
+        },
+        {
+          "bytes": "6578616d706c652e636f6d"
+        },
+        80,
+        {
+          "bytes": "2f70617468"
+        }
+      ]
+    },
+    "parse:'http://[::1]/'": {
+      "ok": true,
+      "value": [
+        {
+          "bytes": "68747470"
+        },
+        {
+          "bytes": "3a3a31"
+        },
+        80,
+        {
+          "bytes": "2f"
+        }
+      ]
+    },
+    "parse:'http://example.com/path'": {
+      "ok": true,
+      "value": [
+        {
+          "bytes": "68747470"
+        },
+        {
+          "bytes": "6578616d706c652e636f6d"
+        },
+        80,
+        {
+          "bytes": "2f70617468"
+        }
+      ]
+    },
+    "parse:'http://example.com:65536/'": {
+      "message": "Port out of range 0-65535",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "parse:'http://example.com:bad/'": {
+      "message": "Port could not be cast to integer value as b'bad'",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "parse:'https://example.com:8443/a?b=1'": {
+      "ok": true,
+      "value": [
+        {
+          "bytes": "6874747073"
+        },
+        {
+          "bytes": "6578616d706c652e636f6d"
+        },
+        8443,
+        {
+          "bytes": "2f613f623d31"
+        }
+      ]
+    },
+    "parse:'not a url'": {
+      "message": "No hostname given",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "parse:b'http://example.com/a'": {
+      "ok": true,
+      "value": [
+        {
+          "bytes": "68747470"
+        },
+        {
+          "bytes": "6578616d706c652e636f6d"
+        },
+        80,
+        {
+          "bytes": "2f61"
+        }
+      ]
+    },
+    "port:''": {
+      "ok": true,
+      "value": null
+    },
+    "port:'HTTP'": {
+      "ok": true,
+      "value": null
+    },
+    "port:'http'": {
+      "ok": true,
+      "value": 80
+    },
+    "port:'https'": {
+      "ok": true,
+      "value": 443
+    },
+    "port:'ws'": {
+      "ok": true,
+      "value": null
+    },
+    "port:b'http'": {
+      "ok": true,
+      "value": 80
+    },
+    "port:b'https'": {
+      "ok": true,
+      "value": 443
+    },
+    "quote:('a b/c', '/')": {
+      "ok": true,
+      "value": "a%20b/c"
+    },
+    "quote:('a/b?c', '/')": {
+      "ok": true,
+      "value": "a/b%3Fc"
+    },
+    "quote:('é', '/')": {
+      "ok": true,
+      "value": "%C3%A9"
+    },
+    "unparse:('http', 'example.com', 80, '/a')": {
+      "ok": true,
+      "value": "http://example.com/a"
+    },
+    "unparse:('http', 'example.com', 81, '/a')": {
+      "ok": true,
+      "value": "http://example.com:81/a"
+    },
+    "unparse:('https', '::1', 443, '/')": {
+      "ok": true,
+      "value": "https://::1/"
+    },
+    "unparse:(b'http', b'example.com', 80, b'/a')": {
+      "ok": true,
+      "value": {
+        "bytes": "687474703a2f2f6578616d706c652e636f6d2f61"
+      }
+    },
+    "unquote:'%C3%A9'": {
+      "ok": true,
+      "value": "é"
+    },
+    "unquote:'%zz'": {
+      "ok": true,
+      "value": "%zz"
+    },
+    "unquote:'a%20b'": {
+      "ok": true,
+      "value": "a b"
+    },
+    "unquote:'a+b'": {
+      "ok": true,
+      "value": "a+b"
+    },
+    "valid-port:'80'": {
+      "message": "'<=' not supported between instances of 'int' and 'str'",
+      "ok": false,
+      "type": "TypeError"
+    },
+    "valid-port:-1": {
+      "ok": true,
+      "value": false
+    },
+    "valid-port:0": {
+      "ok": true,
+      "value": true
+    },
+    "valid-port:1": {
+      "ok": true,
+      "value": true
+    },
+    "valid-port:65535": {
+      "ok": true,
+      "value": true
+    },
+    "valid-port:65536": {
+      "ok": true,
+      "value": false
+    },
+    "valid-port:None": {
+      "message": "'<=' not supported between instances of 'int' and 'NoneType'",
+      "ok": false,
+      "type": "TypeError"
+    },
+    "valid-port:True": {
+      "ok": true,
+      "value": true
+    }
+  },
+  "reference": "12.3.1"
+}

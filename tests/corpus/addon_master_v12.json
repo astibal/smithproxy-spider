@@ -1,0 +1,36 @@
+{
+  "observations": {
+    "ctx_log_master_is_master": true,
+    "event_loop_is_asyncio": true,
+    "event_loop_is_running": true,
+    "log_is_ctx_log": true,
+    "running_type": "method",
+    "should_exit_after_shutdown": false,
+    "should_exit_is_set": false,
+    "should_exit_type": "Event",
+    "shutdown_result": null,
+    "shutdown_result_type": "NoneType"
+  },
+  "public": [
+    "addons",
+    "commands",
+    "done",
+    "event_loop",
+    "load_flow",
+    "log",
+    "options",
+    "run",
+    "running",
+    "should_exit",
+    "shutdown"
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "signatures": {
+    "done": "() -> None",
+    "load_flow": "(f)",
+    "log": "(text, level='info')",
+    "run": "() -> None",
+    "running": "() -> None",
+    "shutdown": "()"
+  }
+}

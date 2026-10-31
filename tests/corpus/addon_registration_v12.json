@@ -1,0 +1,1287 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "plain": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "tree": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ],
+          [
+            "load",
+            "child",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ],
+          [
+            "running",
+            "child"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ],
+          [
+            "done",
+            "child",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "register_only": [
+      {
+        "operation": "register",
+        "error": null,
+        "returned_parent": true,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "duplicate_name": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "duplicate",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "remove_child": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ],
+          [
+            "load",
+            "child",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ],
+          [
+            "running",
+            "child"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove child",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "child",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running after child removal",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ],
+          [
+            "running",
+            "child"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "deferred": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": 3
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": 3
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": 3
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": 3
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": 3
+      }
+    ],
+    "late_add": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "load_adds_child": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ],
+          [
+            "load",
+            "child",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ],
+          [
+            "running",
+            "child"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ],
+          [
+            "done",
+            "child",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "add_during_event": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ],
+          [
+            "load",
+            "child",
+            false
+          ],
+          [
+            "running",
+            "child"
+          ]
+        ],
+        "chain": [
+          "parent",
+          "child"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [
+          "child"
+        ],
+        "known": {
+          "parent": false,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [
+          "child"
+        ],
+        "known": {
+          "parent": false,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "child",
+            true
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "remove_during_event": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "add child root",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "child",
+            false
+          ]
+        ],
+        "chain": [
+          "parent",
+          "child"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ],
+          [
+            "done",
+            "child",
+            false
+          ],
+          [
+            "running",
+            "child"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "child_during_event": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ],
+          [
+            "running",
+            "child"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "child_load_error": [
+      {
+        "operation": "add",
+        "error": "ValueError",
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ],
+          [
+            "load",
+            "child",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "duplicate_child": [
+      {
+        "operation": "add",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ],
+          [
+            "load",
+            "child",
+            false
+          ],
+          [
+            "load",
+            "child",
+            false
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "running",
+            "parent"
+          ],
+          [
+            "running",
+            "child"
+          ],
+          [
+            "running",
+            "child"
+          ]
+        ],
+        "chain": [
+          "parent"
+        ],
+        "known": {
+          "parent": true,
+          "child": true
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove parent",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": null
+      }
+    ],
+    "invalid_deferred": [
+      {
+        "operation": "add",
+        "error": "OptionsError",
+        "returned_parent": false,
+        "events": [
+          [
+            "load",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": 1
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": true,
+          "child": false
+        },
+        "pending_value": 1
+      },
+      {
+        "operation": "remove parent",
+        "error": null,
+        "returned_parent": false,
+        "events": [
+          [
+            "done",
+            "parent",
+            false
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": 1
+      },
+      {
+        "operation": "remove missing",
+        "error": "AddonManagerError",
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": 1
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned_parent": false,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "child": false
+        },
+        "pending_value": 1
+      }
+    ]
+  }
+}

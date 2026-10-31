@@ -1,0 +1,29 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": {
+    "get_data/http_request": {"value": [{"bytes": "7265717565737420626f6479"}, ""]},
+    "metadata/http_request": {"value": {"flow": true, "content_type": "text/x-edge", "http_message": true, "tcp_message": false, "udp_message": false, "websocket_message": false, "dns_message": false, "protobuf_definitions": null, "original_data": null}},
+    "get_data/http_response": {"value": [{"bytes": "726573706f6e736520626f6479"}, ""]},
+    "metadata/http_response": {"value": {"flow": true, "content_type": "application/x-edge-response", "http_message": true, "tcp_message": false, "udp_message": false, "websocket_message": false, "dns_message": false, "protobuf_definitions": null, "original_data": null}},
+    "get_data/tcp": {"value": [{"bytes": "746370207061796c6f6164"}, ""]},
+    "metadata/tcp": {"value": {"flow": true, "content_type": null, "http_message": false, "tcp_message": true, "udp_message": false, "websocket_message": false, "dns_message": false, "protobuf_definitions": null, "original_data": null}},
+    "get_data/udp": {"value": [{"bytes": "756470207061796c6f6164"}, ""]},
+    "metadata/udp": {"value": {"flow": true, "content_type": null, "http_message": false, "tcp_message": false, "udp_message": true, "websocket_message": false, "dns_message": false, "protobuf_definitions": null, "original_data": null}},
+    "get_data/websocket": {"value": [{"bytes": "776562736f636b6574207061796c6f6164"}, ""]},
+    "metadata/websocket": {"value": {"flow": true, "content_type": null, "http_message": false, "tcp_message": false, "udp_message": false, "websocket_message": true, "dns_message": false, "protobuf_definitions": null, "original_data": null}},
+    "get_data/dns": {"value": [{"bytes": "000701000000000000000000"}, ""]},
+    "metadata/dns": {"value": {"flow": true, "content_type": null, "http_message": false, "tcp_message": false, "udp_message": false, "websocket_message": false, "dns_message": true, "protobuf_definitions": null, "original_data": null}},
+    "get_data/invalid": {"error": "AttributeError", "message": "'object' object has no attribute 'content'"},
+    "metadata/invalid": {"error": "AssertionError", "message": "Expected code to be unreachable, but got: <object object at 0xADDRESS>"},
+    "get_data/encoded": {"value": [{"bytes": "636f6d7072657373656420626f6479"}, "[decoded gzip]"]},
+    "get_data/broken_encoding": {"value": [{"bytes": "62726f6b656e"}, "[cannot decode]"]},
+    "metadata/protobuf_definitions": {"value": "/tmp/contentview-edge.proto"},
+    "prettify/http": {"value": {"text": "text/x-edge:request body", "syntax_highlight": "yaml", "view_name": "HelperEdge", "description": ""}},
+    "prettify/missing": {"value": {"text": "text/x-edge:request body", "syntax_highlight": "yaml", "view_name": "HelperEdge", "description": ""}},
+    "reencode/http": {"value": {"bytes": "746578742f782d656467653a656469746564"}},
+    "reencode/read_only": {"error": "ValueError", "message": "Contentview ReadOnlyEdge is not interactive."},
+    "reencode/missing": {"error": "KeyError", "message": "'missing-edge-view'"},
+    "get_data/empty": {"value": [null, ""]},
+    "prettify/empty": {"value": {"text": "Content is missing.", "syntax_highlight": "error", "view_name": null, "description": ""}}
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "client": {
+    "body": "origin result",
+    "status_line": "HTTP/1.1 200 OK"
+  },
+  "hooks": [
+    {
+      "content": null,
+      "hook": "requestheaders-before",
+      "path": "/stream",
+      "stream": false
+    },
+    {
+      "content": null,
+      "hook": "requestheaders-after",
+      "path": "/stream",
+      "stream": true
+    },
+    {
+      "content": null,
+      "hook": "request",
+      "path": "/stream",
+      "stream": true
+    },
+    {
+      "content": null,
+      "hook": "responseheaders-before",
+      "path": "/stream",
+      "stream": false
+    },
+    {
+      "content": null,
+      "hook": "responseheaders-after",
+      "path": "/stream",
+      "stream": true
+    },
+    {
+      "content": null,
+      "hook": "response",
+      "path": "/stream",
+      "stream": true
+    }
+  ],
+  "origin": {
+    "request_body": "request body",
+    "request_line": "POST /stream HTTP/1.1"
+  },
+  "reference": "mitmproxy 12.3.1"
+}

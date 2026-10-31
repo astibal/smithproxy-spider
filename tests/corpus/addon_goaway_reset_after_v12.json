@@ -1,0 +1,111 @@
+{
+  "client_bodies": [
+    [
+      1,
+      "<html>\n<head>\n    <title>502 Bad Gateway</title>\n</head>\n<body>\n    <h1>502 Bad Gateway</h1>\n    <p>HTTP/2 protocol error: Invalid input ConnectionInputs.RECV_RST_STREAM in state ConnectionState.CLOSED</p>\n</body>\n</html>"
+    ],
+    [
+      3,
+      "<html>\n<head>\n    <title>502 Bad Gateway</title>\n</head>\n<body>\n    <h1>502 Bad Gateway</h1>\n    <p>HTTP/2 protocol error: Invalid input ConnectionInputs.RECV_RST_STREAM in state ConnectionState.CLOSED</p>\n</body>\n</html>"
+    ]
+  ],
+  "client_ended": [
+    1,
+    3
+  ],
+  "client_headers": [
+    [
+      1,
+      [
+        [
+          ":status",
+          "502"
+        ],
+        [
+          "server",
+          "mitmproxy 12.3.1"
+        ],
+        [
+          "content-type",
+          "text/html"
+        ]
+      ]
+    ],
+    [
+      3,
+      [
+        [
+          ":status",
+          "502"
+        ],
+        [
+          "server",
+          "mitmproxy 12.3.1"
+        ],
+        [
+          "content-type",
+          "text/html"
+        ]
+      ]
+    ]
+  ],
+  "client_resets": [],
+  "client_statuses": [
+    [
+      1,
+      "502"
+    ],
+    [
+      3,
+      "502"
+    ]
+  ],
+  "client_terminations": [],
+  "error_code": 0,
+  "hooks": [
+    [
+      "requestheaders",
+      "/1"
+    ],
+    [
+      "requestheaders",
+      "/3"
+    ],
+    [
+      "request",
+      "/1"
+    ],
+    [
+      "request",
+      "/3"
+    ],
+    [
+      "error",
+      "/1",
+      "HTTP/2 protocol error: Invalid input ConnectionInputs.RECV_RST_STREAM in state ConnectionState.CLOSED"
+    ],
+    [
+      "error",
+      "/3",
+      "HTTP/2 protocol error: Invalid input ConnectionInputs.RECV_RST_STREAM in state ConnectionState.CLOSED"
+    ]
+  ],
+  "method": "GET",
+  "origin_errors": [],
+  "origin_requests": [
+    [
+      1,
+      "/1"
+    ],
+    [
+      3,
+      "/3"
+    ]
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "reset_goaway_order": "after",
+  "reset_stream": false,
+  "response_timing": "reset-after-goaway",
+  "retry_connections": []
+}
+

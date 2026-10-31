@@ -10,7 +10,10 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
-from inspection_api import Message, PartType, Safety, CommitException
+from inspection_api import (
+    Message, PartType, Safety, CommitException, Header,
+    _prepare_h1_responses,
+)
 from inspection_hold_test import checkpoint, resume
 
 HEAD = b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
@@ -31,6 +34,146 @@ def peer_body(wire):
     response = http.client.HTTPResponse(Socket())
     response.begin()
     return response.read()
+
+
+def h1_messages(*items):
+    wire = b''.join(items)
+    annotations = []
+    offset = 0
+    for item in items:
+        line_end = item.index(b'\r\n') + 2
+        head_end = item.index(b'\r\n\r\n') + 4
+        annotations.extend((
+            [offset, offset + line_end, 'http1.start_line'],
+            [offset + line_end, offset + head_end, 'http1.headers'],
+        ))
+        offset += len(item)
+    return Message(wire, len(wire), {'content_annotations': annotations})
+
+
+def h1_flow(side, *items, state=None, reverse=True):
+    result = h1_messages(*items)
+    _prepare_h1_responses(result, {
+        'instance': {'mode': 'flow'},
+        'h1_response_state': state,
+        'event': {'details': {'info': {
+            'side': side,
+            'webhook_control': {'content-reverse': reverse},
+        }}},
+    })
+    return result
+
+
+class H1LocalResponseTests(unittest.TestCase):
+    first = b'GET /first HTTP/1.1\r\nHost: example.test\r\n\r\n'
+    second = b'GET /second HTTP/1.1\r\nHost: example.test\r\n\r\n'
+    third = b'GET /third HTTP/1.1\r\nHost: example.test\r\n\r\n'
+
+    def test_immediate_and_queued_responses_keep_pipeline_order(self):
+        requests = h1_flow('L', self.first, self.second, self.third)
+        requests.respond(210, body=b'first-local', request=requests.parts[0])
+        requests.respond(211, body=b'third-local', request=requests.parts[4])
+        self.assertEqual(requests.commit(), self.second)
+        self.assertIn(b'210 ', requests._h1_response.reverse_output)
+        self.assertNotIn(b'211 ', requests._h1_response.reverse_output)
+
+        state = requests._h1_response.checkpoint
+        self.assertEqual(state['slots'][0], 'origin')
+        self.assertIn('response', state['slots'][1])
+        origin = b'HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\norigin'
+        response = h1_flow('R', origin, state=state)
+        wire = response.commit()
+        self.assertTrue(wire.startswith(origin))
+        self.assertIn(b'HTTP/1.1 211 ', wire[len(origin):])
+        self.assertEqual(response._h1_response.checkpoint['slots'], [])
+
+    def test_multiple_origin_responses_interleave_queued_local_response(self):
+        requests = h1_flow('L', self.first, self.second, self.third)
+        requests.respond(299, body=b'local', request=requests.parts[2])
+        self.assertEqual(requests.commit(), self.first + self.third)
+        state = requests._h1_response.checkpoint
+
+        one = b'HTTP/1.1 201 One\r\nContent-Length: 1\r\n\r\n1'
+        two = b'HTTP/1.1 202 Two\r\nContent-Length: 1\r\n\r\n2'
+        responses = h1_flow('R', one, two, state=state)
+        wire = responses.commit()
+        first_end = len(one)
+        local_end = wire.index(two)
+        self.assertEqual(wire[:first_end], one)
+        self.assertIn(b'HTTP/1.1 299 ', wire[first_end:local_end])
+        self.assertEqual(wire[local_end:], two)
+
+    def test_informational_response_does_not_consume_request_slot(self):
+        request = h1_flow('L', self.first)
+        self.assertEqual(request.commit(), self.first)
+        interim = b'HTTP/1.1 103 Early Hints\r\n\r\n'
+        message = h1_flow('R', interim, state=request._h1_response.checkpoint)
+        self.assertEqual(message.commit(), interim)
+        self.assertEqual(message._h1_response.checkpoint['slots'], ['origin'])
+
+    def test_chunked_local_response_has_complete_valid_trailers(self):
+        request = h1_flow('L', self.first)
+        request.respond(
+            204,
+            headers=[(b'X-A', b'one'), (b'X-A', b'two')],
+            body=b'body',
+            trailers=[(b'X-Finished', b'yes')],
+            reason='No Content',
+        )
+        self.assertEqual(request.commit(), b'')
+        wire = request._h1_response.reverse_output
+        self.assertEqual(wire.count(b'X-A:'), 2)
+        self.assertIn(b'Transfer-Encoding: chunked\r\n', wire)
+        self.assertTrue(wire.endswith(
+            b'4\r\nbody\r\n0\r\nX-Finished: yes\r\n\r\n'))
+
+    def test_http10_fixed_and_empty_responses_use_request_version(self):
+        for body in (b'', b'fixed body'):
+            with self.subTest(body=body):
+                request = h1_flow('L', b'GET / HTTP/1.0\r\n\r\n')
+                request.respond(200, body=body)
+                self.assertEqual(request.commit(), b'')
+                wire = request._h1_response.reverse_output
+                self.assertTrue(wire.startswith(b'HTTP/1.0 200 OK\r\n'))
+                self.assertIn(
+                    b'Content-Length: ' + str(len(body)).encode() + b'\r\n',
+                    wire,
+                )
+                self.assertTrue(wire.endswith(b'\r\n\r\n' + body))
+
+    def test_validation_is_atomic_and_bounded(self):
+        invalid = (
+            {'status': 199},
+            {'headers': [(b'Connection', b'close')]},
+            {'headers': [(b'X-Test', b'bad\x01value')]},
+            {'reason': 'bad\rreason'},
+        )
+        for options in invalid:
+            with self.subTest(options=options):
+                request = h1_flow('L', self.first)
+                with self.assertRaises(CommitException):
+                    request.respond(**options)
+                self.assertIsNone(request._h1_response.result)
+                self.assertEqual(request._h1_response.slots, [])
+
+        requests = h1_flow('L', self.first, self.second)
+        requests.respond(200, body=b'x' * (512 * 1024 + 1), request=requests.parts[2])
+        with self.assertRaisesRegex(CommitException, '512 KiB'):
+            requests.commit()
+        self.assertIsNone(requests._h1_response.result)
+
+    def test_capability_version_and_checkpoint_guards(self):
+        request = h1_flow('L', self.first, reverse=False)
+        with self.assertRaisesRegex(CommitException, 'content-reverse'):
+            request.respond(200)
+
+        h10 = b'GET / HTTP/1.0\r\n\r\n'
+        request = h1_flow('L', h10)
+        with self.assertRaisesRegex(CommitException, 'HTTP/1.1'):
+            request.respond(200, trailers=[(b'X-End', b'yes')])
+
+        with self.assertRaisesRegex(CommitException, 'checkpoint'):
+            h1_flow('L', self.first, state={'version': 2, 'slots': []})
 
 
 class ChunkedTests(unittest.TestCase):
@@ -89,6 +232,43 @@ class ChunkedTests(unittest.TestCase):
         result = msg.commit()
         self.assertIn(b'Trailer: X-Test\r\n', result)
         self.assertTrue(result.endswith(wire))
+
+    def test_trailer_helper_replaces_duplicates_and_repairs_declaration(self):
+        head = HEAD[:-2] + b'Trailer: X-Old\r\n\r\n'
+        wire = WIRE[:-2] + b'X-Old: original\r\n\r\n'
+        msg = message(wire, head)
+        body = msg.parts[1]
+        self.assertEqual(body.trailers, (Header('X-Old', 'original'),))
+        body.replace_trailers([
+            ('X-New', 'one'),
+            ('X-New', 'two'),
+            ('X-End', 'done'),
+        ])
+        result = msg.commit()
+        self.assertIn(b'Trailer: X-New, X-End\r\n', result)
+        self.assertTrue(result.endswith(
+            b'0\r\nX-New: one\r\nX-New: two\r\nX-End: done\r\n\r\n'))
+
+        body.replace_trailers([])
+        body.set_bytes(b'changed after trailer removal')
+        result = msg.commit()
+        self.assertNotIn(b'Trailer:', result)
+        self.assertTrue(result.endswith(b'0\r\n\r\n'))
+        self.assertEqual(peer_body(result), b'changed after trailer removal')
+
+    def test_trailer_helper_rejects_incomplete_invalid_and_unsafe_fields(self):
+        incomplete = message(b'1\r\nx\r\n0\r\nX-Later:')
+        with self.assertRaisesRegex(CommitException, 'until the message is complete'):
+            incomplete.parts[1].replace_trailers([])
+
+        msg = message()
+        for fields, reason in (
+                ([('bad name', 'value')], 'Invalid'),
+                ([('X-Test', 'bad\rvalue')], 'Invalid'),
+                ([('Content-Length', '3')], 'required before message completion')):
+            with self.subTest(fields=fields):
+                with self.assertRaisesRegex(CommitException, reason):
+                    msg.parts[1].replace_trailers(fields)
 
     def test_ambiguous_or_unsupported_heads_are_opaque(self):
         for extra in (b'Content-Length: 5\r\n', b'Transfer-Encoding: chunked\r\n',

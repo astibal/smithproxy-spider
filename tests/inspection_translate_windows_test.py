@@ -11,6 +11,7 @@ from pathlib import Path
 import h2.config
 import h2.connection
 import h2.events
+import h2.settings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from inspection_api import Message, HeldCommit, CommitException, Connection, _prepare_translation
@@ -31,7 +32,9 @@ class Bridge:
             'event': {'details': {'info': {'side': side, 'webhook_control': {'content-reverse': True}}}},
             'translate_allowed': self.control is None,
             'translate_active': self.control is not None,
-            'translate_state': self.tables.get(side), 'translate_control': self.control,
+            'translate_state': self.tables.get(side),
+            'peer_translate_state': self.tables.get('R' if side == 'L' else 'L'),
+            'translate_control': self.control,
             'held_parts': self.held.get(side),
             'peer_held_parts': self.held.get('R' if side == 'L' else 'L'),
             'hold_credit_available': True, 'hold_credit_reserved': self.reserved,
@@ -40,8 +43,15 @@ class Bridge:
 
     def publish(self, side, message):
         result = message.translate(safety=self.safety)
+        return self.accept(side, message, result)
+
+    def accept(self, side, message, result):
+        """Apply checkpoints from a result already produced by the real translator."""
         transaction = message._translation
         self.tables[side] = json.loads(json.dumps(transaction.checkpoint))
+        if transaction.peer_checkpoint_changed:
+            peer = 'R' if side == 'L' else 'L'
+            self.tables[peer] = json.loads(json.dumps(transaction.peer_checkpoint))
         self.control = json.loads(json.dumps(transaction.control_checkpoint))
         self.reserved = bool(self.control.get('flow', {}).get('hold_reserved'))
         self.held[side] = result.checkpoint if isinstance(result, HeldCommit) else None
@@ -68,6 +78,7 @@ class Peers:
                       for side in ('L', 'R')}
         self.received = {'L': [], 'R': []}
         self.ended = {'L': [], 'R': []}
+        self.events = {'L': [], 'R': []}
         for peer in self.peers.values():
             peer.initiate_connection()
         self.pump('L', self.peers['L'].data_to_send())
@@ -77,7 +88,9 @@ class Peers:
         if not wire:
             return
         peer = self.peers[side]
-        for event in peer.receive_data(wire):
+        events = peer.receive_data(wire)
+        self.events[side].extend(events)
+        for event in events:
             if isinstance(event, h2.events.DataReceived):
                 self.received[side].append(event.data)
                 peer.acknowledge_received_data(event.flow_controlled_length, event.stream_id)
@@ -129,6 +142,1283 @@ class WindowsTests(unittest.TestCase):
         bridge = self.make_bridge()
         bridge.feed('L', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n')
         return bridge
+
+    def test_informational_response_can_precede_a_held_request_body(self):
+        peers = self.make_peers()
+        client = peers.peers['L']
+        client.send_headers(1, [
+            (b':method', b'POST'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/upload'),
+            (b'expect', b'100-continue'),
+            (b'content-length', b'4'),
+        ])
+
+        def continue_request(message):
+            request = message.parts[0]
+            message.parts.hold_from(request)
+            policy = Connection(message).http2
+            policy.reserve_body(request, 4)
+            selected = policy.emit_informational_response(
+                request,
+                status=100,
+                headers=[(b'x-policy', b'native')],
+            )
+            self.assertEqual(selected, 1)
+
+        peers.pump('L', client.data_to_send(), continue_request)
+        informational = [
+            event for event in peers.events['L']
+            if isinstance(event, h2.events.InformationalResponseReceived)
+        ]
+        self.assertEqual(len(informational), 1)
+        self.assertEqual(dict(informational[0].headers), {
+            b':status': b'100',
+            b'x-policy': b'native',
+        })
+        self.assertFalse(any(
+            isinstance(event, h2.events.RequestReceived)
+            for event in peers.events['R']
+        ))
+
+        client.send_data(1, b'body', end_stream=True)
+        peers.pump('L', client.data_to_send())
+        requests = [
+            event for event in peers.events['R']
+            if isinstance(event, h2.events.RequestReceived)
+        ]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(dict(requests[0].headers)[b'expect'], b'100-continue')
+        self.assertEqual(b''.join(peers.received['R']), b'body')
+
+    def test_suppressed_informational_response_preserves_both_hpack_histories(self):
+        peers = self.make_peers()
+        client = peers.peers['L']
+        client.send_headers(1, [
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/'),
+        ], end_stream=True)
+        peers.pump('L', client.data_to_send())
+
+        server = peers.peers['R']
+        repeated = (b'x-source-table', b'used-by-final-response')
+        server.send_headers(1, [(b':status', b'103'), repeated])
+
+        def suppress(message):
+            selected = Connection(message).http2.suppress_informational_response(
+                message.parts[0]
+            )
+            self.assertEqual(selected, 1)
+
+        peers.pump('R', server.data_to_send(), suppress)
+        self.assertFalse(any(
+            isinstance(event, h2.events.InformationalResponseReceived)
+            for event in peers.events['L']
+        ))
+
+        server.send_headers(1, [(b':status', b'200'), repeated], end_stream=True)
+        peers.pump('R', server.data_to_send())
+        responses = [
+            event for event in peers.events['L']
+            if isinstance(event, h2.events.ResponseReceived)
+        ]
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(dict(responses[0].headers)[b'x-source-table'],
+                         b'used-by-final-response')
+
+    def test_informational_operations_validate_direction_anchor_and_status(self):
+        peers = self.make_peers()
+        client = peers.peers['L']
+        client.send_headers(1, [
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/'),
+        ], end_stream=True)
+        request = peers.bridge.message('L', client.data_to_send())
+        policy = Connection(request).http2
+        before = json.dumps(peers.bridge.control, sort_keys=True)
+
+        for status in (99, 101, 200, True):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(CommitException, 'status'):
+                    policy.emit_informational_response(
+                        request.parts[0],
+                        status=status,
+                    )
+        with self.assertRaisesRegex(CommitException, 'upstream'):
+            policy.suppress_informational_response(request.parts[0])
+        self.assertEqual(json.dumps(peers.bridge.control, sort_keys=True), before)
+        self.assertIsNone(request._translation.result)
+
+    def test_informational_responses_preserve_multiplexed_stream_identity(self):
+        peers = self.make_peers()
+        client = peers.peers['L']
+        for stream in (1, 3):
+            client.send_headers(stream, [
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', f'/{stream}'.encode('ascii')),
+            ], end_stream=True)
+
+        def continue_both(message):
+            policy = Connection(message).http2
+            for part in message.parts:
+                if part.frame_type == 1:
+                    self.assertEqual(
+                        policy.emit_informational_response(part),
+                        part.stream_id,
+                    )
+
+        peers.pump('L', client.data_to_send(), continue_both)
+        informational = [
+            event for event in peers.events['L']
+            if isinstance(event, h2.events.InformationalResponseReceived)
+        ]
+        requests = [
+            event for event in peers.events['R']
+            if isinstance(event, h2.events.RequestReceived)
+        ]
+        self.assertEqual([event.stream_id for event in informational], [1, 3])
+        self.assertEqual([event.stream_id for event in requests], [1, 3])
+        self.assertFalse(peers.bridge.control['flow']['R']['queue'])
+
+    def test_informational_suppression_uses_original_status_classification(self):
+        peers = self.make_peers()
+        client = peers.peers['L']
+        client.send_headers(1, [
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/'),
+        ], end_stream=True)
+        peers.pump('L', client.data_to_send())
+
+        server = peers.peers['R']
+        server.send_headers(1, [(b':status', b'103')])
+
+        def suppress_edited_source(message):
+            response = message.parts[0]
+            response.headers.set_header(b':status', b'200')
+            policy = Connection(message).http2
+            self.assertEqual(
+                policy.suppress_informational_response(response),
+                1,
+            )
+            with self.assertRaisesRegex(CommitException, 'only once'):
+                policy.suppress_informational_response(response)
+
+        peers.pump('R', server.data_to_send(), suppress_edited_source)
+        self.assertFalse(any(
+            isinstance(event, (h2.events.InformationalResponseReceived,
+                               h2.events.ResponseReceived))
+            for event in peers.events['L']
+        ))
+
+        server.send_headers(1, [(b':status', b'200')], end_stream=True)
+        final_message = peers.bridge.message('R', server.data_to_send())
+        final_message.parts[0].headers.set_header(b':status', b'103')
+        before = json.dumps(peers.bridge.control, sort_keys=True)
+        with self.assertRaisesRegex(CommitException, 'original complete informational'):
+            Connection(final_message).http2.suppress_informational_response(
+                final_message.parts[0]
+            )
+        self.assertEqual(json.dumps(peers.bridge.control, sort_keys=True), before)
+        self.assertIsNone(final_message._translation.result)
+
+    def test_informational_response_control_conflicts_are_explicit(self):
+        request = frame(hpack.Encoder().encode([
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/'),
+        ]), 1, 5, 1)
+
+        def fresh():
+            bridge = self.input_bridge()
+            message = bridge.message('L', request)
+            return bridge, message, message.parts[0]
+
+        bridge, message, header = fresh()
+        before = json.dumps(bridge.control, sort_keys=True)
+        Connection(message).http2.emit_informational_response(header)
+        with self.assertRaisesRegex(CommitException, 'informational response'):
+            message.respond(status=204, body=b'')
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+        self.assertIsNone(message._translation.result)
+
+        bridge, message, header = fresh()
+        before = json.dumps(bridge.control, sort_keys=True)
+        message.respond(status=204, body=b'')
+        with self.assertRaisesRegex(CommitException, 'local final response'):
+            Connection(message).http2.emit_informational_response(header)
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+        self.assertIsNone(message._translation.result)
+
+        bridge, message, header = fresh()
+        before = json.dumps(bridge.control, sort_keys=True)
+        Connection(message).http2.emit_informational_response(header)
+        with self.assertRaisesRegex(CommitException, 'informational response'):
+            message.terminate(header)
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+        self.assertIsNone(message._translation.result)
+
+        bridge, message, header = fresh()
+        before = json.dumps(bridge.control, sort_keys=True)
+        message.terminate(header)
+        with self.assertRaisesRegex(CommitException, 'terminated request'):
+            Connection(message).http2.emit_informational_response(header)
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+        self.assertIsNone(message._translation.result)
+
+    def test_informational_response_quota_failure_rolls_back_atomically(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        requests = []
+        for stream in range(1, 41, 2):
+            requests.append(frame(encoder.encode([
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', f'/{stream}'.encode('ascii')),
+            ]), 1, 5, stream))
+
+        message = bridge.message('L', b''.join(requests))
+        policy = Connection(message).http2
+        for part in message.parts:
+            if part.frame_type == 1:
+                policy.emit_informational_response(
+                    part,
+                    headers=[(b'x-large', b'!' * 60000)],
+                )
+
+        before_control = json.dumps(bridge.control, sort_keys=True)
+        before_tables = json.dumps(bridge.tables, sort_keys=True)
+        with self.assertRaisesRegex(CommitException, 'output exceeds 1 MiB'):
+            bridge.publish('L', message)
+
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before_control)
+        self.assertEqual(json.dumps(bridge.tables, sort_keys=True), before_tables)
+        self.assertIsNone(message._translation.result)
+
+    def test_informational_response_precedes_reset_and_goaway_failures(self):
+        for terminal in ('reset', 'goaway'):
+            with self.subTest(terminal=terminal):
+                peers = self.make_peers()
+                peers.events = {'L': [], 'R': []}
+                client = peers.peers['L']
+                client.send_headers(1, [
+                    (b':method', b'GET'),
+                    (b':scheme', b'https'),
+                    (b':authority', b'example.test'),
+                    (b':path', b'/pending'),
+                ], end_stream=True)
+
+                def emit_continue(message):
+                    Connection(message).http2.emit_informational_response(
+                        message.parts[0]
+                    )
+
+                peers.pump('L', client.data_to_send(), emit_continue)
+
+                server = peers.peers['R']
+                if terminal == 'reset':
+                    server.reset_stream(1, error_code=7)
+
+                    def fail(message):
+                        reset = next(part for part in message.parts
+                                     if part.frame_type == 3)
+                        Connection(message).http2.fail_reset_stream(
+                            reset,
+                            status=502,
+                            body=b'upstream reset',
+                        )
+                else:
+                    server.close_connection(error_code=0, last_stream_id=0)
+
+                    def fail(message):
+                        goaway = next(part for part in message.parts
+                                      if part.frame_type == 7)
+                        self.assertEqual(
+                            Connection(message).http2.fail_pending_requests(
+                                goaway,
+                                status=502,
+                                body=b'upstream closed',
+                            ),
+                            (1,),
+                        )
+
+                peers.pump('R', server.data_to_send(), fail)
+                observed = [
+                    (type(event), dict(event.headers)[b':status'])
+                    for event in peers.events['L']
+                    if isinstance(event, (
+                        h2.events.InformationalResponseReceived,
+                        h2.events.ResponseReceived,
+                    ))
+                ]
+                self.assertEqual(observed, [
+                    (h2.events.InformationalResponseReceived, b'100'),
+                    (h2.events.ResponseReceived, b'502'),
+                ])
+
+    def test_local_response_uses_reverse_transport_and_preserves_peer_hpack(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+
+        request_headers = [
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/local'),
+        ]
+        peers.peers['L'].send_headers(1, request_headers, end_stream=True)
+
+        def respond(message):
+            message.respond(
+                status=204,
+                headers=[(b'x-shared', b'compression state')],
+                body=b'local body',
+                trailers=[(b'x-finished', b'yes')],
+            )
+
+        peers.pump('L', peers.peers['L'].data_to_send(), respond)
+        self.assertFalse(any(isinstance(event, h2.events.RequestReceived)
+                             for event in peers.events['R']))
+        responses = [event for event in peers.events['L']
+                     if isinstance(event, h2.events.ResponseReceived)]
+        trailers = [event for event in peers.events['L']
+                    if isinstance(event, h2.events.TrailersReceived)]
+        self.assertEqual(dict(responses[-1].headers)[b':status'], b'204')
+        self.assertEqual(dict(responses[-1].headers)[b'x-shared'], b'compression state')
+        self.assertEqual(dict(responses[-1].headers)[b'content-length'], b'10')
+        self.assertEqual(dict(trailers[-1].headers)[b'x-finished'], b'yes')
+        self.assertEqual(peers.received['L'][-1], b'local body')
+
+        # A real response in the same direction follows the synthetic block.
+        # Its re-encoding must continue from the peer HPACK checkpoint rather
+        # than resetting a table that the client has already observed.
+        peers.peers['L'].send_headers(3, request_headers, end_stream=True)
+        peers.pump('L', peers.peers['L'].data_to_send())
+        peers.peers['R'].send_headers(
+            3,
+            [(b':status', b'200'), (b'x-shared', b'compression state')],
+            end_stream=True,
+        )
+        peers.pump('R', peers.peers['R'].data_to_send())
+        responses = [event for event in peers.events['L']
+                     if isinstance(event, h2.events.ResponseReceived)]
+        self.assertEqual(dict(responses[-1].headers)[b'x-shared'], b'compression state')
+        self.assertIn(3, peers.ended['L'])
+
+    def test_request_termination_resets_client_and_preserves_sibling(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+
+        for stream, path in ((1, b'/blocked'), (3, b'/sibling')):
+            peers.peers['L'].send_headers(stream, [
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', path),
+                (b'x-shared', b'compression state'),
+            ], end_stream=True)
+
+        def terminate_first(message):
+            header = next(part for part in message.parts
+                          if part.frame_type == 1 and part.stream_id == 1)
+            message.terminate(header)
+
+        peers.pump('L', peers.peers['L'].data_to_send(), terminate_first)
+
+        resets = [event for event in peers.events['L']
+                  if isinstance(event, h2.events.StreamReset)]
+        requests = [event for event in peers.events['R']
+                    if isinstance(event, h2.events.RequestReceived)]
+        self.assertEqual([(event.stream_id, event.error_code) for event in resets], [(1, 2)])
+        self.assertEqual([event.stream_id for event in requests], [3])
+        self.assertEqual(dict(requests[0].headers)[b'x-shared'], b'compression state')
+
+    def test_response_termination_resets_client_and_preserves_sibling(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+
+        for stream in (1, 3):
+            peers.peers['L'].send_headers(stream, [
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', b'/'),
+            ], end_stream=True)
+        peers.pump('L', peers.peers['L'].data_to_send())
+
+        for stream in (1, 3):
+            peers.peers['R'].send_headers(stream, [
+                (b':status', b'200'),
+                (b'x-stream', str(stream).encode('ascii')),
+            ], end_stream=True)
+
+        def terminate_first(message):
+            header = next(part for part in message.parts
+                          if part.frame_type == 1 and part.stream_id == 1)
+            message.terminate(header, reason='blocked by test', http2_error=2)
+
+        peers.pump('R', peers.peers['R'].data_to_send(), terminate_first)
+
+        resets = [event for event in peers.events['L']
+                  if isinstance(event, h2.events.StreamReset)]
+        responses = [event for event in peers.events['L']
+                     if isinstance(event, h2.events.ResponseReceived)]
+        self.assertEqual([(event.stream_id, event.error_code) for event in resets], [(1, 2)])
+        self.assertEqual([event.stream_id for event in responses], [3])
+        self.assertEqual(dict(responses[0].headers)[b'x-stream'], b'3')
+
+    def test_termination_discards_late_data_without_a_second_reset(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        request = frame(encoder.encode([
+            (b':method', b'POST'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/late'),
+        ]), 1, 4, 1)
+
+        def terminate(message):
+            message.terminate(message.parts[0])
+
+        forward, reverse = bridge.feed('L', request, terminate)
+        self.assertEqual(forward, b'')
+        self.assertEqual(unpack(reverse), [(3, 0, 1, b'\x00\x00\x00\x02')])
+
+        forward, reverse = bridge.feed('L', frame(b'late body', 0, 1, 1))
+        self.assertEqual(forward, b'')
+        self.assertFalse(any(kind == 3 for kind, _, _, _ in unpack(reverse)))
+
+    def test_termination_validation_and_commit_guard_are_atomic(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        request = frame(encoder.encode([
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/'),
+        ]), 1, 5, 1)
+        before = json.dumps(bridge.control, sort_keys=True)
+
+        message = bridge.message('L', request)
+        header = message.parts[0]
+        for arguments, pattern in (
+                ({'reason': ''}, 'reason'),
+                ({'reason': 'bad\nreason'}, 'control'),
+                ({'http2_error': True}, 'integer'),
+                ({'http2_error': 0x100000000}, 'integer')):
+            with self.assertRaisesRegex(CommitException, pattern):
+                message.terminate(header, **arguments)
+
+        message.terminate(header)
+        with self.assertRaisesRegex(CommitException, 'translate'):
+            message.commit()
+        with self.assertRaisesRegex(CommitException, 'only once'):
+            message.terminate(header)
+
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+
+    def test_local_response_validation_is_atomic(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        request = frame(encoder.encode([
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/'),
+        ]), 1, 5, 1)
+        before = json.dumps(bridge.control)
+
+        with self.assertRaisesRegex(CommitException, 'lowercase|field name'):
+            bridge.feed('L', request, lambda message: message.respond(
+                headers=[(b'X-Invalid', b'value')]))
+
+        self.assertEqual(json.dumps(bridge.control), before)
+        self.assertNotIn('R', bridge.tables)
+
+    def test_local_response_repairs_length_without_reordering_fields(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+        peers.peers['L'].send_headers(1, [
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/local'),
+        ], end_stream=True)
+
+        def respond(message):
+            message.respond(
+                status=204,
+                headers=[
+                    (b'x-before', b'one'),
+                    (b'content-length', b'999'),
+                    (b'x-after', b'two'),
+                    (b'content-length', b'1'),
+                ],
+                body=b'local body',
+            )
+
+        peers.pump('L', peers.peers['L'].data_to_send(), respond)
+        response = next(event for event in peers.events['L']
+                        if isinstance(event, h2.events.ResponseReceived))
+        self.assertEqual(response.headers, [
+            (b':status', b'204'),
+            (b'x-before', b'one'),
+            (b'content-length', b'10'),
+            (b'x-after', b'two'),
+        ])
+        self.assertEqual(peers.received['L'], [b'local body'])
+
+    def test_pending_requests_receive_atomic_responses_instead_of_goaway(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+        client = peers.peers['L']
+        for stream in (1, 3):
+            client.send_headers(stream, [
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', f'/{stream}'.encode('ascii')),
+            ], end_stream=True)
+        peers.pump('L', client.data_to_send())
+
+        selected = []
+
+        def fail_pending(message):
+            goaway = next(part for part in message.parts
+                          if part.frame_type == 7)
+            selected.extend(Connection(message).http2.fail_pending_requests(
+                goaway,
+                status=502,
+                headers=[
+                    (b'server', b'compatibility-adapter'),
+                    (b'content-type', b'text/plain'),
+                ],
+                body=b'upstream closed',
+                include_content_length=False,
+            ))
+            with self.assertRaisesRegex(
+                    CommitException,
+                    'pending request failures require message.translate',
+            ):
+                message.commit()
+
+        goaway = frame((1).to_bytes(4, 'big') + bytes(4), 7, 0, 0)
+        forward, reverse = peers.bridge.feed('R', goaway, fail_pending)
+        self.assertEqual(selected, [1, 3])
+        self.assertEqual(reverse, b'')
+
+        events = client.receive_data(forward)
+        responses = [event for event in events
+                     if isinstance(event, h2.events.ResponseReceived)]
+        bodies = [event for event in events
+                  if isinstance(event, h2.events.DataReceived)]
+        ended = [event.stream_id for event in events
+                 if isinstance(event, h2.events.StreamEnded)]
+        self.assertEqual([event.stream_id for event in responses], [1, 3])
+        self.assertEqual([dict(event.headers)[b':status'] for event in responses],
+                         [b'502', b'502'])
+        self.assertTrue(all(b'content-length' not in dict(event.headers)
+                            for event in responses))
+        self.assertEqual([event.data for event in bodies],
+                         [b'upstream closed', b'upstream closed'])
+        self.assertEqual(ended, [1, 3])
+        self.assertFalse(any(isinstance(event, h2.events.ConnectionTerminated)
+                             for event in events))
+
+    def test_final_response_before_goaway_is_not_replaced(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+        client = peers.peers['L']
+        for stream in (1, 3):
+            client.send_headers(stream, [
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', f'/{stream}'.encode('ascii')),
+            ], end_stream=True)
+        peers.pump('L', client.data_to_send())
+
+        server = peers.peers['R']
+        server.send_headers(1, [(b':status', b'200')], end_stream=True)
+        wire = server.data_to_send()
+        wire += frame((1).to_bytes(4, 'big') + bytes(4), 7, 0, 0)
+        selected = []
+
+        def fail_pending(message):
+            goaway = next(part for part in message.parts
+                          if part.frame_type == 7)
+            selected.extend(Connection(message).http2.fail_pending_requests(
+                goaway,
+                status=502,
+                body=b'failed',
+            ))
+
+        forward, reverse = peers.bridge.feed('R', wire, fail_pending)
+        self.assertEqual(selected, [3])
+        self.assertEqual(reverse, b'')
+        events = client.receive_data(forward)
+        responses = [event for event in events
+                     if isinstance(event, h2.events.ResponseReceived)]
+        self.assertEqual(
+            [(event.stream_id, dict(event.headers)[b':status'])
+             for event in responses],
+            [(3, b'502'), (1, b'200')],
+        )
+        self.assertFalse(any(isinstance(event, h2.events.ConnectionTerminated)
+                             for event in events))
+
+    def test_pending_failure_discards_late_request_data_without_reset(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        request = frame(encoder.encode([
+            (b':method', b'POST'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/upload'),
+        ]), 1, 4, 1)
+        forward, reverse = bridge.feed('L', request)
+        self.assertEqual(forward, request)
+        self.assertEqual(reverse, b'')
+
+        def fail_pending(message):
+            selected = Connection(message).http2.fail_pending_requests(
+                message.parts[0],
+                status=502,
+                body=b'failed',
+                include_content_length=False,
+            )
+            self.assertEqual(selected, (1,))
+
+        goaway = frame(bytes(8), 7, 0, 0)
+        forward, reverse = bridge.feed('R', goaway, fail_pending)
+        self.assertFalse(any(kind == 7 for kind, _, _, _ in unpack(forward)))
+        self.assertEqual(reverse, b'')
+
+        forward, reverse = bridge.feed(
+            'L',
+            frame(b'late request bytes', 0, 1, 1),
+        )
+        self.assertEqual(forward, b'')
+        controls = unpack(reverse)
+        self.assertFalse(any(kind in (3, 7) for kind, _, _, _ in controls))
+        self.assertTrue(all(kind == 8 for kind, _, _, _ in controls))
+
+    def test_reset_stream_failure_emits_response_and_preserves_sibling(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+        client = peers.peers['L']
+        for stream in (1, 3):
+            client.send_headers(stream, [
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', f'/{stream}'.encode('ascii')),
+            ], end_stream=True)
+        peers.pump('L', client.data_to_send())
+
+        server = peers.peers['R']
+        server.reset_stream(3, error_code=7)
+
+        def fail_reset(message):
+            reset = next(part for part in message.parts
+                         if part.frame_type == 3)
+            stream = Connection(message).http2.fail_reset_stream(
+                reset,
+                status=502,
+                headers=[(b'content-type', b'text/plain')],
+                body=b'upstream reset',
+            )
+            self.assertEqual(stream, 3)
+
+        peers.pump('R', server.data_to_send(), fail_reset)
+        events = peers.events['L']
+        responses = [event for event in events
+                     if isinstance(event, h2.events.ResponseReceived)]
+        self.assertEqual(
+            [(event.stream_id, dict(event.headers)[b':status'])
+             for event in responses],
+            [(3, b'502')],
+        )
+        self.assertEqual(peers.received['L'], [b'upstream reset'])
+        self.assertEqual(peers.ended['L'], [3])
+        self.assertFalse(any(isinstance(event, h2.events.StreamReset)
+                             for event in events))
+
+        server.send_headers(1, [(b':status', b'200')], end_stream=True)
+        peers.pump('R', server.data_to_send())
+        responses = [event for event in peers.events['L']
+                     if isinstance(event, h2.events.ResponseReceived)]
+        self.assertEqual(
+            [(event.stream_id, dict(event.headers)[b':status'])
+             for event in responses],
+            [(3, b'502'), (1, b'200')],
+        )
+        self.assertEqual(peers.ended['L'], [3, 1])
+
+    def test_reset_stream_failure_requires_translate_and_rolls_back(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        request = frame(encoder.encode([
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/reset'),
+        ]), 1, 5, 1)
+        bridge.feed('L', request)
+
+        reset = frame((7).to_bytes(4, 'big'), 3, 0, 1)
+        message = bridge.message('R', reset)
+        stream = Connection(message).http2.fail_reset_stream(
+            message.parts[0],
+            body=b'x' * (1024 * 1024),
+        )
+        self.assertEqual(stream, 1)
+        with self.assertRaisesRegex(
+                CommitException,
+                'Staged reset stream failures require message.translate'):
+            message.commit()
+
+        before = json.dumps(bridge.control, sort_keys=True)
+        with self.assertRaisesRegex(CommitException, 'pending output'):
+            message.translate()
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+
+        retry = bridge.message('R', reset)
+        Connection(retry).http2.fail_reset_stream(
+            retry.parts[0],
+            body=b'failed',
+        )
+        forward = bridge.publish('R', retry)
+        self.assertFalse(any(kind == 3 for kind, _, _, _ in unpack(forward)))
+        self.assertTrue(any(kind == 1 for kind, _, _, _ in unpack(forward)))
+
+    def test_reset_stream_failure_validation_is_atomic(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        request = frame(encoder.encode([
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/reset'),
+        ]), 1, 5, 1)
+        bridge.feed('L', request)
+        reset_wire = frame((7).to_bytes(4, 'big'), 3, 0, 1)
+        message = bridge.message('R', reset_wire)
+        policy = Connection(message).http2
+        before = json.dumps(bridge.control, sort_keys=True)
+
+        invalid = (
+            ({'status': True}, 'status'),
+            ({'status': 399}, 'status'),
+            ({'body': 'not bytes'}, 'body'),
+            ({'headers': [(b'Bad-Case', b'value')]}, 'field name'),
+            ({'include_content_length': 1}, 'boolean'),
+        )
+        for arguments, pattern in invalid:
+            with self.subTest(arguments=arguments):
+                with self.assertRaisesRegex(CommitException, pattern):
+                    policy.fail_reset_stream(message.parts[0], **arguments)
+                self.assertEqual(message._translation.reset_failures, {})
+                self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+
+        stream = policy.fail_reset_stream(message.parts[0], body=b'failed')
+        self.assertEqual(stream, 1)
+        with self.assertRaisesRegex(CommitException, 'only once'):
+            policy.fail_reset_stream(message.parts[0])
+        message.parts.hold_from(message.parts[0])
+        with self.assertRaisesRegex(CommitException, 'Emit the RST_STREAM anchor'):
+            bridge.publish('R', message)
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+        self.assertIsNone(message._translation.result)
+
+        detached = Bridge().message('R', reset_wire)
+        fresh = bridge.message('R', reset_wire)
+        with self.assertRaisesRegex(CommitException, 'current message'):
+            Connection(fresh).http2.fail_reset_stream(detached.parts[0])
+        wrong_side = bridge.message('L', reset_wire)
+        with self.assertRaisesRegex(CommitException, 'upstream RST_STREAM'):
+            Connection(wrong_side).http2.fail_reset_stream(wrong_side.parts[0])
+        edited = bridge.message('R', reset_wire)
+        edited.parts[0].set_bytes((8).to_bytes(4, 'big'))
+        with self.assertRaisesRegex(CommitException, 'remain unedited'):
+            Connection(edited).http2.fail_reset_stream(edited.parts[0])
+
+    def test_reset_stream_failure_body_resumes_through_one_byte_windows(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+        client = peers.peers['L']
+        client.send_headers(1, [
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/reset'),
+        ], end_stream=True)
+        peers.pump('L', client.data_to_send())
+
+        client.update_settings({
+            h2.settings.SettingCodes.INITIAL_WINDOW_SIZE: 0,
+        })
+        peers.pump('L', client.data_to_send())
+
+        server = peers.peers['R']
+        server.reset_stream(1, error_code=7)
+
+        def fail_reset(message):
+            Connection(message).http2.fail_reset_stream(
+                message.parts[0],
+                body=b'0123456789',
+            )
+
+        forward, reverse = peers.bridge.feed(
+            'R', server.data_to_send(), fail_reset)
+        self.assertEqual(reverse, b'')
+        events = client.receive_data(forward)
+        self.assertFalse(any(isinstance(event, h2.events.DataReceived)
+                             for event in events))
+
+        received = bytearray()
+        ended = []
+        for _ in range(10):
+            client.increment_flow_control_window(1, stream_id=1)
+            forward, reverse = peers.bridge.feed('L', client.data_to_send())
+            self.assertEqual(forward, b'')
+            events = client.receive_data(reverse)
+            for event in events:
+                if isinstance(event, h2.events.DataReceived):
+                    received.extend(event.data)
+            ended.extend(
+                event.stream_id for event in events
+                if isinstance(event, h2.events.StreamEnded)
+            )
+        self.assertEqual(received, b'0123456789')
+        self.assertEqual(ended, [1])
+
+    def test_reset_stream_failure_discards_late_request_data_without_reset(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        request = frame(encoder.encode([
+            (b':method', b'POST'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/upload'),
+        ]), 1, 4, 1)
+        bridge.feed('L', request)
+
+        reset = frame((7).to_bytes(4, 'big'), 3, 0, 1)
+
+        def fail_reset(message):
+            Connection(message).http2.fail_reset_stream(
+                message.parts[0],
+                body=b'failed',
+            )
+
+        forward, reverse = bridge.feed('R', reset, fail_reset)
+        self.assertEqual(reverse, b'')
+        self.assertFalse(any(kind == 3 for kind, _, _, _ in unpack(forward)))
+
+        forward, reverse = bridge.feed(
+            'L',
+            frame(b'late request bytes', 0, 1, 1),
+        )
+        self.assertEqual(forward, b'')
+        controls = unpack(reverse)
+        self.assertFalse(any(kind in (3, 7) for kind, _, _, _ in controls))
+        self.assertTrue(all(kind == 8 for kind, _, _, _ in controls))
+
+    def test_reset_stream_failure_suppresses_partial_response_and_keeps_hpack(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+        client = peers.peers['L']
+        for stream in (1, 3):
+            client.send_headers(stream, [
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', f'/{stream}'.encode('ascii')),
+            ], end_stream=True)
+        peers.pump('L', client.data_to_send())
+
+        server = peers.peers['R']
+        server.send_headers(1, [
+            (b':status', b'200'),
+            (b'x-source-state', b'retained'),
+        ], end_stream=False)
+        server.reset_stream(1, error_code=7)
+
+        def fail_reset(message):
+            reset = next(part for part in message.parts
+                         if part.frame_type == 3)
+            Connection(message).http2.fail_reset_stream(
+                reset,
+                body=b'failed',
+            )
+
+        peers.pump('R', server.data_to_send(), fail_reset)
+        responses = [event for event in peers.events['L']
+                     if isinstance(event, h2.events.ResponseReceived)]
+        self.assertEqual(
+            [(event.stream_id, dict(event.headers)[b':status'])
+             for event in responses],
+            [(1, b'502')],
+        )
+
+        server.send_headers(3, [
+            (b':status', b'200'),
+            (b'x-source-state', b'retained'),
+        ], end_stream=True)
+        peers.pump('R', server.data_to_send())
+        responses = [event for event in peers.events['L']
+                     if isinstance(event, h2.events.ResponseReceived)]
+        self.assertEqual(
+            [(event.stream_id, dict(event.headers)[b':status'])
+             for event in responses],
+            [(1, b'502'), (3, b'200')],
+        )
+        self.assertEqual(
+            dict(responses[-1].headers)[b'x-source-state'],
+            b'retained',
+        )
+
+    def test_response_after_goaway_and_informational_headers_are_suppressed(self):
+        for preliminary in ('none', 'informational', 'final-after'):
+            with self.subTest(preliminary=preliminary):
+                bridge = self.input_bridge()
+                encoder = hpack.Encoder()
+                request = frame(encoder.encode([
+                    (b':method', b'GET'),
+                    (b':scheme', b'https'),
+                    (b':authority', b'example.test'),
+                    (b':path', b'/pending'),
+                ]), 1, 5, 1)
+                bridge.feed('L', request)
+
+                response_encoder = hpack.Encoder()
+                goaway = frame(bytes(8), 7, 0, 0)
+                if preliminary == 'informational':
+                    wire = frame(
+                        response_encoder.encode([(b':status', b'103')]),
+                        1,
+                        4,
+                        1,
+                    ) + goaway
+                elif preliminary == 'final-after':
+                    wire = goaway + frame(
+                        response_encoder.encode([(b':status', b'200')]),
+                        1,
+                        5,
+                        1,
+                    )
+                else:
+                    wire = goaway
+
+                def fail_pending(message):
+                    anchor = next(part for part in message.parts
+                                  if part.frame_type == 7)
+                    selected = Connection(message).http2.fail_pending_requests(
+                        anchor,
+                        status=502,
+                        body=b'failed',
+                    )
+                    self.assertEqual(selected, (1,))
+
+                forward, reverse = bridge.feed('R', wire, fail_pending)
+                self.assertEqual(reverse, b'')
+                frames = unpack(forward)
+                self.assertFalse(any(kind == 7 for kind, _, _, _ in frames))
+                decoder = hpack.Decoder()
+                statuses = [
+                    dict(decoder.decode(payload, raw=True))[b':status']
+                    for kind, _, _, payload in frames
+                    if kind == 1
+                ]
+                self.assertEqual(statuses, [b'502'])
+
+    def test_pending_failure_validation_and_held_anchor_are_atomic(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        request = frame(encoder.encode([
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/pending'),
+        ]), 1, 5, 1)
+        bridge.feed('L', request)
+        goaway_wire = frame(bytes(8), 7, 0, 0)
+        message = bridge.message('R', goaway_wire)
+        policy = Connection(message).http2
+        before = json.dumps(bridge.control, sort_keys=True)
+
+        invalid = (
+            ({'status': True}, 'status'),
+            ({'status': 399}, 'status'),
+            ({'body': 'not bytes'}, 'body'),
+            ({'headers': [(b'Bad-Case', b'value')]}, 'field name'),
+            ({'include_content_length': 1}, 'boolean'),
+        )
+        for arguments, pattern in invalid:
+            with self.subTest(arguments=arguments):
+                with self.assertRaisesRegex(CommitException, pattern):
+                    policy.fail_pending_requests(message.parts[0], **arguments)
+                self.assertIsNone(message._translation.pending_failures)
+                self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+
+        selected = policy.fail_pending_requests(message.parts[0], body=b'failure')
+        self.assertEqual(selected, (1,))
+        with self.assertRaisesRegex(CommitException, 'only once'):
+            policy.fail_pending_requests(message.parts[0])
+        message.parts.hold_from(message.parts[0])
+        with self.assertRaisesRegex(CommitException, 'Emit the GOAWAY anchor'):
+            bridge.publish('R', message)
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+        self.assertIsNone(message._translation.result)
+
+        detached = Bridge().message('R', goaway_wire)
+        fresh = bridge.message('R', goaway_wire)
+        with self.assertRaisesRegex(CommitException, 'current message'):
+            Connection(fresh).http2.fail_pending_requests(detached.parts[0])
+        wrong_side = bridge.message('L', goaway_wire)
+        with self.assertRaisesRegex(CommitException, 'upstream GOAWAY'):
+            Connection(wrong_side).http2.fail_pending_requests(
+                wrong_side.parts[0])
+
+        malformed_wires = (
+            frame(bytes(8), 7, 0, 1),
+            frame(bytes(7), 7, 0, 0),
+            frame(bytes(8), 6, 0, 0),
+        )
+        for malformed_wire in malformed_wires:
+            with self.subTest(malformed=unpack(malformed_wire)[0][:3]):
+                malformed = bridge.message('R', malformed_wire)
+                with self.assertRaisesRegex(CommitException, 'complete GOAWAY'):
+                    Connection(malformed).http2.fail_pending_requests(
+                        malformed.parts[0])
+
+        edited = bridge.message('R', goaway_wire)
+        edited.parts[0].set_bytes(bytes(8) + b'diagnostic')
+        with self.assertRaisesRegex(CommitException, 'remain unedited'):
+            Connection(edited).http2.fail_pending_requests(edited.parts[0])
+
+    def test_pending_failure_bodies_obey_independent_stream_windows(self):
+        peers = self.make_peers()
+        peers.events = {'L': [], 'R': []}
+        client = peers.peers['L']
+        for stream in (1, 3):
+            client.send_headers(stream, [
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', f'/{stream}'.encode('ascii')),
+            ], end_stream=True)
+        peers.pump('L', client.data_to_send())
+
+        client.update_settings({
+            h2.settings.SettingCodes.INITIAL_WINDOW_SIZE: 0,
+        })
+        peers.pump('L', client.data_to_send())
+        client.increment_flow_control_window(5, stream_id=3)
+        peers.pump('L', client.data_to_send())
+
+        def fail_pending(message):
+            Connection(message).http2.fail_pending_requests(
+                message.parts[0],
+                status=502,
+                body=b'0123456789',
+            )
+
+        goaway = frame(bytes(8), 7, 0, 0)
+        forward, reverse = peers.bridge.feed('R', goaway, fail_pending)
+        self.assertEqual(reverse, b'')
+        events = client.receive_data(forward)
+        initial_data = [event for event in events
+                        if isinstance(event, h2.events.DataReceived)]
+        self.assertEqual(
+            [(event.stream_id, event.data) for event in initial_data],
+            [(3, b'01234')],
+        )
+
+        client.increment_flow_control_window(10, stream_id=1)
+        forward, reverse = peers.bridge.feed('L', client.data_to_send())
+        self.assertEqual(forward, b'')
+        events = client.receive_data(reverse)
+        self.assertEqual(
+            [(event.stream_id, event.data) for event in events
+             if isinstance(event, h2.events.DataReceived)],
+            [(1, b'0123456789')],
+        )
+
+        client.increment_flow_control_window(5, stream_id=3)
+        forward, reverse = peers.bridge.feed('L', client.data_to_send())
+        self.assertEqual(forward, b'')
+        events = client.receive_data(reverse)
+        self.assertEqual(
+            [(event.stream_id, event.data) for event in events
+             if isinstance(event, h2.events.DataReceived)],
+            [(3, b'56789')],
+        )
+        self.assertEqual(
+            [event.stream_id for event in events
+             if isinstance(event, h2.events.StreamEnded)],
+            [3],
+        )
+
+    def test_pending_failure_respects_reset_order_around_goaway(self):
+        for reset_first in (True, False):
+            with self.subTest(reset_first=reset_first):
+                peers = self.make_peers()
+                peers.events = {'L': [], 'R': []}
+                client = peers.peers['L']
+                for stream in (1, 3):
+                    client.send_headers(stream, [
+                        (b':method', b'GET'),
+                        (b':scheme', b'https'),
+                        (b':authority', b'example.test'),
+                        (b':path', f'/{stream}'.encode('ascii')),
+                    ], end_stream=True)
+                peers.pump('L', client.data_to_send())
+
+                reset = frame((8).to_bytes(4, 'big'), 3, 0, 3)
+                goaway = frame((1).to_bytes(4, 'big') + bytes(4), 7, 0, 0)
+                wire = reset + goaway if reset_first else goaway + reset
+                selected = []
+
+                def fail_pending(message):
+                    anchor = next(part for part in message.parts
+                                  if part.frame_type == 7)
+                    selected.extend(Connection(message).http2.fail_pending_requests(
+                        anchor,
+                        status=502,
+                        body=b'failed',
+                    ))
+
+                forward, reverse = peers.bridge.feed('R', wire, fail_pending)
+                self.assertEqual(reverse, b'')
+                events = client.receive_data(forward)
+                responses = [event.stream_id for event in events
+                             if isinstance(event, h2.events.ResponseReceived)]
+                resets = [event.stream_id for event in events
+                          if isinstance(event, h2.events.StreamReset)]
+
+                if reset_first:
+                    self.assertEqual(selected, [1])
+                    self.assertEqual(responses, [1])
+                    self.assertEqual(resets, [3])
+                else:
+                    self.assertEqual(selected, [1, 3])
+                    self.assertEqual(responses, [1, 3])
+                    self.assertEqual(resets, [])
+
+    def test_pending_failure_fanout_quota_rolls_back_atomically(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        for stream in (1, 3, 5):
+            request = frame(encoder.encode([
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', f'/{stream}'.encode('ascii')),
+            ]), 1, 5, stream)
+            bridge.feed('L', request)
+
+        goaway = frame(bytes(8), 7, 0, 0)
+        message = bridge.message('R', goaway)
+        selected = Connection(message).http2.fail_pending_requests(
+            message.parts[0],
+            body=b'x' * (256 * 1024),
+        )
+        self.assertEqual(selected, (1, 3, 5))
+        before = json.dumps(bridge.control, sort_keys=True)
+
+        with self.assertRaisesRegex(CommitException, 'pending output exceeds'):
+            bridge.publish('R', message)
+
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), before)
+        self.assertIsNone(message._translation.result)
+
+    def test_pending_failure_consumes_repeated_monotonic_goaway(self):
+        bridge = self.input_bridge()
+        encoder = hpack.Encoder()
+        request = frame(encoder.encode([
+            (b':method', b'GET'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/pending'),
+        ]), 1, 5, 1)
+        bridge.feed('L', request)
+
+        first = frame((1).to_bytes(4, 'big') + bytes(4), 7, 0, 0)
+        duplicate = frame(bytes(8), 7, 0, 0)
+
+        def fail_pending(message):
+            selected = Connection(message).http2.fail_pending_requests(
+                message.parts[0],
+                status=502,
+                body=b'failed',
+            )
+            self.assertEqual(selected, (1,))
+
+        forward, reverse = bridge.feed('R', first + duplicate, fail_pending)
+        self.assertEqual(reverse, b'')
+        frames = unpack(forward)
+        self.assertFalse(any(kind == 7 for kind, _, _, _ in frames))
+        self.assertEqual(sum(kind == 1 for kind, _, _, _ in frames), 1)
+
+        forward, reverse = bridge.feed('R', duplicate)
+        self.assertEqual((forward, reverse), (b'', b''))
+        previous = json.dumps(bridge.control, sort_keys=True)
+        with self.assertRaisesRegex(CommitException, 'must not increase'):
+            bridge.feed(
+                'R',
+                frame((3).to_bytes(4, 'big') + bytes(4), 7, 0, 0),
+            )
+        self.assertEqual(json.dumps(bridge.control, sort_keys=True), previous)
+
+    def test_pending_failure_preserves_suppressed_source_hpack_history(self):
+        bridge = self.input_bridge()
+        request_encoder = hpack.Encoder()
+        for stream in (1, 3):
+            request = frame(request_encoder.encode([
+                (b':method', b'GET'),
+                (b':scheme', b'https'),
+                (b':authority', b'example.test'),
+                (b':path', f'/{stream}'.encode('ascii')),
+            ]), 1, 5, stream)
+            bridge.feed('L', request)
+
+        def fail_pending(message):
+            Connection(message).http2.fail_pending_requests(
+                message.parts[0],
+                status=502,
+            )
+
+        bridge.feed('R', frame(bytes(8), 7, 0, 0), fail_pending)
+
+        response_encoder = hpack.Encoder()
+        repeated = (b'x-suppressed-state', b'must remain decodable')
+        first = frame(response_encoder.encode([
+            (b':status', b'200'),
+            repeated,
+        ]), 1, 5, 1)
+        forward, reverse = bridge.feed('R', first)
+        self.assertEqual((forward, reverse), (b'', b''))
+
+        # The encoder now uses its dynamic-table entry. This callback succeeds
+        # only if the previously suppressed block advanced the source decoder.
+        second = frame(response_encoder.encode([
+            (b':status', b'200'),
+            repeated,
+        ]), 1, 5, 3)
+        forward, reverse = bridge.feed('R', second)
+        self.assertEqual((forward, reverse), (b'', b''))
 
     def test_partial_input_reserves_once_and_release_refunds_once(self):
         for side in ('L', 'R'):
@@ -371,6 +1661,36 @@ class WindowsTests(unittest.TestCase):
         bridge.reserved = False
         with self.assertRaisesRegex(CommitException, 'owner lost'):
             bridge.feed('L', frame(b'x', 0, 0, 1))
+
+    def test_informational_reservation_keeps_before_final_output_guard(self):
+        for source_status, edited_status in ((b'200', None), (b'200', b'103'), (b'103', b'200')):
+            with self.subTest(source=source_status, edited=edited_status):
+                bridge = self.input_bridge()
+                encoder = hpack.Encoder()
+                first = frame(encoder.encode([(b':status', source_status)]), 1, 4, 1)
+                message = bridge.message('R', first)
+                if edited_status is not None:
+                    message.parts[0].headers.set_header(b':status', edited_status)
+                bridge.publish('R', message)
+                final = frame(encoder.encode([(b':status', b'200')]), 1, 4, 1)
+                message = bridge.message('R', final)
+                message.parts.hold_from(message.parts[0])
+                Connection(message).http2.reserve_body(message.parts[0], 65535)
+                before = json.dumps(bridge.control)
+                with self.assertRaisesRegex(CommitException, 'before any output'):
+                    bridge.publish('R', message)
+                self.assertEqual(json.dumps(bridge.control), before)
+
+    def test_informational_headers_cannot_reserve_the_final_body(self):
+        bridge = self.input_bridge()
+        wire = frame(hpack.Encoder().encode([(b':status', b'103')]), 1, 4, 1)
+        message = bridge.message('R', wire)
+        message.parts.hold_from(message.parts[0])
+        Connection(message).http2.reserve_body(message.parts[0], 65535)
+        before = json.dumps(bridge.control)
+        with self.assertRaisesRegex(CommitException, 'final response body'):
+            bridge.publish('R', message)
+        self.assertEqual(json.dumps(bridge.control), before)
 
     def test_cancel_partial_reserved_data_and_preserve_hpack_dependency(self):
         for side in ('L', 'R'):

@@ -1,0 +1,1830 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "0/68656c6c6f": [
+      {
+        "state": [
+          0,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'hello'",
+        "opcode_name": "CONTINUATION"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Continuation WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Continuation WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          0,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "0/ff": [
+      {
+        "state": [
+          0,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'\\xff'",
+        "opcode_name": "CONTINUATION"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Continuation WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Continuation WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          0,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "0/": [
+      {
+        "state": [
+          0,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b''",
+        "opcode_name": "CONTINUATION"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Continuation WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Continuation WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          0,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "1/68656c6c6f": [
+      {
+        "state": [
+          1,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": true,
+        "repr": "'hello'",
+        "opcode_name": "TEXT"
+      },
+      {
+        "operation": "read_text",
+        "value": "hello",
+        "state": [
+          1,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          false,
+          false
+        ]
+      },
+      {
+        "operation": "write_text",
+        "value": null,
+        "state": [
+          1,
+          true,
+          {
+            "bytes": "6368616e67656420e29883"
+          },
+          123,
+          false,
+          false
+        ]
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          1,
+          true,
+          {
+            "bytes": "6368616e67656420e29883"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "1/ff": [
+      {
+        "state": [
+          1,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": true,
+        "repr": "'�'",
+        "opcode_name": "TEXT"
+      },
+      {
+        "operation": "read_text",
+        "error": "UnicodeDecodeError",
+        "message": "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
+      },
+      {
+        "operation": "write_text",
+        "value": null,
+        "state": [
+          1,
+          true,
+          {
+            "bytes": "6368616e67656420e29883"
+          },
+          123,
+          false,
+          false
+        ]
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          1,
+          true,
+          {
+            "bytes": "6368616e67656420e29883"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "1/": [
+      {
+        "state": [
+          1,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": true,
+        "repr": "''",
+        "opcode_name": "TEXT"
+      },
+      {
+        "operation": "read_text",
+        "value": "",
+        "state": [
+          1,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          false,
+          false
+        ]
+      },
+      {
+        "operation": "write_text",
+        "value": null,
+        "state": [
+          1,
+          true,
+          {
+            "bytes": "6368616e67656420e29883"
+          },
+          123,
+          false,
+          false
+        ]
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          1,
+          true,
+          {
+            "bytes": "6368616e67656420e29883"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "2/68656c6c6f": [
+      {
+        "state": [
+          2,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'hello'",
+        "opcode_name": "BINARY"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Binary WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Binary WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          2,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "2/ff": [
+      {
+        "state": [
+          2,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'\\xff'",
+        "opcode_name": "BINARY"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Binary WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Binary WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          2,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "2/": [
+      {
+        "state": [
+          2,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b''",
+        "opcode_name": "BINARY"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Binary WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Binary WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          2,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "8/68656c6c6f": [
+      {
+        "state": [
+          8,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'hello'",
+        "opcode_name": "CLOSE"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Close WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Close WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          8,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "8/ff": [
+      {
+        "state": [
+          8,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'\\xff'",
+        "opcode_name": "CLOSE"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Close WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Close WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          8,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "8/": [
+      {
+        "state": [
+          8,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b''",
+        "opcode_name": "CLOSE"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Close WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Close WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          8,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "9/68656c6c6f": [
+      {
+        "state": [
+          9,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'hello'",
+        "opcode_name": "PING"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Ping WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Ping WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          9,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "9/ff": [
+      {
+        "state": [
+          9,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'\\xff'",
+        "opcode_name": "PING"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Ping WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Ping WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          9,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "9/": [
+      {
+        "state": [
+          9,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b''",
+        "opcode_name": "PING"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Ping WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Ping WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          9,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "10/68656c6c6f": [
+      {
+        "state": [
+          10,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'hello'",
+        "opcode_name": "PONG"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Pong WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Pong WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          10,
+          true,
+          {
+            "bytes": "68656c6c6f"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "10/ff": [
+      {
+        "state": [
+          10,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b'\\xff'",
+        "opcode_name": "PONG"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Pong WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Pong WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          10,
+          true,
+          {
+            "bytes": "ff"
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "10/": [
+      {
+        "state": [
+          10,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          false,
+          false
+        ],
+        "is_text": false,
+        "repr": "b''",
+        "opcode_name": "PONG"
+      },
+      {
+        "operation": "read_text",
+        "error": "AttributeError",
+        "message": "Pong WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "write_text",
+        "error": "AttributeError",
+        "message": "Pong WebSocket frames do not have a 'text' attribute."
+      },
+      {
+        "operation": "drop",
+        "value": null,
+        "state": [
+          10,
+          true,
+          {
+            "bytes": ""
+          },
+          123,
+          true,
+          false
+        ]
+      },
+      {
+        "operation": "restore",
+        "value": null,
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      },
+      {
+        "operation": "copy",
+        "value": {
+          "state": [
+            2,
+            false,
+            {
+              "bytes": "726573746f726564"
+            },
+            456,
+            false,
+            true
+          ],
+          "distinct": true
+        },
+        "state": [
+          2,
+          false,
+          {
+            "bytes": "726573746f726564"
+          },
+          456,
+          false,
+          true
+        ]
+      }
+    ],
+    "3/68656c6c6f": {
+      "error": "ValueError",
+      "message": "3 is not a valid Opcode"
+    },
+    "3/ff": {
+      "error": "ValueError",
+      "message": "3 is not a valid Opcode"
+    },
+    "3/": {
+      "error": "ValueError",
+      "message": "3 is not a valid Opcode"
+    },
+    "data": {
+      "state": {
+        "messages": [
+          [
+            1,
+            false,
+            {
+              "bytes": "7361766564"
+            },
+            123,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": true,
+        "close_code": 1000,
+        "close_reason": "finished",
+        "timestamp_end": 456
+      },
+      "restored": {
+        "messages": [
+          [
+            1,
+            false,
+            {
+              "bytes": "7361766564"
+            },
+            123,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": true,
+        "close_code": 1000,
+        "close_reason": "finished",
+        "timestamp_end": 456
+      },
+      "input_after_restore": {
+        "messages": [
+          {
+            "object": "WebSocketMessage",
+            "state": [
+              1,
+              false,
+              {
+                "bytes": "7361766564"
+              },
+              123,
+              false,
+              false
+            ]
+          }
+        ],
+        "closed_by_client": true,
+        "close_code": 1000,
+        "close_reason": "finished",
+        "timestamp_end": 456
+      },
+      "copy": {
+        "messages": [
+          [
+            1,
+            false,
+            {
+              "bytes": "636f7079206f6e6c79"
+            },
+            123,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": true,
+        "close_code": 1000,
+        "close_reason": "finished",
+        "timestamp_end": 456
+      },
+      "original_after_copy_edit": {
+        "messages": [
+          [
+            1,
+            false,
+            {
+              "bytes": "7361766564"
+            },
+            123,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": true,
+        "close_code": 1000,
+        "close_reason": "finished",
+        "timestamp_end": 456
+      },
+      "default": {
+        "messages": [],
+        "closed_by_client": null,
+        "close_code": null,
+        "close_reason": null,
+        "timestamp_end": null
+      }
+    },
+    "set/valid": {
+      "error": null,
+      "state": {
+        "messages": [
+          [
+            2,
+            false,
+            {
+              "bytes": "6e6577"
+            },
+            456,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": null,
+        "close_code": null,
+        "close_reason": null,
+        "timestamp_end": null
+      },
+      "input_after": {},
+      "same_list": false,
+      "same_message": false
+    },
+    "set/missing": {
+      "error": "KeyError",
+      "state": {
+        "messages": [
+          [
+            2,
+            false,
+            {
+              "bytes": "6e6577"
+            },
+            456,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": null,
+        "close_code": null,
+        "close_reason": null,
+        "timestamp_end": null
+      },
+      "input_after": {
+        "timestamp_end": null
+      },
+      "same_list": false,
+      "same_message": false
+    },
+    "set/extra": {
+      "error": "ValueError",
+      "state": {
+        "messages": [
+          [
+            2,
+            false,
+            {
+              "bytes": "6e6577"
+            },
+            456,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": null,
+        "close_code": null,
+        "close_reason": null,
+        "timestamp_end": null
+      },
+      "input_after": {
+        "unknown": 1
+      },
+      "same_list": false,
+      "same_message": false
+    },
+    "from/valid": {
+      "error": null,
+      "state": {
+        "messages": [
+          [
+            2,
+            false,
+            {
+              "bytes": "6e6577"
+            },
+            456,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": null,
+        "close_code": null,
+        "close_reason": null,
+        "timestamp_end": null
+      },
+      "input_after": {
+        "messages": [
+          {
+            "object": "WebSocketMessage",
+            "state": [
+              2,
+              false,
+              {
+                "bytes": "6e6577"
+              },
+              456,
+              false,
+              false
+            ]
+          }
+        ],
+        "closed_by_client": null,
+        "close_code": null,
+        "close_reason": null,
+        "timestamp_end": null
+      },
+      "same_list": false,
+      "same_message": false
+    },
+    "from/missing": {
+      "error": "KeyError",
+      "state": {
+        "messages": [
+          [
+            1,
+            true,
+            {
+              "bytes": "6f6c64"
+            },
+            123,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": null,
+        "close_code": null,
+        "close_reason": null,
+        "timestamp_end": null
+      },
+      "input_after": {
+        "messages": [
+          {
+            "object": "WebSocketMessage",
+            "state": [
+              2,
+              false,
+              {
+                "bytes": "6e6577"
+              },
+              456,
+              false,
+              false
+            ]
+          }
+        ],
+        "closed_by_client": null,
+        "close_code": null,
+        "timestamp_end": null
+      },
+      "same_list": true,
+      "same_message": true
+    },
+    "from/extra": {
+      "error": "ValueError",
+      "state": {
+        "messages": [
+          [
+            1,
+            true,
+            {
+              "bytes": "6f6c64"
+            },
+            123,
+            false,
+            false
+          ]
+        ],
+        "closed_by_client": null,
+        "close_code": null,
+        "close_reason": null,
+        "timestamp_end": null
+      },
+      "input_after": {
+        "messages": [
+          {
+            "object": "WebSocketMessage",
+            "state": [
+              2,
+              false,
+              {
+                "bytes": "6e6577"
+              },
+              456,
+              false,
+              false
+            ]
+          }
+        ],
+        "closed_by_client": null,
+        "close_code": null,
+        "close_reason": null,
+        "timestamp_end": null,
+        "unknown": 1
+      },
+      "same_list": true,
+      "same_message": true
+    }
+  }
+}

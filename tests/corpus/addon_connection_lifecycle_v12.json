@@ -1,0 +1,118 @@
+{
+  "events": [
+    {
+      "connections": [
+        {
+          "address_present": true,
+          "identity": "client-1",
+          "peername_present": true,
+          "sockname_present": true,
+          "state": 3,
+          "timestamp_end_present": false,
+          "timestamp_start_present": true,
+          "transport_protocol": "tcp",
+          "type": "Client"
+        }
+      ],
+      "hook": "client_connected"
+    },
+    {
+      "connections": [
+        {
+          "address_present": true,
+          "identity": "client-1",
+          "peername_present": true,
+          "sockname_present": true,
+          "state": 3,
+          "timestamp_end_present": false,
+          "timestamp_start_present": true,
+          "transport_protocol": "tcp",
+          "type": "Client"
+        },
+        {
+          "address_present": true,
+          "identity": "server-1",
+          "peername_present": false,
+          "sockname_present": false,
+          "state": 0,
+          "timestamp_end_present": false,
+          "timestamp_start_present": false,
+          "transport_protocol": "tcp",
+          "type": "Server"
+        }
+      ],
+      "hook": "server_connect"
+    },
+    {
+      "connections": [
+        {
+          "address_present": true,
+          "identity": "client-1",
+          "peername_present": true,
+          "sockname_present": true,
+          "state": 3,
+          "timestamp_end_present": false,
+          "timestamp_start_present": true,
+          "transport_protocol": "tcp",
+          "type": "Client"
+        },
+        {
+          "address_present": true,
+          "identity": "server-1",
+          "peername_present": true,
+          "sockname_present": true,
+          "state": 3,
+          "timestamp_end_present": false,
+          "timestamp_start_present": true,
+          "transport_protocol": "tcp",
+          "type": "Server"
+        }
+      ],
+      "hook": "server_connected"
+    },
+    {
+      "connections": [
+        {
+          "address_present": true,
+          "identity": "client-1",
+          "peername_present": true,
+          "sockname_present": true,
+          "state": 0,
+          "timestamp_end_present": false,
+          "timestamp_start_present": true,
+          "transport_protocol": "tcp",
+          "type": "Client"
+        },
+        {
+          "address_present": true,
+          "identity": "server-1",
+          "peername_present": true,
+          "sockname_present": true,
+          "state": 0,
+          "timestamp_end_present": true,
+          "timestamp_start_present": true,
+          "transport_protocol": "tcp",
+          "type": "Server"
+        }
+      ],
+      "hook": "server_disconnected"
+    },
+    {
+      "connections": [
+        {
+          "address_present": true,
+          "identity": "client-1",
+          "peername_present": true,
+          "sockname_present": true,
+          "state": 0,
+          "timestamp_end_present": true,
+          "timestamp_start_present": true,
+          "transport_protocol": "tcp",
+          "type": "Client"
+        }
+      ],
+      "hook": "client_disconnected"
+    }
+  ],
+  "reference": "mitmproxy 12.3.1"
+}

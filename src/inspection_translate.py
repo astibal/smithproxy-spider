@@ -13,6 +13,18 @@ except ImportError:
 _H2_PREFACE = b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n'
 
 
+def _translate_informational(part, fields):
+    """Recognize a non-terminal informational response, never a trailer."""
+    if part.frame_type != 1 or part.flags & 1:
+        return False
+    pseudo = [(name, value) for name, value, _ in fields if name.startswith(b':')]
+    if len(pseudo) != 1 or pseudo[0][0] != b':status':
+        return False
+    status = pseudo[0][1]
+    return (len(status) == 3 and status.isdigit() and
+            100 <= int(status) < 200 and status != b'101')
+
+
 class _TranslationInput:
     """Sender windows, charged once from original callback bytes, before hold.
 
@@ -39,6 +51,7 @@ class _TranslationInput:
 
     def cancelled(self, side, stream):
         return (self.flow.cancelled(side, stream) or
+                self.flow.failed(stream) or
                 self.flow._contains(self.flow.state[side].get('input_cancelled', {}), stream))
 
     def stream(self, side, stream):
@@ -189,7 +202,7 @@ class _TranslationHoldCredit:
         side = flow.side
         direction = flow.state[side]
         for part, limit in transaction.body_reservations:
-            if flow.cancelled(side, part.stream_id):
+            if flow.cancelled(side, part.stream_id) or flow.failed(part.stream_id):
                 continue
             if not transaction.hold_credit_available:
                 raise CommitException('Body reservation requires backend admission support')
@@ -199,6 +212,8 @@ class _TranslationHoldCredit:
             fields = transaction._header_fields(part)
             if not any(name in (b':method', b':status') for name, _, _ in fields):
                 raise CommitException('Body reservation requires initial request or response headers')
+            if transaction.source_informational.get(id(part), False):
+                raise CommitException('Reserve the final response body, not informational headers')
             lengths = transaction.source_lengths[id(part)]
             if any(not value.isdigit() or int(value) > limit for value in lengths):
                 raise CommitException('Content-Length exceeds reserved encoded body limit')
@@ -207,7 +222,10 @@ class _TranslationHoldCredit:
             if current and current['limit'] != limit:
                 raise CommitException('Body reservation limit is immutable')
             if not current:
-                if str(part.stream_id) in direction['streams'] or flow.retired(side, part.stream_id):
+                previous = direction['streams'].get(str(part.stream_id))
+                informational_only = previous is not None and previous.get('informational_only', False)
+                if ((previous is not None and not informational_only) or
+                        flow.retired(side, part.stream_id)):
                     raise CommitException('Body reservation requires headers retained before any output')
                 candidate = {'stream': part.stream_id, 'limit': limit,
                              'stream_due': 0, 'advanced': 0}
@@ -220,10 +238,13 @@ class _TranslationHoldCredit:
             raise CommitException('Body reservation backend capability lost')
         # A reserved body is an all-or-nothing retained semantic message.
         for reservation in flow.bodies(side).values():
-            if flow.cancelled(side, reservation['stream']):
+            if (flow.cancelled(side, reservation['stream']) or
+                    flow.failed(reservation['stream'])):
                 continue
             for part in transaction.message.parts[:cut]:
                 if part.frame_type == 1 and part.stream_id == reservation['stream']:
+                    if transaction.informational(part):
+                        continue
                     if not part.content.complete:
                         raise CommitException('Reserved body must remain held until complete')
 
@@ -253,6 +274,12 @@ class _TranslationHoldCredit:
     def advance_body(self, side, reservation):
         direction = self.flow.state[side]
         stream = reservation['stream']
+        if self.flow.failed(stream):
+            # A staged local failure consumes the upstream reset and owns the
+            # downstream result. No future body bytes can satisfy this stream's
+            # reservation, and unused stream credit dies with the stream.
+            del self.flow.bodies(side)[str(stream)]
+            return
         if self.incoming.cancelled(side, stream):
             if self.flow.cancelled(side, stream) and side in self.flow.disposed:
                 if reservation['stream_due']:
@@ -348,6 +375,64 @@ class _TranslationFlow:
 
     def bodies(self, side):
         return self.state[side].setdefault('bodies', {})
+
+    def http_streams(self):
+        """Connection-wide HTTP lifecycle records, independent of DATA credit."""
+        return self.state.setdefault('http_streams', {})
+
+    def observe_request(self, stream, ended):
+        records = self.http_streams()
+        key = str(stream)
+        if key not in records:
+            if not stream or not stream & 1 or len(records) >= self.MAX_STREAMS:
+                raise CommitException('Translate HTTP request stream quota exceeded')
+            records[key] = {
+                'request_headers': True,
+                'request_ended': bool(ended),
+                'final_response': False,
+                'failure_staged': False,
+            }
+            return
+        record = records[key]
+        record['request_headers'] = True
+        record['request_ended'] = record.get('request_ended', False) or bool(ended)
+
+    def observe_request_end(self, stream):
+        record = self.http_streams().get(str(stream))
+        if record is not None:
+            record['request_ended'] = True
+
+    def observe_final_response(self, stream):
+        record = self.http_streams().get(str(stream))
+        if record is not None:
+            record['final_response'] = True
+            del self.http_streams()[str(stream)]
+
+    def failed(self, stream):
+        return self._contains(self.state.get('failed_streams', {}), stream)
+
+    def fail_stream(self, stream):
+        records = self.http_streams()
+        record = records.get(str(stream))
+        if record is None or record.get('failure_staged'):
+            raise CommitException('Pending request stream is no longer publishable')
+        record['failure_staged'] = True
+        self._remember_connection('failed_streams', stream)
+        del records[str(stream)]
+        self.close('L', stream)
+
+    def _remember_connection(self, name, stream):
+        ranges = self.state.setdefault(name, {})
+        parity = str(stream & 1)
+        merged = []
+        for first, last in sorted(ranges.get(parity, []) + [[stream, stream]]):
+            if merged and first <= merged[-1][1] + 2:
+                merged[-1][1] = max(merged[-1][1], last)
+            else:
+                merged.append([first, last])
+        ranges[parity] = merged
+        if sum(map(len, ranges.values())) > self.MAX_RANGES:
+            raise CommitException('Translate failed stream range quota exceeded')
 
     def stream(self, side, stream):
         streams = self.state[side]['streams']
@@ -454,6 +539,34 @@ class _TranslationFlow:
             self.close(side, part.stream_id)
         self.discard_cancelled()
 
+    def terminate(self, stream, target, error_code):
+        """Cancel a local stream and emit its reset without idle suppression.
+
+        reset() handles a peer-originated RST_STREAM and may suppress forwarding
+        when the peer has never seen a locally initiated stream.  A local
+        termination is the operation that makes the cancellation observable,
+        so it intentionally has separate publication semantics.
+        """
+        if target not in ('L', 'R'):
+            raise CommitException('Invalid H2 termination target')
+        if type(stream) is not int or not 0 < stream <= self.MAX_WINDOW:
+            raise CommitException('Invalid H2 termination stream')
+        if type(error_code) is not int or not 0 <= error_code <= 0xffffffff:
+            raise CommitException('Invalid H2 termination error code')
+        if any(self.cancelled(side, stream) for side in ('L', 'R')):
+            raise CommitException('H2 termination stream is already cancelled')
+
+        for side in ('L', 'R'):
+            self._remember(side, 'cancelled', stream)
+            self.close(side, stream)
+        self.discard_cancelled()
+        self.output[target].extend(self.frame(
+            3,
+            0,
+            stream,
+            error_code.to_bytes(4, 'big'),
+        ))
+
     def discard_input(self, side, stream_id, amount):
         direction = self.state[side]
         advanced = min(amount, direction.get('advance_due', 0))
@@ -485,6 +598,20 @@ class _TranslationFlow:
         self.state[self.side]['goaway'] = last
         self.discard_cancelled()
 
+    def consume_failed_goaway(self, part):
+        """Remember a consumed upstream GOAWAY without rejecting its streams."""
+        if part.stream_id or len(part._data) < 8:
+            raise CommitException('Invalid GOAWAY')
+        last = int.from_bytes(part._data[:4], 'big') & self.MAX_WINDOW
+        previous = self.state.get('failed_goaway', {}).get('last_stream_id', self.MAX_WINDOW)
+        if last > previous:
+            raise CommitException('GOAWAY last stream ID must not increase')
+        self.state['failed_goaway'] = {
+            'last_stream_id': last,
+            'error_code': int.from_bytes(part._data[4:8], 'big'),
+            'additional_data': bytes(part._data[8:]).hex(),
+        }
+
     def accept(self, part, wire):
         side = self.side
         kind = part._initial[0]
@@ -509,7 +636,7 @@ class _TranslationFlow:
         if kind == 0:
             amount = int.from_bytes(bytes(part._wire)[:3], 'big')
             direction = self.state[side]
-            if self.cancelled(side, part.stream_id):
+            if self.cancelled(side, part.stream_id) or self.failed(part.stream_id):
                 self.discard_input(side, part.stream_id, amount)
                 return
             # Early connection credit is backed by the retained input pool.
@@ -519,6 +646,7 @@ class _TranslationFlow:
             direction['advance_due'] = direction.get('advance_due', 0) - advanced
             direction['credit'] += amount - advanced
             stream = self.stream(side, part.stream_id)
+            stream['informational_only'] = False
             if stream['closed'] or stream.get('ended'):
                 raise CommitException('DATA after translated stream termination')
             stream['ended'] = bool(part.flags & 1)
@@ -535,6 +663,9 @@ class _TranslationFlow:
             # several streams contribute bytes to the same retained prefix.
             stream['connection_credit'] = stream.get('connection_credit', 0) + amount - advanced
             stream['credit'] += amount - advanced_stream
+
+            if part.flags & 1 and side == 'L':
+                self.observe_request_end(part.stream_id)
 
         if kind == 1 and part.flags & 1 and not self.cancelled(side, part.stream_id):
             if not self.retired(side, part.stream_id):
@@ -690,6 +821,49 @@ class ConnectionHttp2:
     def __init__(self, connection):
         self._connection = connection
 
+    @api_method('header: RewritePart, data: bytes, *, encoded: bool = False', 'None',
+                'Replace a complete retained H2 message body, including adding DATA to a header-only message. Decoded bytes use the current Content-Encoding; encoded=True accepts already encoded entity bytes. Existing Parts and flags remain untouched. The complete message must be in the emitted prefix of the returned Translate result. Cannot combine with direct DATA or logical Body edits. Existing Content-Length is repaired.',
+                'api.connection.set_mode(Mode.Translate)\nfor part in api.message.parts:\n    if part.frame_type == 1 and part.complete and part.content.complete is True:\n        api.connection.http2.replace_body(part, b"replacement")\n        break\nreturn api.message.translate()',
+                availability='Live H2 flow with content-reverse from activation. Complete initial headers, body and trailers must remain available together. Native output windows, quotas and cancellation still apply.',
+                access='staged complete-message body replacement')
+    def replace_body(self, header, data, *, encoded=False):
+        if not isinstance(data, bytes) or type(encoded) is not bool:
+            raise CommitException('Body replacement requires bytes and a boolean encoded flag')
+        if len(data) > 1024 * 1024:
+            raise CommitException('Replacement body exceeds 1 MiB')
+        transaction = self._connection._transaction()
+        transaction.stage_message_edit(header, 'body', (data, encoded))
+
+    @api_method('header: RewritePart, fields: list[HpackField] | None', 'None',
+                'Replace, add or remove the trailers of a complete retained H2 message. Use literal Header fields; None removes trailers and an empty list emits an empty trailing block. Framing fields and pseudo-headers are rejected. Parts remain unchanged until explicit Translate publication; the whole message must be in the emitted prefix.',
+                'api.connection.set_mode(Mode.Translate)\nfor part in api.message.parts:\n    if part.frame_type == 1 and part.complete and part.content.complete is True:\n        api.connection.http2.replace_trailers(part, [api.http2.Header(b"x-test", b"done")])\n        break\nreturn api.message.translate()',
+                availability='Live H2 flow with content-reverse from activation. Complete initial headers, body and trailers must remain available together.',
+                access='staged complete-message trailer replacement')
+    def replace_trailers(self, header, fields):
+        copied = None
+        if fields is not None:
+            copied = []
+            size = 0
+            for field in fields:
+                if (not isinstance(field, HpackField) or not isinstance(field.name, bytes) or
+                        not isinstance(field.value, bytes) or field.index or field.name_index or
+                        field.indexing not in ('without', 'incremental', 'never')):
+                    raise CommitException('Trailers require literal Header fields')
+                name = field.name
+                if (re.fullmatch(rb"[!#$%&'*+.^_`|~0-9a-z-]+", name) is None or
+                        name in (b'content-length', b'transfer-encoding', b'host',
+                                 b'connection', b'te', b'trailer', b'upgrade')):
+                    raise CommitException('Invalid trailer name or framing field')
+                if any(byte in name for byte in (b'\r', b'\n', b'\x00')) or any(
+                        byte in field.value for byte in (b'\r', b'\n', b'\x00')):
+                    raise CommitException('Invalid control byte in trailers')
+                copied.append((name, field.value, field.indexing == 'never'))
+                size += len(name) + len(field.value) + 32
+                if size > 65536:
+                    raise CommitException('Replacement trailers exceed 64 KiB')
+        transaction = self._connection._transaction()
+        transaction.stage_message_edit(header, 'trailers', copied)
+
     @api_method('header: RewritePart, max_bytes: int', 'None',
                 'Reserve bounded input capacity for a retained H2 body and advance credit only during explicit Translate. Keep the initial header held until the complete body is available, including END_STREAM trailers. Limits count original encoded DATA including padding and are immutable: at most 32 reservations and 256 KiB combined per direction. Backend capacity is released after both directions settle their reserved bodies, input ownership and early credit.',
                 'api.connection.set_mode(Mode.Translate)\nfor part in api.message.parts:\n    if part.type == PartType.Http2.Header and part.complete and part.content.complete is False:\n        api.message.parts.hold_from(part)\n        api.connection.http2.reserve_body(part, 128 * 1024)\n        break\nreturn api.message.translate()',
@@ -703,6 +877,160 @@ class ConnectionHttp2:
             raise CommitException('Body reservation requires content-reverse from activation')
         transaction.body_reservations = [(part, limit) for part, limit in transaction.body_reservations
                                          if part is not header] + [(header, max_bytes)]
+
+    @api_method(
+        'request_part: RewritePart, *, status: int = 100, '
+        'headers: list[tuple[bytes, bytes]] = ()',
+        'int',
+        'Stage one protocol-owned informational response for a callback-local '
+        'H2 request. The response is emitted in the reverse direction without '
+        'ending the stream. Publication and both HPACK checkpoints remain '
+        'atomic until message.translate().',
+        'api.connection.set_mode(Mode.Translate)\n'
+        'request = next(part for part in api.message.parts '
+        'if part.frame_type == 1 and part.complete)\n'
+        'stream = api.connection.http2.emit_informational_response(\n'
+        '    request, status=100,\n'
+        ')\n'
+        'api.print("Continued stream", stream)\n'
+        'return api.message.translate()',
+        availability='Live client-to-server H2 flow with content-reverse from '
+        'activation. The anchor must be callback-local complete initial request '
+        'HEADERS. Status 101, bodies, trailers and END_STREAM are not supported.',
+        access='staged reverse informational response',
+    )
+    def emit_informational_response(self, request_part, *, status=100, headers=()):
+        transaction = self._connection._transaction()
+        return transaction.stage_informational_response(
+            request_part,
+            status,
+            headers,
+        )
+
+    @api_method(
+        'response_part: RewritePart',
+        'int',
+        'Consume one callback-local upstream informational response without '
+        'publishing it downstream. The source HPACK decoder advances while the '
+        'downstream encoder remains unchanged. Publication stays atomic until '
+        'message.translate().',
+        'api.connection.set_mode(Mode.Translate)\n'
+        'for part in api.message.parts:\n'
+        '    fields = () if part.headers is None else part.headers.entries\n'
+        '    informational = any(\n'
+        '        field.name == b":status" and field.value[:1] == b"1"\n'
+        '        for field in fields\n'
+        '    )\n'
+        '    if part.frame_type == 1 and part.complete and informational:\n'
+        '        api.connection.http2.suppress_informational_response(part)\n'
+        'return api.message.translate()',
+        availability='Live server-to-client H2 flow with content-reverse from '
+        'activation. The anchor must be an original complete informational '
+        'HEADERS block in the prefix published by this Translate result.',
+        access='staged informational response suppression',
+    )
+    def suppress_informational_response(self, response_part):
+        transaction = self._connection._transaction()
+        return transaction.stage_informational_suppression(response_part)
+
+    @api_method(
+        'goaway_part: RewritePart, *, status: int = 502, '
+        'headers: list[tuple[bytes, bytes]] = (), body: bytes = b"", '
+        'trailers: list[tuple[bytes, bytes]] = (), '
+        'include_content_length: bool = True',
+        'tuple[int, ...]',
+        'Replace every observed client request still awaiting final response '
+        'when this upstream GOAWAY arrived. The GOAWAY is consumed, selected '
+        'streams receive protocol-owned responses, and later source frames for '
+        'those streams are discarded. Publication remains atomic until '
+        'message.translate().',
+        'api.connection.set_mode(Mode.Translate)\n'
+        'goaway = next((part for part in api.message.parts '
+        'if part.frame_type == 7 and part.complete), None)\n'
+        'if goaway is not None:\n'
+        '    failed = api.connection.http2.fail_pending_requests(\n'
+        '        goaway,\n'
+        '        status=502,\n'
+        '        headers=[(b"content-type", b"text/plain")],\n'
+        '        body=b"upstream connection closed",\n'
+        '    )\n'
+        '    api.print("Failed streams", failed)\n'
+        '    return api.message.translate()',
+        availability='Live server-to-client H2 flow with content-reverse from '
+        'activation. The anchor must be a complete callback-local GOAWAY. '
+        'Existing flow-control, HPACK and aggregate output limits apply.',
+        access='staged connection failure response',
+    )
+    def fail_pending_requests(
+            self,
+            goaway_part,
+            *,
+            status=502,
+            headers=(),
+            body=b'',
+            trailers=(),
+            include_content_length=True,
+    ):
+        if type(include_content_length) is not bool:
+            raise CommitException('include_content_length must be a boolean')
+        transaction = self._connection._transaction()
+        return transaction.stage_pending_request_failures(
+            goaway_part,
+            status,
+            headers,
+            body,
+            trailers,
+            include_content_length,
+        )
+
+    @api_method(
+        'reset_part: RewritePart, *, status: int = 502, '
+        'headers: list[tuple[bytes, bytes]] = (), body: bytes = b"", '
+        'trailers: list[tuple[bytes, bytes]] = (), '
+        'include_content_length: bool = True',
+        'int',
+        'Consume one complete upstream RST_STREAM and replace it with a '
+        'protocol-owned failure response for the pending request on that '
+        'stream. Later source frames are discarded. Publication remains '
+        'atomic until message.translate().',
+        'api.connection.set_mode(Mode.Translate)\n'
+        'reset = next((part for part in api.message.parts '
+        'if part.frame_type == 3 and part.complete), None)\n'
+        'if reset is not None:\n'
+        '    stream = api.connection.http2.fail_reset_stream(\n'
+        '        reset,\n'
+        '        status=502,\n'
+        '        headers=[(b"content-type", b"text/plain")],\n'
+        '        body=b"upstream stream failed",\n'
+        '    )\n'
+        '    api.print("Failed stream", stream)\n'
+        '    return api.message.translate()',
+        availability='Live server-to-client H2 flow with content-reverse from '
+        'activation. The anchor must be a complete callback-local RST_STREAM '
+        'for an observed request without a final response.',
+        access='staged stream failure response',
+    )
+    def fail_reset_stream(
+            self,
+            reset_part,
+            *,
+            status=502,
+            headers=(),
+            body=b'',
+            trailers=(),
+            include_content_length=True,
+    ):
+        if type(include_content_length) is not bool:
+            raise CommitException('include_content_length must be a boolean')
+        transaction = self._connection._transaction()
+        return transaction.stage_reset_stream_failure(
+            reset_part,
+            status,
+            headers,
+            body,
+            trailers,
+            include_content_length,
+        )
 
     @api_method('limit: int', 'None',
                 'Enforce a maximum HPACK table capacity in both directions. Idempotent; never increases a peer-advertised limit. SETTINGS and synthetic ACK handling occur only through message.translate().',
@@ -1124,8 +1452,135 @@ def _translate_table_load(codec, saved):
         codec.header_table.resized = bool(codec.table_size_changes)
 
 
+class _TranslationMessageEdits:
+    """Output-only plans; original Parts still own input credit and HPACK.
+
+    Plans are callback-local and may only target complete emitted messages.
+    Nothing is silently lost into a held checkpoint. Synthetic output passes
+    through the existing queues, but must never be accepted as source DATA.
+    """
+
+    def __init__(self, transaction, flow, cut):
+        import copy
+
+        self.body_overrides = {}
+        self.lengths = {}
+        self.headers = {}
+        self.flags = {}
+        self.suppressed = set()
+        self.after = {}
+        if not transaction.message_edits:
+            return
+        if flow is None:
+            raise CommitException('Message replacement requires content-reverse')
+
+        parts = transaction.message.parts
+        positions = {id(part): index for index, part in enumerate(parts)}
+        by_identity = {id(part): part for part in parts}
+        groups = {id(group[0]): group for group in _h2_content_groups(parts)}
+        for identity, operations in transaction.message_edits.items():
+            head = by_identity[identity]
+            if flow.cancelled(flow.side, head.stream_id):
+                continue
+            group = groups.get(identity)
+            if group is None:
+                raise CommitException('Replacement requires a retained complete message')
+            if not head.content.complete or any(not part.complete for part in group):
+                raise CommitException('Replacement requires a retained complete message')
+            if any(positions[id(part)] >= cut for part in group):
+                raise CommitException('Emit the whole replaced message in this Translate result')
+            for part in group:
+                if (part.frame_type, part.flags, part.stream_id) != part._initial:
+                    raise CommitException('Message replacement cannot combine with edited frame metadata')
+            data = [part for part in group if part.frame_type == 0]
+            trailers = [part for part in group[1:] if part.frame_type == 1]
+            if len(trailers) > 1:
+                raise CommitException('Message replacement found ambiguous trailers')
+            trailer = trailers[0] if trailers else None
+            trailer_fields = operations.get('trailers')
+            have_trailer = trailer_fields is not None if 'trailers' in operations else trailer is not None
+            added_data = False
+
+            if 'body' in operations:
+                if hasattr(head, '_body_plain') or any(part._pending is not None for part in data):
+                    raise CommitException('Do not combine body replacement with direct DATA or Body edits')
+                value, encoded = operations['body']
+                wire = self._body_wire(transaction, head, data, value, encoded)
+                if len(wire) > 1024 * 1024:
+                    raise CommitException('Encoded replacement body exceeds 1 MiB')
+                self.lengths[identity] = str(len(wire)).encode()
+                offset = 0
+                for index, part in enumerate(data):
+                    end = len(wire) if index == len(data) - 1 else min(len(wire), offset + len(part._data))
+                    replacement = wire[offset:end]
+                    if replacement != bytes(part._data):
+                        draft = copy.copy(part)
+                        draft.set_bytes(replacement)
+                        self.body_overrides[id(part)] = draft
+                    offset = end
+                if not data and wire:
+                    flags = 0 if have_trailer else 1
+                    self.after.setdefault(identity, []).append((0, flags, head.stream_id, wire))
+                    added_data = True
+
+            # Only the output's END_STREAM moves. Input termination and credit
+            # are still derived from the original unchanged Parts in accept().
+            self.flags[identity] = head.flags & ~1 if data or added_data or have_trailer else head.flags | 1
+            if data:
+                last = data[-1]
+                self.flags[id(last)] = last.flags & ~1 if have_trailer else last.flags | 1
+
+            if 'trailers' in operations:
+                if trailer_fields is None:
+                    if trailer is not None:
+                        self.suppressed.add(id(trailer))
+                elif trailer is not None:
+                    self.headers[id(trailer)] = trailer_fields
+                else:
+                    tail = data[-1] if data else head
+                    self.after.setdefault(id(tail), []).append((1, 5, head.stream_id, trailer_fields))
+
+    @staticmethod
+    def _body_wire(transaction, head, data, value, encoded):
+        if encoded:
+            return value
+        fields = transaction._header_fields(head)
+        coding = _body_encoding([item.decode('ascii', 'replace') for name, item, _ in fields
+                                 if name == b'content-encoding'])
+        if not coding or coding == 'identity':
+            return value
+        if coding not in ('gzip', 'deflate'):
+            raise CommitException('Decoded body replacement supports one gzip or deflate coding')
+        original = b''.join(bytes(part._data) for part in data)
+        source_coding = _body_encoding([field.value.decode('ascii', 'replace')
+                                       for field in transaction.decoded[id(head)].entries
+                                       if field.name == b'content-encoding'])
+        if original and source_coding == coding:
+            import copy
+            return _encode_body(copy.copy(head), original, value, coding, True)
+        import zlib
+        encoder = zlib.compressobj(wbits=31 if coding == 'gzip' else 15)
+        return encoder.compress(value) + encoder.flush()
+
+    def emit_after(self, part, encoder, settings, flow):
+        for kind, flags, stream, payload in self.after.get(id(part), ()):
+            if flow.cancelled(flow.side, stream):
+                continue
+            if kind == 1:
+                header = _h2_new_frame(1, flags, stream, b'')
+                header.max_frame_size = settings.limits['frame']
+                wire = header._assemble(encoder.encode(payload))
+            else:
+                wire = flow.frame(kind, flags, stream, payload)
+            # This is output only: accept() would invent input ownership and
+            # WINDOW_UPDATE refunds for bytes the sender never transmitted.
+            flow.queues[flow.side].append(wire)
+            flow.drain(flow.side)
+
+
 class _Translation:
-    def __init__(self, message, checkpoint, active, control=None, side='L', reverse_capable=False):
+    def __init__(self, message, checkpoint, peer_checkpoint, active, control=None,
+                 side='L', reverse_capable=False):
         if _translate_hpack is None:
             raise CommitException('H2 translate requires python-hpack')
 
@@ -1134,10 +1589,20 @@ class _Translation:
         self.encoder = _translate_hpack.Encoder()
         self.result = None
         self.checkpoint = None
+        self.peer_checkpoint_before = peer_checkpoint
+        self.peer_checkpoint = peer_checkpoint
+        self.peer_checkpoint_changed = False
         self.control_checkpoint = None
         self.reverse_output = b''
         self.flow_summary = None
         self.body_reservations = []
+        self.message_edits = {}
+        self.local_responses = {}
+        self.informational_responses = {}
+        self.informational_suppressions = {}
+        self.terminations = {}
+        self.pending_failures = None
+        self.reset_failures = {}
         self.hold_credit_available = False
         self.peer_hold_known = False
         self.peer_hold = None
@@ -1151,6 +1616,7 @@ class _Translation:
         self.settings = _TranslationSettings(control, side)
         self.decoded = {}
         self.source_lengths = {}
+        self.source_informational = {}
         self.original_fields = {}
         self.originals = tuple(bytes(p._wire) for p in message.parts)
         self.identities = tuple(id(p) for p in message.parts)
@@ -1161,6 +1627,12 @@ class _Translation:
 
             _translate_table_load(self.decoder, checkpoint['input'])
             _translate_table_load(self.encoder, checkpoint['output'])
+
+        self.peer_encoder = _translate_hpack.Encoder()
+        if peer_checkpoint is not None:
+            if peer_checkpoint.get('version') != 1:
+                raise CommitException('Unsupported peer translate checkpoint')
+            _translate_table_load(self.peer_encoder, peer_checkpoint['output'])
 
         self.input_before = _translate_table_dump(self.decoder)
 
@@ -1187,7 +1659,9 @@ class _Translation:
         if flow is not None:
             ledger = _TranslationFlow(flow, side)
             for part in message.parts:
-                if part.complete and part.stream_id and ledger.cancelled(side, part.stream_id):
+                if (part.complete and part.stream_id and
+                        (ledger.cancelled(side, part.stream_id) or
+                         ledger.failed(part.stream_id))):
                     # Compression history is retained, but a cancelled message
                     # must not look like a body still waiting for more DATA.
                     part._translate_cancelled = True
@@ -1196,12 +1670,638 @@ class _Translation:
             for group in _h2_content_groups(message.parts)
         })
 
+    def informational(self, part):
+        # Source and draft must agree. Editing final headers into a 1xx status
+        # must not bypass the reservation's before-output admission rule.
+        if self.settings.side != 'R' or not self.source_informational.get(id(part), False):
+            return False
+        return _translate_informational(part, self._header_fields(part))
+
+    def stage_message_edit(self, header, operation, value):
+        if 'flow' not in self.control_before:
+            raise CommitException('Message replacement requires content-reverse from activation')
+        if not any(part is header for part in self.message.parts):
+            raise CommitException('Replacement header must belong to the current message')
+        if header.frame_type != 1 or not header.complete or header.headers is None:
+            raise CommitException('Replacement requires complete initial HEADERS')
+        if id(header) in self.terminations:
+            raise CommitException('A terminated message cannot also be replaced')
+        if id(header) in self.informational_suppressions:
+            raise CommitException('A suppressed informational response cannot also be replaced')
+        fields = self._header_fields(header)
+        if not any(name in (b':method', b':status') for name, _, _ in fields):
+            raise CommitException('Replacement requires initial request or response headers')
+        operations = self.message_edits.setdefault(id(header), {})
+        operations[operation] = value
+
+    @staticmethod
+    def _response_fields(
+            fields,
+            *,
+            trailers=False,
+            content_length=None,
+            include_content_length=True,
+    ):
+        """Validate response fields while retaining application field order.
+
+        A local response owns its framing, so an application-supplied
+        Content-Length is never trusted.  Keeping the first field in place and
+        replacing its value preserves observable header order without allowing
+        duplicate or inconsistent lengths onto the wire.
+        """
+        copied = []
+        size = 0
+        length_seen = False
+        forbidden = {
+            b'connection', b'host', b'keep-alive', b'proxy-connection',
+            b'te', b'trailer', b'transfer-encoding', b'upgrade',
+        }
+        if trailers:
+            forbidden.add(b'content-length')
+
+        try:
+            items = tuple(fields)
+        except TypeError as error:
+            raise CommitException('Response fields must be an iterable of byte pairs') from error
+
+        for item in items:
+            if (not isinstance(item, (tuple, list)) or len(item) != 2 or
+                    not isinstance(item[0], bytes) or not isinstance(item[1], bytes)):
+                raise CommitException('Response fields must be byte pairs')
+            name, value = item
+            if (not name or name.startswith(b':') or
+                    re.fullmatch(rb"[!#$%&'*+.^_`|~0-9a-z-]+", name) is None or
+                    name in forbidden):
+                raise CommitException('Invalid HTTP/2 response field name')
+            if any(byte in value for byte in (b'\r', b'\n', b'\x00')):
+                raise CommitException('Invalid control byte in response field')
+            if name == b'content-length':
+                if not include_content_length:
+                    continue
+                if content_length is not None:
+                    if not length_seen:
+                        copied.append((name, content_length, False))
+                        length_seen = True
+                else:
+                    copied.append((name, value, False))
+            else:
+                copied.append((name, value, False))
+            size += len(name) + len(value) + 32
+            if size > 65536:
+                raise CommitException('Response fields exceed 64 KiB')
+        if include_content_length and content_length is not None and not length_seen:
+            copied.append((b'content-length', content_length, False))
+        return tuple(copied)
+
+    def stage_informational_response(self, request_part, status, headers):
+        """Validate and stage one reverse informational response."""
+        if 'flow' not in self.control_before:
+            raise CommitException(
+                'Informational responses require content-reverse from activation'
+            )
+        if self.settings.side != 'L':
+            raise CommitException(
+                'An informational response must be staged while publishing a request'
+            )
+        if type(status) is not int or not 100 <= status <= 199 or status == 101:
+            raise CommitException(
+                'Informational response status must be an integer in 100..199 except 101'
+            )
+
+        positions = [
+            index for index, part in enumerate(self.message.parts)
+            if part is request_part
+        ]
+        if len(positions) != 1:
+            raise CommitException(
+                'Informational response request must belong to the current message'
+            )
+        if (not request_part.complete or request_part.frame_type != 1 or
+                request_part.headers is None):
+            raise CommitException(
+                'Informational response requires complete initial request HEADERS'
+            )
+
+        original = self.decoded.get(id(request_part))
+        original_fields = [] if original is None else [
+            (field.name, field.value, False)
+            for field in original.entries
+        ]
+        methods = [
+            value for name, value, _ in original_fields
+            if name == b':method'
+        ]
+        statuses = [
+            value for name, value, _ in original_fields
+            if name == b':status'
+        ]
+        if len(methods) != 1 or statuses:
+            raise CommitException(
+                'Informational response requires original request HEADERS'
+            )
+        if id(request_part) in self.informational_responses:
+            raise CommitException(
+                'A request can emit only one informational response per callback'
+            )
+        if id(request_part) in self.local_responses:
+            raise CommitException(
+                'A local final response cannot also emit an informational response'
+            )
+        if id(request_part) in self.terminations:
+            raise CommitException(
+                'A terminated request cannot emit an informational response'
+            )
+
+        regular = self._response_fields(headers, trailers=True)
+        self.informational_responses[id(request_part)] = {
+            'anchor': request_part,
+            'stream': request_part.stream_id,
+            'status': status,
+            'headers': regular,
+        }
+        return request_part.stream_id
+
+    def stage_informational_suppression(self, response_part):
+        """Validate and stage one source informational HEADERS suppression."""
+        if 'flow' not in self.control_before:
+            raise CommitException(
+                'Informational suppression requires content-reverse from activation'
+            )
+        if self.settings.side != 'R':
+            raise CommitException(
+                'Only an upstream informational response can be suppressed'
+            )
+        positions = [
+            index for index, part in enumerate(self.message.parts)
+            if part is response_part
+        ]
+        if len(positions) != 1:
+            raise CommitException(
+                'Informational response must belong to the current message'
+            )
+        if (not response_part.complete or response_part.frame_type != 1 or
+                response_part.headers is None or
+                not self.source_informational.get(id(response_part), False)):
+            raise CommitException(
+                'Suppression requires original complete informational response HEADERS'
+            )
+        if id(response_part) in self.informational_suppressions:
+            raise CommitException(
+                'An informational response can be suppressed only once per callback'
+            )
+        if id(response_part) in self.message_edits:
+            raise CommitException(
+                'A replaced response cannot also be suppressed'
+            )
+        if id(response_part) in self.terminations:
+            raise CommitException(
+                'A terminated response cannot also be suppressed'
+            )
+
+        self.informational_suppressions[id(response_part)] = response_part
+        return response_part.stream_id
+
+    def stage_pending_request_failures(
+            self,
+            goaway_part,
+            status,
+            headers,
+            body,
+            trailers,
+            include_content_length,
+    ):
+        """Validate one upstream GOAWAY and freeze its pending stream set."""
+        if 'flow' not in self.control_before:
+            raise CommitException('Pending request failure requires content-reverse from activation')
+        if self.settings.side != 'R':
+            raise CommitException('Pending requests can be failed only by an upstream GOAWAY')
+        if self.pending_failures is not None:
+            raise CommitException('Pending requests can be failed only once per callback')
+        positions = [index for index, part in enumerate(self.message.parts)
+                     if part is goaway_part]
+        if len(positions) != 1:
+            raise CommitException('GOAWAY anchor must belong to the current message')
+        if (not goaway_part.complete or goaway_part.frame_type != 7 or
+                goaway_part.stream_id != 0 or len(goaway_part.get_bytes()) < 8):
+            raise CommitException('Pending request failure requires a complete GOAWAY')
+        position = positions[0]
+        if goaway_part.commit() != self.originals[position]:
+            raise CommitException('GOAWAY anchor must remain unedited')
+        response = self._failure_response(
+            status,
+            headers,
+            body,
+            trailers,
+            include_content_length,
+        )
+
+        flow_state = self.control_before['flow']
+        records = flow_state.get('http_streams', {})
+        pending = {
+            int(stream)
+            for stream, record in records.items()
+            if record.get('request_headers') and
+            not record.get('final_response') and
+            not record.get('failure_staged')
+        }
+        for part in self.message.parts[:position]:
+            if not part.complete:
+                raise CommitException('GOAWAY selection requires complete preceding frames')
+            if part.frame_type == 3:
+                pending.discard(part.stream_id)
+                continue
+            if part.frame_type != 1 or part.headers is None:
+                continue
+            fields = self._header_fields(part)
+            statuses = [value for name, value, _ in fields if name == b':status']
+            if statuses and not self.source_informational.get(id(part), False):
+                pending.discard(part.stream_id)
+
+        selected = tuple(sorted(pending))
+        self.pending_failures = {
+            'anchor': goaway_part,
+            'streams': selected,
+            **response,
+        }
+        return selected
+
+    def stage_reset_stream_failure(
+            self,
+            reset_part,
+            status,
+            headers,
+            body,
+            trailers,
+            include_content_length,
+    ):
+        """Validate one upstream reset and stage a local stream response."""
+        if 'flow' not in self.control_before:
+            raise CommitException('Reset stream failure requires content-reverse from activation')
+        if self.settings.side != 'R':
+            raise CommitException('Only an upstream RST_STREAM can fail a request')
+        positions = [index for index, part in enumerate(self.message.parts)
+                     if part is reset_part]
+        if len(positions) != 1:
+            raise CommitException('RST_STREAM anchor must belong to the current message')
+        if (not reset_part.complete or reset_part.frame_type != 3 or
+                not reset_part.stream_id or len(reset_part.get_bytes()) != 4):
+            raise CommitException('Stream failure requires a complete RST_STREAM')
+        position = positions[0]
+        if reset_part.commit() != self.originals[position]:
+            raise CommitException('RST_STREAM anchor must remain unedited')
+        if id(reset_part) in self.reset_failures:
+            raise CommitException('An RST_STREAM can fail its request only once')
+        if any(plan['stream'] == reset_part.stream_id
+               for plan in self.reset_failures.values()):
+            raise CommitException('A request stream can fail only once per callback')
+
+        record = self.control_before['flow'].get('http_streams', {}).get(
+            str(reset_part.stream_id)
+        )
+        if (record is None or not record.get('request_headers') or
+                record.get('final_response') or record.get('failure_staged')):
+            raise CommitException('Reset request stream is no longer publishable')
+
+        for part in self.message.parts[:position]:
+            if not part.complete:
+                raise CommitException('RST_STREAM selection requires complete preceding frames')
+            if part.stream_id != reset_part.stream_id:
+                continue
+            if part.frame_type == 3:
+                raise CommitException('A request stream can fail only once per callback')
+
+        response = self._failure_response(
+            status,
+            headers,
+            body,
+            trailers,
+            include_content_length,
+        )
+        self.reset_failures[id(reset_part)] = {
+            'anchor': reset_part,
+            'stream': reset_part.stream_id,
+            **response,
+        }
+        return reset_part.stream_id
+
+    def _failure_response(
+            self,
+            status,
+            headers,
+            body,
+            trailers,
+            include_content_length,
+    ):
+        """Validate one protocol-owned failure response without staging it."""
+        if type(status) is not int or not 400 <= status <= 599:
+            raise CommitException('Failure response status must be an integer in 400..599')
+        if not isinstance(body, bytes):
+            raise CommitException('Failure response body must be bytes')
+        if len(body) > 1024 * 1024:
+            raise CommitException('Failure response body exceeds 1 MiB')
+
+        length = str(len(body)).encode('ascii')
+        regular = self._response_fields(
+            headers,
+            content_length=length,
+            include_content_length=include_content_length,
+        )
+        trailing = self._response_fields(trailers, trailers=True)
+        return {
+            'status': status,
+            'headers': regular,
+            'body': body,
+            'trailers': trailing,
+        }
+
+    def stage_local_response(self, request, status, headers, body, trailers):
+        if 'flow' not in self.control_before:
+            raise CommitException('Local responses require content-reverse from activation')
+        if self.settings.side != 'L':
+            raise CommitException('A local response must be staged while publishing a request')
+        if type(status) is not int or not 200 <= status <= 599:
+            raise CommitException('Local response status must be an integer in 200..599')
+        if not isinstance(body, bytes):
+            raise CommitException('Local response body must be bytes')
+        if len(body) > 1024 * 1024:
+            raise CommitException('Local response body exceeds 1 MiB')
+
+        groups = []
+        for group in _h2_content_groups(self.message.parts):
+            head = group[0]
+            if not head.complete or head.frame_type != 1:
+                continue
+            fields = self._header_fields(head)
+            if any(name == b':method' for name, _, _ in fields):
+                groups.append((head, group, fields))
+
+        if request is None:
+            if len(groups) != 1:
+                raise CommitException('Local response requires exactly one complete request or an explicit request Part')
+            selected = groups[0]
+        else:
+            matches = [group for group in groups if group[0] is request]
+            if len(matches) != 1:
+                raise CommitException('The selected request Part is not a complete request in this callback')
+            selected = matches[0]
+
+        head, group, request_fields = selected
+        if id(head) in self.terminations:
+            raise CommitException('A terminated request cannot also receive a local response')
+        if id(head) in self.informational_responses:
+            raise CommitException('An informational response request cannot also receive a local final response')
+        if not head.content.complete or any(not part.complete for part in group):
+            raise CommitException('Local response requires a complete retained request')
+        if id(head) in self.local_responses:
+            raise CommitException('A request can have only one local response')
+
+        length = str(len(body)).encode('ascii')
+        regular = self._response_fields(headers, content_length=length)
+        trailing = self._response_fields(trailers, trailers=True)
+        method = next(value for name, value, _ in request_fields if name == b':method')
+        self.local_responses[id(head)] = {
+            'head': head,
+            'parts': tuple(group),
+            'stream': head.stream_id,
+            'status': status,
+            'headers': regular,
+            'body': body,
+            'trailers': trailing,
+            'method': method,
+        }
+
+    def stage_termination(self, header, reason, http2_error):
+        """Validate and stage a callback-local H2 stream termination."""
+        if 'flow' not in self.control_before:
+            raise CommitException('H2 termination requires content-reverse from activation')
+        if not isinstance(reason, str):
+            raise CommitException('H2 termination reason must be text')
+        if not 1 <= len(reason.encode('utf-8')) <= 1024:
+            raise CommitException('H2 termination reason must be 1..1024 UTF-8 bytes')
+        if any(character in reason for character in ('\r', '\n', '\x00')):
+            raise CommitException('H2 termination reason contains a control character')
+        if type(http2_error) is not int or not 0 <= http2_error <= 0xffffffff:
+            raise CommitException('H2 termination error must be an integer in 0..4294967295')
+        if not any(part is header for part in self.message.parts):
+            raise CommitException('Termination header must belong to the current message')
+        if header.frame_type != 1 or not header.complete or header.headers is None:
+            raise CommitException('Termination requires complete initial HEADERS')
+
+        fields = self._header_fields(header)
+        methods = [value for name, value, _ in fields if name == b':method']
+        statuses = [value for name, value, _ in fields if name == b':status']
+        if len(methods) + len(statuses) != 1:
+            raise CommitException('Termination requires initial request or final response headers')
+        if statuses:
+            status = statuses[0]
+            if not (len(status) == 3 and status.isdigit() and 200 <= int(status) <= 599):
+                raise CommitException('Termination requires final response headers, not informational headers')
+
+        groups = [group for group in _h2_content_groups(self.message.parts)
+                  if group[0] is header]
+        if len(groups) != 1:
+            raise CommitException('Termination header does not identify one H2 message')
+        if id(header) in self.terminations:
+            raise CommitException('An H2 message can be terminated only once')
+        if id(header) in self.message_edits:
+            raise CommitException('A replaced message cannot also be terminated')
+        if id(header) in self.local_responses:
+            raise CommitException('A local response request cannot also be terminated')
+        if id(header) in self.informational_responses:
+            raise CommitException('An informational response request cannot also be terminated')
+        if id(header) in self.informational_suppressions:
+            raise CommitException('A suppressed informational response cannot also be terminated')
+
+        self.terminations[id(header)] = {
+            'head': header,
+            'parts': tuple(groups[0]),
+            'stream': header.stream_id,
+            'kind': 'request' if methods else 'response',
+            'reason': reason,
+            'http2_error': http2_error,
+        }
+
+    def _prepare_terminations(self, flow):
+        suppressed = set()
+        side = self.settings.side
+
+        for termination in self.terminations.values():
+            stream = termination['stream']
+            expected_side = 'L' if termination['kind'] == 'request' else 'R'
+            if side != expected_side:
+                raise CommitException('H2 termination headers arrived from the wrong direction')
+            if flow.cancelled(side, stream) or flow.retired(side, stream):
+                raise CommitException('H2 termination stream is no longer publishable')
+            if flow._contains(flow.state[side].get('opened', {}), stream):
+                raise CommitException('H2 termination cannot suppress already published headers')
+
+            suppressed.update(id(part) for part in termination['parts'])
+            target = flow.peer if termination['kind'] == 'request' else flow.side
+            flow.terminate(stream, target, termination['http2_error'])
+
+        return suppressed
+
+    def _prepare_local_responses(self, flow, cut):
+        positions = {id(part): index for index, part in enumerate(self.message.parts)}
+        suppressed = set()
+        after = {}
+
+        for response in self.local_responses.values():
+            stream = response['stream']
+            parts = response['parts']
+            if flow.cancelled(flow.side, stream) or flow.retired(flow.side, stream):
+                raise CommitException('Local response request stream is no longer publishable')
+            if any(positions.get(id(part), cut) >= cut for part in parts):
+                raise CommitException('Emit the complete retained request with its local response')
+            if flow._contains(flow.state[flow.side].get('opened', {}), stream):
+                raise CommitException('Local response cannot replace an already published request')
+            suppressed.update(id(part) for part in parts)
+            after[id(parts[-1])] = response
+        return suppressed, after
+
+    @staticmethod
+    def _queue_local_response(response, flow, settings, encoder):
+        peer = flow.peer
+        stream = response['stream']
+        trailers = response['trailers']
+        body = response['body']
+        fields = [(b':status', str(response['status']).encode('ascii'), False)]
+        fields.extend(response['headers'])
+
+        flags = 4
+        if not body and not trailers:
+            flags |= 1
+        header = _h2_new_frame(1, flags, stream, b'')
+        header.max_frame_size = settings.state[peer]['frame']
+        flow.queues[peer].append(header._assemble(encoder.encode(fields)))
+
+        if body:
+            flow.queues[peer].append(flow.frame(
+                0,
+                0 if trailers else 1,
+                stream,
+                body,
+            ))
+        if trailers:
+            trailer = _h2_new_frame(1, 5, stream, b'')
+            trailer.max_frame_size = settings.state[peer]['frame']
+            flow.queues[peer].append(trailer._assemble(encoder.encode(trailers)))
+
+        flow.close(flow.side, stream)
+        flow.drain(peer)
+
+    @staticmethod
+    def _queue_informational_response(response, flow, settings, encoder):
+        """Queue one reverse HEADERS block without ending the request stream."""
+        peer = flow.peer
+        fields = [
+            (b':status', str(response['status']).encode('ascii'), False),
+            *response['headers'],
+        ]
+        header = _h2_new_frame(1, 4, response['stream'], b'')
+        header.max_frame_size = settings.state[peer]['frame']
+        flow.queues[peer].append(header._assemble(encoder.encode(fields)))
+        flow.drain(peer)
+
+    def _prepare_informational_responses(self, flow, settings, encoder):
+        """Publish staged reverse responses, including for a held request head."""
+        for response in self.informational_responses.values():
+            stream = response['stream']
+            if flow.cancelled(flow.side, stream) or flow.retired(flow.side, stream):
+                raise CommitException(
+                    'Informational response request stream is no longer publishable'
+                )
+            record = flow.state.get('http_streams', {}).get(str(stream))
+            if record is not None and record.get('final_response'):
+                raise CommitException(
+                    'Informational response cannot follow a final response'
+                )
+            self._queue_informational_response(response, flow, settings, encoder)
+
+    def _prepare_informational_suppressions(self, flow, cut):
+        """Select only source headers consumed by this Translate prefix."""
+        positions = {
+            id(part): index for index, part in enumerate(self.message.parts)
+        }
+        suppressed = set()
+        for identity, response_part in self.informational_suppressions.items():
+            position = positions.get(identity)
+            if position is None or position >= cut:
+                raise CommitException(
+                    'Emit the informational response anchor when suppressing it'
+                )
+            if flow.cancelled(flow.side, response_part.stream_id):
+                continue
+            suppressed.add(identity)
+        return suppressed
+
+    @staticmethod
+    def _queue_failure_response(response, stream, flow, settings, encoder):
+        """Queue one same-direction response through the existing H2 scheduler."""
+        side = flow.side
+        trailers = response['trailers']
+        body = response['body']
+        fields = [(b':status', str(response['status']).encode('ascii'), False)]
+        fields.extend(response['headers'])
+
+        flags = 4
+        if not body and not trailers:
+            flags |= 1
+        header = _h2_new_frame(1, flags, stream, b'')
+        header.max_frame_size = settings.state[side]['frame']
+        flow.queues[side].append(header._assemble(encoder.encode(fields)))
+        if body:
+            flow.queues[side].append(flow.frame(
+                0,
+                0 if trailers else 1,
+                stream,
+                body,
+            ))
+        if trailers:
+            trailer = _h2_new_frame(1, 5, stream, b'')
+            trailer.max_frame_size = settings.state[side]['frame']
+            flow.queues[side].append(trailer._assemble(encoder.encode(trailers)))
+        flow.drain(side)
+
+    def _prepare_pending_failures(self, flow, cut, settings, encoder):
+        plan = self.pending_failures
+        if plan is None:
+            return set()
+        positions = [index for index, part in enumerate(self.message.parts)
+                     if part is plan['anchor']]
+        if len(positions) != 1 or positions[0] >= cut:
+            raise CommitException('Emit the GOAWAY anchor with its pending request failures')
+
+        flow.consume_failed_goaway(plan['anchor'])
+        for stream in plan['streams']:
+            flow.fail_stream(stream)
+            self._queue_failure_response(plan, stream, flow, settings, encoder)
+        return {id(plan['anchor'])}
+
+    def _prepare_reset_failures(self, flow, cut, settings, encoder):
+        """Consume selected resets and queue their stream-local responses."""
+        anchors = set()
+        positions = {id(part): index for index, part in enumerate(self.message.parts)}
+        plans = sorted(
+            self.reset_failures.values(),
+            key=lambda plan: positions.get(id(plan['anchor']), cut),
+        )
+        for plan in plans:
+            position = positions.get(id(plan['anchor']))
+            if position is None or position >= cut:
+                raise CommitException('Emit the RST_STREAM anchor with its failure response')
+            flow.fail_stream(plan['stream'])
+            self._queue_failure_response(plan, plan['stream'], flow, settings, encoder)
+            anchors.add(id(plan['anchor']))
+        return anchors
+
     @staticmethod
     def _discard_held(parts, flow, side):
         kept = []
         direction = flow.state[side]
         for part in parts:
-            if part.stream_id and flow.cancelled(side, part.stream_id):
+            if part.stream_id and (
+                    flow.cancelled(side, part.stream_id) or flow.failed(part.stream_id)):
                 if part.frame_type == 0 and len(part._wire) >= 9:
                     amount = int.from_bytes(bytes(part._wire)[:3], 'big')
                     flow.discard_input(side, part.stream_id, amount)
@@ -1240,6 +2340,8 @@ class _Translation:
             for field in fields
         ])
         self.decoded[id(part)] = headers
+        self.source_informational[id(part)] = _translate_informational(
+            part, [(field.name, field.value, False) for field in headers.entries])
         self.source_lengths[id(part)] = tuple(field.value for field in headers.entries
                                              if field.name == b'content-length')
 
@@ -1340,6 +2442,7 @@ class _Translation:
         # A failed assembly can be retried. Publish neither bytes nor table
         # changes until the entire message and checkpoint have passed validation.
         encoder = copy.deepcopy(self.encoder)
+        peer_encoder = copy.deepcopy(self.peer_encoder)
         settings = _TranslationSettings(self.control_before, self.settings.side)
         flow = (_TranslationFlow(settings.state['flow'], settings.side)
                 if 'flow' in settings.state else None)
@@ -1353,6 +2456,23 @@ class _Translation:
                 else:
                     del direction['discard_bytes']
             incoming.receive(settings.side, message.bytes)
+        if flow is not None:
+            self._prepare_informational_responses(
+                flow,
+                settings,
+                peer_encoder,
+            )
+        failure_anchors = set()
+        if flow is not None:
+            # Stream failures are staged in source order before a later
+            # connection failure. This preserves observable response ordering
+            # for RST_STREAM immediately followed by GOAWAY.
+            failure_anchors.update(
+                self._prepare_reset_failures(flow, cut, settings, encoder)
+            )
+            failure_anchors.update(
+                self._prepare_pending_failures(flow, cut, settings, encoder)
+            )
         terminal = set()
         if flow is not None:
             # Translate owns terminal control even when an application body is
@@ -1361,14 +2481,34 @@ class _Translation:
                 if part.complete and part.frame_type in (3, 7):
                     if part.commit() != original:
                         raise CommitException('Translate terminal controls cannot be edited')
-                    flow.accept(part, original)
+                    if id(part) in failure_anchors:
+                        pass
+                    elif part.frame_type == 3 and flow.failed(part.stream_id):
+                        # The GOAWAY failure response already owns this stream.
+                        # A later reset from the failed upstream connection
+                        # must not cancel or truncate that local response.
+                        pass
+                    elif (part.frame_type == 7 and settings.side == 'R' and
+                          flow.state.get('failed_goaway') is not None):
+                        flow.consume_failed_goaway(part)
+                    else:
+                        flow.accept(part, original)
                     terminal.add(id(part))
+        termination_suppressed = self._prepare_terminations(flow) if flow is not None else set()
         hold_credit = _TranslationHoldCredit(self, flow, incoming, cut) if flow is not None else None
 
         emitted = message.parts[:cut]
         live = [part for part in emitted if flow is None or not flow.cancelled(settings.side, part.stream_id)]
+        edits = _TranslationMessageEdits(self, flow, cut)
+        local_suppressed, local_after = self._prepare_local_responses(flow, cut) if flow is not None else (set(), {})
+        informational_suppressed = (
+            self._prepare_informational_suppressions(flow, cut)
+            if flow is not None else set()
+        )
         body_overrides = _encoded_h2_bodies(live)
+        body_overrides.update(edits.body_overrides)
         header_lengths = self._body_lengths(live, body_overrides, flow)
+        header_lengths.update(edits.lengths)
 
         for part, original in zip(emitted, self.originals):
             start = len(output)
@@ -1377,12 +2517,45 @@ class _Translation:
             if not part.complete:
                 raise CommitException('Incomplete H2 part: hold_from(part) before translate')
 
+            if (flow is not None and part.stream_id and
+                    flow.failed(part.stream_id)):
+                # Source HPACK was already decoded during transaction setup.
+                # Failed stream bytes update only native input accounting.
+                flow.accept(part, b'')
+                continue
+
+            if id(part) in termination_suppressed:
+                flow.accept(part, b'')
+                continue
+
             if flow is not None and flow.cancelled(settings.side, part.stream_id) and part.frame_type in (1, 5):
                 continue  # Input HPACK was decoded; cancelled drafts have no output context.
+
+            if id(part) in local_suppressed:
+                flow.accept(part, b'')
+                response = local_after.get(id(part))
+                if response is not None:
+                    self._queue_local_response(response, flow, settings, peer_encoder)
+                continue
+
+            if id(part) in informational_suppressed:
+                # Input HPACK was decoded during transaction setup. Accepting
+                # an empty publication settles source accounting without
+                # advancing the downstream encoder or exposing this block.
+                flow.accept(part, b'')
+                continue
+
+            if id(part) in edits.suppressed:
+                # Decode source trailers as usual, but do not publish them into
+                # the output HPACK table. Source completion is still observed.
+                flow.accept(part, b'')
+                continue
 
             if part._initial[0] == 0:
                 output.extend(self._translate_data(body_overrides.get(id(part), part), original,
                                                    resizing=flow is not None))
+                if id(part) in edits.flags:
+                    output[start + 4] = (output[start + 4] & ~1) | (edits.flags[id(part)] & 1)
             elif part._initial[0] not in (1, 5):
                 if part.commit() != original:
                     raise CommitException('Translate supports logical header and DATA edits only')
@@ -1397,7 +2570,9 @@ class _Translation:
                 if (part.frame_type, part.flags, part.stream_id) != part._initial:
                     raise CommitException('Translate headers must preserve frame type, flags and stream id')
 
-                fields = self._header_fields(part)
+                fields = edits.headers.get(id(part))
+                if fields is None:
+                    fields = self._header_fields(part)
                 if id(part) in header_lengths:
                     fields = [(name, header_lengths[id(part)] if name == b'content-length' else value, sensitive)
                               for name, value, sensitive in fields]
@@ -1405,20 +2580,34 @@ class _Translation:
                         not flow.cancelled(settings.side, part.stream_id) and
                         not flow.retired(settings.side, part.stream_id)):
                     if any(name in (b':method', b':status') for name, _, _ in fields):
-                        flow.stream(settings.side, part.stream_id)['content_length'] = any(
+                        previous = flow.state[settings.side]['streams'].get(str(part.stream_id))
+                        only_informational = self.informational(part)
+                        if previous is not None:
+                            only_informational = only_informational and previous.get('informational_only', False)
+                        entry = flow.stream(settings.side, part.stream_id)
+                        entry['informational_only'] = only_informational
+                        entry['content_length'] = any(
                             name == b'content-length' for name, _, _ in fields)
-                previous_size = part.max_frame_size
-
-                try:
-                    part.max_frame_size = min(previous_size, settings.limits['frame'])
-                    output.extend(part._assemble(encoder.encode(fields)))
-                finally:
-                    part.max_frame_size = previous_size
+                draft = copy.copy(part)
+                draft.max_frame_size = min(part.max_frame_size, settings.limits['frame'])
+                draft.flags = edits.flags.get(id(part), part.flags)
+                output.extend(draft._assemble(encoder.encode(fields)))
 
             if flow is not None:
                 wire = bytes(output[start:])
                 del output[start:]
                 flow.accept(part, wire)
+                if wire and part.frame_type == 1:
+                    methods = [value for name, value, _ in fields
+                               if name == b':method']
+                    statuses = [value for name, value, _ in fields
+                                if name == b':status']
+                    if settings.side == 'L' and len(methods) == 1:
+                        flow.observe_request(part.stream_id, bool(part.flags & 1))
+                    elif (settings.side == 'R' and len(statuses) == 1 and
+                          not self.informational(part)):
+                        flow.observe_final_response(part.stream_id)
+                edits.emit_after(part, encoder, settings, flow)
 
             if len(output) > 1024 * 1024:
                 raise CommitException('Translated output exceeds 1 MiB')
@@ -1489,6 +2678,21 @@ class _Translation:
         if len(json.dumps(checkpoint)) > 65536:
             raise CommitException('Translate checkpoint exceeds 64 KiB')
 
+        peer_checkpoint = self.peer_checkpoint_before
+        if self.local_responses or self.informational_responses:
+            if peer_checkpoint is None:
+                peer_decoder = _translate_hpack.Decoder()
+                peer_input = _translate_table_dump(peer_decoder)
+            else:
+                peer_input = copy.deepcopy(peer_checkpoint['input'])
+            peer_checkpoint = {
+                'version': 1,
+                'input': peer_input,
+                'output': _translate_table_dump(peer_encoder),
+            }
+            if len(json.dumps(peer_checkpoint)) > 65536:
+                raise CommitException('Peer translate checkpoint exceeds 64 KiB')
+
         if len(json.dumps(settings.state)) > 1024 * 1024:
             raise CommitException('Translate control checkpoint exceeds 1 MiB')
 
@@ -1539,6 +2743,10 @@ class _Translation:
 
         self.result = result
         self.checkpoint = checkpoint
+        self.peer_checkpoint = peer_checkpoint
+        self.peer_checkpoint_changed = bool(
+            self.local_responses or self.informational_responses
+        )
         self.control_checkpoint = settings.state
         self.reverse_output = reverse_output
         self.peer_hold_result = peer_held
@@ -1618,15 +2826,30 @@ def _prepare_translation(message, request):
         control = request.get('translate_control')
         side = request.get('event', {}).get('details', {}).get('info', {}).get('side', 'L')
         settings = _TranslationSettings(control, side)
+        h2_observed = (
+            (message.bytes and _H2_PREFACE.startswith(
+                message.bytes[:len(_H2_PREFACE)]))
+            or any(p.is_a(PartType.Http2.Part) for p in message.parts)
+        )
+
+        if not active and not h2_observed:
+            return
 
         if active:
             _resume_translation(message, request.get('held_parts'), settings)
-        elif ((message.bytes and _H2_PREFACE.startswith(message.bytes[:len(_H2_PREFACE)])) or
-              any(p.is_a(PartType.Http2.Part) for p in message.parts)):
+        else:
             _resume_translation(message, None, settings)
         info = request.get('event', {}).get('details', {}).get('info', {})
         reverse_capable = info.get('webhook_control', {}).get('content-reverse') is True
-        transaction = _Translation(message, request.get('translate_state'), active, control, side, reverse_capable)
+        transaction = _Translation(
+            message,
+            request.get('translate_state'),
+            request.get('peer_translate_state'),
+            active,
+            control,
+            side,
+            reverse_capable,
+        )
         transaction.hold_credit_available = request.get('hold_credit_available') is True
         transaction.peer_hold_known = 'peer_held_parts' in request
         transaction.peer_hold = request.get('peer_held_parts')

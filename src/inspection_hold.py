@@ -82,6 +82,16 @@ def _encode_body(owner, original, plain, encoding, complete):
     return encoder.compress(plain) + encoder.flush()
 
 
+def _copy_h1_draft(target, source):
+    """Copy semantic HTTP/1 fields without sharing the mutable header list."""
+    target.headers = list(source.headers)
+    target.target = source.target
+    target.method = source.method
+    target.status_code = source.status_code
+    target.reason = source.reason
+    target.http_version = source.http_version
+
+
 class _H1Group:
     """One annotated Content-Length message, retaining head/body meaning."""
 
@@ -93,10 +103,12 @@ class _H1Group:
             if colon and name.lower() == b'content-length':
                 lengths.append(value.strip())
 
-        if len(lengths) != 1 or not lengths[0].isdigit() or len(lengths[0]) > 10:
-            raise CommitException('H1 Parts require one Content-Length')
+        if len(lengths) > 1:
+            raise CommitException('H1 Parts require unambiguous Content-Length framing')
+        if lengths and (not lengths[0].isdigit() or len(lengths[0]) > 10):
+            raise CommitException('H1 Parts require a valid Content-Length')
 
-        self.expected = int(lengths[0])
+        self.expected = int(lengths[0]) if lengths else 0
 
         if self.expected + len(head) > 1024 * 1024:
             raise CommitException('H1 message exceeds 1 MiB')
@@ -130,8 +142,7 @@ class _H1Group:
             raise CommitException('Edit content through the H1 Body part, not header.http1.body')
 
         snapshot = MessageSnapshot(self.head + self.body)
-        snapshot.http1.headers = list(self.draft.headers)
-        snapshot.http1.target = self.draft.target
+        _copy_h1_draft(snapshot.http1, self.draft)
         snapshot.http1.body = self.content_part._encoded_bytes()
         snapshot._managed_body_encoding = True
         wire = snapshot.commit(safety=safety)
@@ -179,7 +190,11 @@ def _hold_ranges(info, size):
 def make_message_parts(data, info, enrichments):
     """H1 boundaries require supplied annotations, never protocol sniffing."""
     annotations = _hold_ranges(info, len(data))
+    parts = []
+    cursor = 0
     for start, end in _h1_head_ranges(annotations):
+        if start < cursor:
+            continue
         try:
             head = data[start:end]
             chunked = any(line.split(b':', 1)[0].lower() == b'transfer-encoding'
@@ -188,19 +203,23 @@ def make_message_parts(data, info, enrichments):
         except CommitException:
             continue
 
-        parts = [group.header, group.content_part]
-
-        if start:
-            parts.insert(0, RewritePart(data[:start], data=data[:start]))
-
+        if start > cursor:
+            prefix = data[cursor:start]
+            parts.append(RewritePart(prefix, data=prefix))
+        parts.extend((group.header, group.content_part))
         body_end = end + len(group.body)
+        cursor = body_end
 
-        if body_end < len(data):
-            parts.append(RewritePart(data[body_end:], data=data[body_end:]))
+        if not group.content_part.complete:
+            break
 
-        return parts
+    if not parts:
+        return make_rewrite_parts(data, info, enrichments)
+    if cursor < len(data):
+        suffix = data[cursor:]
+        parts.append(RewritePart(suffix, data=suffix))
 
-    return make_rewrite_parts(data, info, enrichments)
+    return parts
 
 
 def _h1_head_ranges(annotations):
@@ -222,7 +241,7 @@ def _checkpoint_types():
     """Both directions use the same closed set of data-only checkpoint types."""
     classes = (
         RewritePart, HpackField, H2Headers, PartContent,
-        _H1Part, _H1Group, _ChunkedGroup, _ChunkedBody, _H1Chunk, Http1Draft, Header,
+        _H1Part, _H1Group, _ChunkedGroup, H1ChunkedBody, _H1Chunk, Http1Draft, Header,
     )
     return {cls.__name__: cls for cls in classes}
 

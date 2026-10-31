@@ -1,0 +1,97 @@
+{
+  "events": [
+    {
+      "content": null,
+      "content_length": "16",
+      "hook": "requestheaders-before",
+      "path": "/replace-request"
+    },
+    {
+      "content": "new request!!!!",
+      "content_length": "15",
+      "hook": "requestheaders-after",
+      "path": "/replace-request"
+    },
+    {
+      "content": "original request",
+      "content_length": "15",
+      "hook": "request",
+      "path": "/replace-request"
+    },
+    {
+      "content": null,
+      "content_length": "15",
+      "hook": "responseheaders-before",
+      "path": "/replace-request"
+    },
+    {
+      "content": null,
+      "content_length": "15",
+      "hook": "responseheaders-after",
+      "path": "/replace-request"
+    },
+    {
+      "content": "origin response",
+      "content_length": "15",
+      "hook": "response",
+      "path": "/replace-request"
+    },
+    {
+      "content": null,
+      "content_length": "16",
+      "hook": "requestheaders-before",
+      "path": "/replace-response"
+    },
+    {
+      "content": null,
+      "content_length": "16",
+      "hook": "requestheaders-after",
+      "path": "/replace-response"
+    },
+    {
+      "content": "original request",
+      "content_length": "16",
+      "hook": "request",
+      "path": "/replace-response"
+    },
+    {
+      "content": null,
+      "content_length": "15",
+      "hook": "responseheaders-before",
+      "path": "/replace-response"
+    },
+    {
+      "content": "new response!!!",
+      "content_length": "15",
+      "hook": "responseheaders-after",
+      "path": "/replace-response"
+    },
+    {
+      "content": "origin response",
+      "content_length": "15",
+      "hook": "response",
+      "path": "/replace-response"
+    }
+  ],
+  "origin_requests": {
+    "/replace-request": {
+      "body": "original reques",
+      "content_length": "15"
+    },
+    "/replace-response": {
+      "body": "original request",
+      "content_length": "16"
+    }
+  },
+  "reference": "mitmproxy 12.3.1",
+  "responses": {
+    "/replace-request": {
+      "body": "origin response",
+      "content_length": "15"
+    },
+    "/replace-response": {
+      "body": "origin response",
+      "content_length": "15"
+    }
+  }
+}

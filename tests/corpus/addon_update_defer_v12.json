@@ -1,0 +1,49 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": [
+    {
+      "label": "known and deferred",
+      "returned_none": true,
+      "known": 2,
+      "deferred": {"later": 3},
+      "events": [["known"]]
+    },
+    {
+      "label": "registration is inert",
+      "later": 0,
+      "deferred": {"later": 3},
+      "events": [["later"]]
+    },
+    {
+      "label": "process typed value",
+      "later": 3,
+      "deferred": {},
+      "events": [["later"]]
+    },
+    {
+      "label": "last deferred form wins",
+      "text_replaced_typed": {"value": {"unconverted": ["4"]}},
+      "typed_replaced_text": {"value": 5},
+      "value": 5,
+      "deferred": {}
+    },
+    {
+      "label": "invalid typed value is retained",
+      "failures": [
+        ["TypeError", "Expected <class 'int'> for value, but got <class 'str'>."],
+        ["TypeError", "Expected <class 'int'> for value, but got <class 'str'>."]
+      ],
+      "value": 0,
+      "deferred": {"value": "bad"}
+    },
+    {
+      "label": "known rejection does not publish unknown values",
+      "error": [
+        "TypeError",
+        "Expected <class 'int'> for known, but got <class 'str'>."
+      ],
+      "known": 1,
+      "deferred": {}
+    }
+  ]
+}

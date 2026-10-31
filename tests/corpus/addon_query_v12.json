@@ -1,0 +1,547 @@
+{
+  "reference": "12.3.1",
+  "cases": {
+    "queries": [
+      {
+        "path": "/a?x=1&x=2&blank#f",
+        "fields": [
+          [
+            "x",
+            "1"
+          ],
+          [
+            "x",
+            "2"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "items": [
+          [
+            "x",
+            "1"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "keys": [
+          "x",
+          "x",
+          "blank"
+        ]
+      },
+      {
+        "path": "/a?x=A&x=B&blank=&x=C#f",
+        "fields": [
+          [
+            "x",
+            "A"
+          ],
+          [
+            "x",
+            "B"
+          ],
+          [
+            "blank",
+            ""
+          ],
+          [
+            "x",
+            "C"
+          ]
+        ],
+        "items": [
+          [
+            "x",
+            "A"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "keys": [
+          "x",
+          "x",
+          "blank",
+          "x"
+        ]
+      },
+      {
+        "path": "/a?x=A&x=inserted&x=B&blank=&x=C#f",
+        "fields": [
+          [
+            "x",
+            "A"
+          ],
+          [
+            "x",
+            "inserted"
+          ],
+          [
+            "x",
+            "B"
+          ],
+          [
+            "blank",
+            ""
+          ],
+          [
+            "x",
+            "C"
+          ]
+        ],
+        "items": [
+          [
+            "x",
+            "A"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "keys": [
+          "x",
+          "x",
+          "x",
+          "blank",
+          "x"
+        ]
+      },
+      {
+        "path": "/a?x=new&blank=#f",
+        "fields": [
+          [
+            "x",
+            "new"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "items": [
+          [
+            "x",
+            "new"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "keys": [
+          "x",
+          "blank"
+        ]
+      },
+      {
+        "path": "/a?x=new#f",
+        "fields": [
+          [
+            "x",
+            "new"
+          ]
+        ],
+        "items": [
+          [
+            "x",
+            "new"
+          ]
+        ],
+        "keys": [
+          "x"
+        ]
+      },
+      {
+        "path": "/a#f",
+        "fields": [],
+        "items": [],
+        "keys": []
+      },
+      {
+        "path": "/a?q=caf%C3%A9&q=a+b#f",
+        "fields": [
+          [
+            "q",
+            "caf\u00e9"
+          ],
+          [
+            "q",
+            "a b"
+          ]
+        ],
+        "items": [
+          [
+            "q",
+            "caf\u00e9"
+          ]
+        ],
+        "keys": [
+          "q",
+          "q"
+        ]
+      },
+      {
+        "path": "/other?bad=%FF&semi=a;b&blank&=empty&&plus=a+b",
+        "fields": [
+          [
+            "bad",
+            "\udcff"
+          ],
+          [
+            "semi",
+            "a;b"
+          ],
+          [
+            "blank",
+            ""
+          ],
+          [
+            "",
+            "empty"
+          ],
+          [
+            "plus",
+            "a b"
+          ]
+        ],
+        "items": [
+          [
+            "bad",
+            "\udcff"
+          ],
+          [
+            "semi",
+            "a;b"
+          ],
+          [
+            "blank",
+            ""
+          ],
+          [
+            "",
+            "empty"
+          ],
+          [
+            "plus",
+            "a b"
+          ]
+        ],
+        "keys": [
+          "bad",
+          "semi",
+          "blank",
+          "",
+          "plus"
+        ]
+      },
+      {
+        "path": "/other?bad=%FF&semi=a%3Bb&blank=&=empty&plus=a+b&Case=YES&case=no",
+        "fields": [
+          [
+            "bad",
+            "\udcff"
+          ],
+          [
+            "semi",
+            "a;b"
+          ],
+          [
+            "blank",
+            ""
+          ],
+          [
+            "",
+            "empty"
+          ],
+          [
+            "plus",
+            "a b"
+          ],
+          [
+            "Case",
+            "YES"
+          ],
+          [
+            "case",
+            "no"
+          ]
+        ],
+        "items": [
+          [
+            "bad",
+            "\udcff"
+          ],
+          [
+            "semi",
+            "a;b"
+          ],
+          [
+            "blank",
+            ""
+          ],
+          [
+            "",
+            "empty"
+          ],
+          [
+            "plus",
+            "a b"
+          ],
+          [
+            "Case",
+            "YES"
+          ],
+          [
+            "case",
+            "no"
+          ]
+        ],
+        "keys": [
+          "bad",
+          "semi",
+          "blank",
+          "",
+          "plus",
+          "Case",
+          "case"
+        ]
+      }
+    ],
+    "forms": [
+      {
+        "before": [],
+        "after": [
+          [
+            "q",
+            "caf\u00e9"
+          ],
+          [
+            "q",
+            "a b"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "body": "713d63616625433325413926713d612b6226626c616e6b3d",
+        "headers": [
+          [
+            "content-type",
+            "application/x-www-form-urlencoded"
+          ],
+          [
+            "content-length",
+            "24"
+          ]
+        ]
+      },
+      {
+        "before": [
+          [
+            "x",
+            "\udce9"
+          ],
+          [
+            "x",
+            "a b"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "after": [
+          [
+            "q",
+            "caf\u00e9"
+          ],
+          [
+            "q",
+            "a b"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "body": "713d63616625433325413926713d612b6226626c616e6b3d",
+        "headers": [
+          [
+            "content-type",
+            "application/x-www-form-urlencoded"
+          ],
+          [
+            "content-length",
+            "24"
+          ]
+        ]
+      },
+      {
+        "before": [
+          [
+            "x",
+            "\udce9"
+          ],
+          [
+            "x",
+            "a b"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "after": [
+          [
+            "q",
+            "caf\u00e9"
+          ],
+          [
+            "q",
+            "a b"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "body": "713d63616625433325413926713d612b6226626c616e6b3d",
+        "headers": [
+          [
+            "content-type",
+            "application/x-www-form-urlencoded"
+          ],
+          [
+            "content-length",
+            "24"
+          ]
+        ]
+      },
+      {
+        "before": [
+          [
+            "x",
+            "\udce9"
+          ],
+          [
+            "x",
+            "a b"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "after": [
+          [
+            "q",
+            "caf\u00e9"
+          ],
+          [
+            "q",
+            "a b"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "body": "713d63616625433325413926713d612b6226626c616e6b3d",
+        "headers": [
+          [
+            "content-type",
+            "application/x-www-form-urlencoded"
+          ],
+          [
+            "content-length",
+            "24"
+          ]
+        ]
+      },
+      {
+        "before": [
+          [
+            "x",
+            "\udce9"
+          ],
+          [
+            "x",
+            "a b"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "after": [
+          [
+            "q",
+            "caf\u00e9"
+          ],
+          [
+            "q",
+            "a b"
+          ],
+          [
+            "blank",
+            ""
+          ]
+        ],
+        "body": "713d63616625433325413926713d612b6226626c616e6b3d",
+        "headers": [
+          [
+            "content-type",
+            "application/x-www-form-urlencoded"
+          ],
+          [
+            "content-length",
+            "24"
+          ]
+        ]
+      }
+    ],
+    "preserved_input": {
+      "values": [
+        "first",
+        "second",
+        "third"
+      ],
+      "first": [
+        [
+          "x",
+          "first"
+        ],
+        [
+          "x",
+          "second"
+        ],
+        [
+          "x",
+          "third"
+        ]
+      ],
+      "second": [
+        [
+          "x",
+          "first"
+        ],
+        [
+          "x",
+          "second"
+        ],
+        [
+          "x",
+          "third"
+        ]
+      ]
+    }
+  }
+}

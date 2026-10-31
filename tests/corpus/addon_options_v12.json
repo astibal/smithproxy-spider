@@ -1,0 +1,213 @@
+{
+  "reference": "12.3.1",
+  "cases": {
+    "typing": [
+      [
+        "<class 'bool'>",
+        "1",
+        "False",
+        false,
+        [
+          "TypeError",
+          "Expected <class 'bool'> for value, but got <class 'int'>."
+        ]
+      ],
+      [
+        "<class 'bool'>",
+        "None",
+        "False",
+        false,
+        [
+          "TypeError",
+          "Expected <class 'bool'> for value, but got <class 'NoneType'>."
+        ]
+      ],
+      [
+        "<class 'bool'>",
+        "'yes'",
+        "False",
+        false,
+        [
+          "TypeError",
+          "Expected <class 'bool'> for value, but got <class 'str'>."
+        ]
+      ],
+      [
+        "<class 'bool'>",
+        "True",
+        "True",
+        true,
+        null
+      ],
+      [
+        "<class 'int'>",
+        "True",
+        "True",
+        true,
+        null
+      ],
+      [
+        "<class 'int'>",
+        "'2'",
+        "True",
+        true,
+        [
+          "TypeError",
+          "Expected <class 'int'> for value, but got <class 'str'>."
+        ]
+      ],
+      [
+        "<class 'int'>",
+        "2",
+        "2",
+        true,
+        null
+      ],
+      [
+        "<class 'int'>",
+        "None",
+        "2",
+        true,
+        [
+          "TypeError",
+          "Expected <class 'int'> for value, but got <class 'NoneType'>."
+        ]
+      ],
+      [
+        "<class 'str'>",
+        "b'x'",
+        "'x'",
+        false,
+        [
+          "TypeError",
+          "Expected <class 'str'> for value, but got <class 'bytes'>."
+        ]
+      ],
+      [
+        "<class 'str'>",
+        "None",
+        "'x'",
+        false,
+        [
+          "TypeError",
+          "Expected <class 'str'> for value, but got <class 'NoneType'>."
+        ]
+      ],
+      [
+        "<class 'str'>",
+        "'y'",
+        "'y'",
+        true,
+        null
+      ],
+      [
+        "str | None",
+        "'a'",
+        "'a'",
+        true,
+        null
+      ],
+      [
+        "str | None",
+        "None",
+        "None",
+        false,
+        null
+      ],
+      [
+        "str | None",
+        "1",
+        "None",
+        false,
+        [
+          "TypeError",
+          "Expected str | None for value, but got <class 'int'>."
+        ]
+      ],
+      [
+        "typing.Sequence[str]",
+        "('a', 'b')",
+        "('a', 'b')",
+        true,
+        null
+      ],
+      [
+        "typing.Sequence[str]",
+        "['a']",
+        "['a']",
+        true,
+        null
+      ],
+      [
+        "typing.Sequence[str]",
+        "['a', 1]",
+        "['a']",
+        true,
+        [
+          "TypeError",
+          "Expected <class 'str'> for value, but got <class 'int'>."
+        ]
+      ],
+      [
+        "typing.Sequence[str]",
+        "'ab'",
+        "['a']",
+        true,
+        [
+          "TypeError",
+          "Expected typing.Sequence[str] for value, but got <class 'str'>."
+        ]
+      ],
+      [
+        "typing.Sequence[str]",
+        "None",
+        "['a']",
+        true,
+        [
+          "TypeError",
+          "Expected typing.Sequence[str] for value, but got <class 'NoneType'>."
+        ]
+      ]
+    ],
+    "errors": [
+      [
+        "TypeError",
+        "Expected <class 'str'> for words, but got <class 'int'>.",
+        2
+      ],
+      [
+        "KeyError",
+        "'Unknown options: missing'",
+        3
+      ],
+      [
+        "AttributeError",
+        "No such option: absent",
+        3
+      ],
+      [
+        "KeyError",
+        "'absent'",
+        3
+      ]
+    ],
+    "before_reset": [
+      3,
+      [
+        "a"
+      ],
+      true
+    ],
+    "after_reset": [
+      1,
+      [
+        "a"
+      ],
+      false
+    ],
+    "unknown": {
+      "absent": "other"
+    },
+    "choice_metadata_does_not_validate": "third"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "https_records": {
+    "domain_module": "mitmproxy.net.dns.domain_names",
+    "enum_is_int": false,
+    "errors": {
+      "empty": {
+        "message": "unpack requires a buffer of 2 bytes",
+        "ok": false,
+        "type": "error"
+      },
+      "one_byte": {
+        "message": "unpack requires a buffer of 2 bytes",
+        "ok": false,
+        "type": "error"
+      },
+      "short_value": {
+        "message": "unpack requires a buffer of 11 bytes",
+        "ok": false,
+        "type": "error"
+      },
+      "trailing_byte": {
+        "message": "unpack requires a buffer of 2 bytes",
+        "ok": false,
+        "type": "error"
+      }
+    },
+    "public_surface": [
+      "HTTPSRecord",
+      "HTTPSRecordJSON",
+      "SVCParamKeys",
+      "domain_names",
+      "pack",
+      "unpack"
+    ],
+    "roundtrip": {
+      "json": {
+        "65400": "\\x00",
+        "alpn": "h2",
+        "priority": 1,
+        "target_name": "svc.example"
+      },
+      "params": {
+        "1": "6832",
+        "65400": "00"
+      },
+      "priority": 1,
+      "target_name": "svc.example"
+    },
+    "roundtrip_equal": true,
+    "wire": "000103737663076578616d706c6500000100026832ff78000100"
+  },
+  "reference": "mitmproxy 12.3.1"
+}

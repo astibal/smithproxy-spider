@@ -18,6 +18,43 @@ the new proxy control/sequence metadata and python-hpack, and deliberately rejec
 unsupported framing/SETTINGS instead of silently skipping callbacks. The original
 [isolated POC](docs/H2_TRANSLATE_POC.md) remains an additional test harness.
 
+### Experimental addon runtime dependencies
+
+The clean-room addon adapter is still incomplete; see the
+[compatibility inventory](docs/ADDON_COMPATIBILITY.md) before deploying scripts.
+Its optional Python dependencies are declared separately in
+[`deploy/requirements-addon.txt`](deploy/requirements-addon.txt). The test
+requirements include that file and add independent HTTP/2 test peers. Neither
+manifest installs mitmproxy.
+
+Addon deployments accept up to 128 bounded `name=value` option overrides in
+their runtime settings. Spider applies them after the addon's `load()` callback
+has declared custom options and before the initial `configure()` and `running()`
+callbacks. Invalid names, types or a rejected `configure()` fail generation
+warm-up atomically; an enabled previous version remains active. The same values
+can be supplied to an isolated **Run on selected** preview.
+
+Install these packages in the interpreter selected with CMake's
+`Python3_EXECUTABLE`, not an unrelated shell Python. For example, create a
+dedicated virtual environment, install the runtime requirements there, and
+configure the build to use its absolute interpreter path:
+
+```sh
+python3 -m venv .venv-addon
+.venv-addon/bin/python -m pip install -r deploy/requirements-addon.txt
+cmake -S . -B build -DPython3_EXECUTABLE="$PWD/.venv-addon/bin/python"
+cmake --build build
+```
+
+Keep that environment at the configured path on the deployment machine. Workers
+run with Python isolated mode (`-I`), so `PYTHONPATH` and user-site installations
+are not a substitute. CMake packages Spider's Python sources into the executable;
+it does not vendor these external libraries or install them automatically.
+Native scripts and compile-only validation do not load the addon dependencies.
+The embedded worker launcher uses Python's standard-library `bz2` module and
+bounded argument chunks to stay below process argument limits. The configured
+Python installation must include that module for both native and addon execution.
+
 ### Python editor type inference
 
 The editor uses an authenticated backend language service (`POST /api/inspection/language`)
@@ -466,7 +503,10 @@ editor's changes. Operations:
 - `deploy`: `name`, `script`, `scope` (`rules` or `all`), optional `filter`
   (SessionFilter expression, e.g. `dst port 443`), optional existing deployment `id`;
   `instancing`, `endpoint`, `timeout_ms`, `error_limit`, `max_instances`, `idle_seconds`
-  as described above. Omitted runtime settings use defaults, including on redeploy.
+  as described above. Addon deployments additionally accept `addon_options`, an
+  array of at most 128 single-line `name=value` strings (64 KiB total). Omitted
+  runtime settings use defaults, including on redeploy; omitted addon options
+  preserve an existing deployment's overrides.
 - `enable`: `id`, boolean `enabled`. Enabling validates syntax again without
   executing user code. New deployments are always disabled.
 - `reorder`: `ids`, every deployment ID exactly once in the desired order.

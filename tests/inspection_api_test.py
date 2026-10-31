@@ -41,6 +41,59 @@ class WriteTests(unittest.TestCase):
             draft.http1.target = target
             with self.subTest(target=target), self.assertRaises(CommitException): draft.commit()
 
+    def test_start_line_fields_are_typed_and_atomically_editable(self):
+        request = self.draft()
+        self.assertEqual(
+            (request.http1.method, request.http1.target,
+             request.http1.status_code, request.http1.reason,
+             request.http1.http_version),
+            ('POST', '/old', None, None, 'HTTP/1.1'),
+        )
+        request.http1.method = 'PATCH'
+        request.http1.target = '/new'
+        request.http1.http_version = 'HTTP/1.0'
+        self.assertTrue(request.commit().startswith(b'PATCH /new HTTP/1.0\r\n'))
+
+        response = self.draft(
+            b'HTTP/1.1 200 Original\r\nContent-Length: 0\r\n\r\n')
+        self.assertEqual(
+            (response.http1.method, response.http1.target,
+             response.http1.status_code, response.http1.reason,
+             response.http1.http_version),
+            (None, None, 200, 'Original', 'HTTP/1.1'),
+        )
+        response.http1.status_code = 404
+        response.http1.reason = 'Not Found'
+        response.http1.http_version = 'HTTP/1.0'
+        self.assertTrue(response.commit().startswith(b'HTTP/1.0 404 Not Found\r\n'))
+
+        invalid_request_fields = (
+            ('method', 'bad method'),
+            ('status_code', 200),
+            ('reason', 'wrong side'),
+            ('http_version', 'HTTP/2.0'),
+        )
+        for name, value in invalid_request_fields:
+            draft = self.draft()
+            setattr(draft.http1, name, value)
+            with self.subTest(request_field=name), self.assertRaises(CommitException):
+                draft.commit()
+
+        invalid_response_fields = (
+            ('method', 'GET'),
+            ('target', '/wrong-side'),
+            ('status_code', True),
+            ('status_code', 99),
+            ('status_code', 600),
+            ('reason', 'bad\tphrase'),
+            ('http_version', 'HTTP/3'),
+        )
+        for name, value in invalid_response_fields:
+            draft = self.draft(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n')
+            setattr(draft.http1, name, value)
+            with self.subTest(response_field=name, value=value), self.assertRaises(CommitException):
+                draft.commit()
+
     def test_unsupported_edits_noop_preserved(self):
         for raw in (b'', b'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n', self.request[:-1],
                     self.request + self.request, b'HTTP/1.1 200 OK\r\n\r\nclose delimited',
@@ -67,6 +120,18 @@ class WriteTests(unittest.TestCase):
         draft = self.draft(b'GET / HTTP/1.1\r\nHost: x\r\n\r\n')
         draft.http1.body = b'new'
         self.assertIn(b'Content-Length: 3', draft.commit())
+
+        draft = self.draft()
+        draft.http1.replace_headers([
+            ('Host', 'replacement.test'),
+            ('X-Duplicate', 'one'),
+            ('X-Duplicate', 'two'),
+        ])
+        replaced = draft.commit()
+        self.assertEqual(replaced.count(b'X-Duplicate:'), 2)
+        self.assertIn(b'Host: replacement.test\r\n', replaced)
+        with self.assertRaises(TypeError):
+            draft.http1.replace_headers([('valid', 'pair'), ('missing',)])
 
     def test_response_and_bodyless_semantics(self):
         draft = self.draft(b'HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc')

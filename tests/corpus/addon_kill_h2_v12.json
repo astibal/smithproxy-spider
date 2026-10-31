@@ -1,0 +1,52 @@
+{
+  "client": {
+    "events": [
+      {
+        "type": "RemoteSettingsChanged"
+      },
+      {
+        "type": "WindowUpdated"
+      },
+      {
+        "type": "SettingsAcknowledged"
+      },
+      {
+        "error": 2,
+        "stream": 1,
+        "type": "StreamReset"
+      }
+    ],
+    "outcome": "stream-reset"
+  },
+  "hooks": [
+    {
+      "error": null,
+      "hook": "requestheaders",
+      "killable": true,
+      "live": true,
+      "path": "/kill-h2"
+    },
+    {
+      "error": null,
+      "hook": "request",
+      "killable": true,
+      "live": true,
+      "path": "/kill-h2"
+    },
+    {
+      "error": "Connection killed.",
+      "hook": "request-after-kill",
+      "killable": false,
+      "live": false,
+      "path": "/kill-h2"
+    },
+    {
+      "error": "Connection killed.",
+      "hook": "error",
+      "killable": false,
+      "live": false,
+      "path": "/kill-h2"
+    }
+  ],
+  "reference": "mitmproxy 12.3.1"
+}

@@ -1,0 +1,737 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "method": "Independent public API calls; no implementation source",
+  "cases": {
+    "0": {
+      "specs": [],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "1": {
+      "specs": [
+        "flag"
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": true,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "flag"
+        ]
+      ]
+    },
+    "2": {
+      "specs": [
+        "flag=true"
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": true,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "flag"
+        ]
+      ]
+    },
+    "3": {
+      "specs": [
+        "flag=false"
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "flag"
+        ]
+      ]
+    },
+    "4": {
+      "specs": [
+        "flag=toggle"
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": true,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "flag"
+        ]
+      ]
+    },
+    "5": {
+      "specs": [
+        "flag=True"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "6": {
+      "specs": [
+        "flag=1"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "7": {
+      "specs": [
+        "flag="
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": true,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "flag"
+        ]
+      ]
+    },
+    "8": {
+      "specs": [
+        "count"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "9": {
+      "specs": [
+        "count="
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "10": {
+      "specs": [
+        "count=42"
+      ],
+      "error": null,
+      "values": {
+        "count": 42,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "count"
+        ]
+      ]
+    },
+    "11": {
+      "specs": [
+        "count=-2"
+      ],
+      "error": null,
+      "values": {
+        "count": -2,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "count"
+        ]
+      ]
+    },
+    "12": {
+      "specs": [
+        "count=0x10"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "13": {
+      "specs": [
+        "count= 3 "
+      ],
+      "error": null,
+      "values": {
+        "count": 3,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "count"
+        ]
+      ]
+    },
+    "14": {
+      "specs": [
+        "label"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "15": {
+      "specs": [
+        "label="
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "label"
+        ]
+      ]
+    },
+    "16": {
+      "specs": [
+        "label=a=b"
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "a=b",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "label"
+        ]
+      ]
+    },
+    "17": {
+      "specs": [
+        "maybe"
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": null,
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "maybe"
+        ]
+      ]
+    },
+    "18": {
+      "specs": [
+        "maybe="
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "maybe"
+        ]
+      ]
+    },
+    "19": {
+      "specs": [
+        "maybe=None"
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "None",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "maybe"
+        ]
+      ]
+    },
+    "20": {
+      "specs": [
+        "names"
+      ],
+      "error": "NotImplementedError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "21": {
+      "specs": [
+        "names="
+      ],
+      "error": "NotImplementedError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "22": {
+      "specs": [
+        "names=one",
+        "names=two"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "23": {
+      "specs": [
+        "names=a,b"
+      ],
+      "error": "NotImplementedError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "24": {
+      "specs": [
+        "count=2",
+        "count=3"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "25": {
+      "specs": [
+        "flag=toggle",
+        "flag=toggle"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "26": {
+      "specs": [
+        "count=2",
+        "missing=3"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "27": {
+      "specs": [
+        "count=2",
+        "flag=invalid"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "28": {
+      "specs": [
+        "missing"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "29": {
+      "specs": [
+        " count=2"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "30": {
+      "specs": [
+        ""
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "31": {
+      "specs": [
+        "label= a "
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": " a ",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "label"
+        ]
+      ]
+    },
+    "32": {
+      "specs": [
+        "number"
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": null
+      },
+      "notifications": [
+        [
+          "number"
+        ]
+      ]
+    },
+    "33": {
+      "specs": [
+        "number="
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": null
+      },
+      "notifications": [
+        [
+          "number"
+        ]
+      ]
+    },
+    "34": {
+      "specs": [
+        "number=2"
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 2
+      },
+      "notifications": [
+        [
+          "number"
+        ]
+      ]
+    },
+    "35": {
+      "specs": [
+        "number=None"
+      ],
+      "error": "OptionsError",
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "original",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": []
+    },
+    "36": {
+      "specs": [
+        "count=2",
+        "label=changed",
+        "flag"
+      ],
+      "error": null,
+      "values": {
+        "count": 2,
+        "flag": true,
+        "label": "changed",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "count",
+          "flag",
+          "label"
+        ]
+      ]
+    },
+    "37": {
+      "specs": [
+        "flag=false",
+        "label="
+      ],
+      "error": null,
+      "values": {
+        "count": 1,
+        "flag": false,
+        "label": "",
+        "maybe": "original",
+        "names": [
+          "original"
+        ],
+        "number": 1
+      },
+      "notifications": [
+        [
+          "flag",
+          "label"
+        ]
+      ]
+    }
+  }
+}

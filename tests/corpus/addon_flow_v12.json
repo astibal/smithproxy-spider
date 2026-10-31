@@ -1,0 +1,83 @@
+{
+  "reference": "12.3.1",
+  "cases": {
+    "events": [
+      {
+        "label": "initial",
+        "live": true,
+        "intercepted": false,
+        "killable": true,
+        "error": null,
+        "type": "http",
+        "response": true,
+        "websocket": true,
+        "timestamp_matches": true
+      },
+      {
+        "label": "intercepted",
+        "live": true,
+        "intercepted": true,
+        "killable": true,
+        "error": null,
+        "type": "http",
+        "response": true,
+        "websocket": true,
+        "timestamp_matches": true
+      },
+      {
+        "label": "intercepted again",
+        "live": true,
+        "intercepted": true,
+        "killable": true,
+        "error": null,
+        "type": "http",
+        "response": true,
+        "websocket": true,
+        "timestamp_matches": true
+      },
+      {
+        "label": "resumed",
+        "live": true,
+        "intercepted": false,
+        "killable": true,
+        "error": null,
+        "type": "http",
+        "response": true,
+        "websocket": true,
+        "timestamp_matches": true
+      },
+      {
+        "label": "error",
+        "live": true,
+        "intercepted": false,
+        "killable": true,
+        "error": "upstream failed",
+        "type": "http",
+        "response": true,
+        "websocket": true,
+        "timestamp_matches": true
+      },
+      {
+        "label": "killed",
+        "live": false,
+        "intercepted": false,
+        "killable": false,
+        "error": "Connection killed.",
+        "type": "http",
+        "response": true,
+        "websocket": true,
+        "timestamp_matches": true
+      }
+    ],
+    "copy": {
+      "new_id": true,
+      "live": false,
+      "intercepted": true,
+      "new_request": true
+    },
+    "repeated_kill": [
+      "ControlException",
+      "Flow is not killable."
+    ]
+  }
+}

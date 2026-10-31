@@ -1,0 +1,79 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "RunningHook": {
+      "name": "running",
+      "args": [],
+      "same_payload": false
+    },
+    "DoneHook": {
+      "name": "done",
+      "args": [],
+      "same_payload": false
+    },
+    "ConfigureHook": {
+      "name": "configure",
+      "args": [
+        [
+          "marker"
+        ]
+      ],
+      "same_payload": true
+    },
+    "UpdateHook": {
+      "name": "update",
+      "args": [
+        [
+          "marker"
+        ]
+      ],
+      "same_payload": true
+    },
+    "LoadHook": {
+      "name": "load",
+      "args": [
+        [
+          "marker"
+        ]
+      ],
+      "same_payload": true
+    },
+    "CustomEventHook/custom": {
+      "name": "custom_event",
+      "args": [
+        "value"
+      ]
+    },
+    "XMLParserHook/custom": {
+      "name": "x_mlparser",
+      "args": [
+        "value"
+      ]
+    },
+    "HTTP2RequestHook/custom": {
+      "name": "h_ttp2_request",
+      "args": [
+        "value"
+      ]
+    },
+    "FooBARBazHook/custom": {
+      "name": "foo_barbaz",
+      "args": [
+        "value"
+      ]
+    },
+    "Already_hook/custom": {
+      "name": "already_hook",
+      "args": [
+        "value"
+      ]
+    },
+    "Hook/custom": {
+      "name": "",
+      "args": [
+        "value"
+      ]
+    },
+    "base_error": "TypeError"
+  }
+}

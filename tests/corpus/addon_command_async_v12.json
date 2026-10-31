@@ -1,0 +1,34 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": {
+    "manager_methods": [
+      "add",
+      "call",
+      "call_strings",
+      "collect_commands",
+      "commands",
+      "dump",
+      "execute",
+      "master",
+      "parse_partial"
+    ],
+    "decorated_is_coroutine_function": false,
+    "registered_is_coroutine_function": false,
+    "direct_is_awaitable": true,
+    "direct_result": 2,
+    "typed_is_awaitable": true,
+    "typed_result": 3,
+    "strings_error": [
+      "CommandError",
+      "probe.async returned unexpected data - expected int"
+    ],
+    "execute_error": [
+      "CommandError",
+      "probe.async returned unexpected data - expected int"
+    ],
+    "calls": [
+      1,
+      2
+    ]
+  }
+}

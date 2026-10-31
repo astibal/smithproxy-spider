@@ -1,0 +1,227 @@
+{
+  "events": [
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/headers",
+      "status": null
+    },
+    {
+      "body": "from requestheaders",
+      "hook": "request",
+      "path": "/headers",
+      "status": 201
+    },
+    {
+      "body": "from requestheaders",
+      "hook": "responseheaders",
+      "path": "/headers",
+      "status": 201
+    },
+    {
+      "body": "from requestheaders",
+      "hook": "response",
+      "path": "/headers",
+      "status": 201
+    },
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/request",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "request",
+      "path": "/request",
+      "status": null
+    },
+    {
+      "body": "from request",
+      "hook": "responseheaders",
+      "path": "/request",
+      "status": 202
+    },
+    {
+      "body": "from request",
+      "hook": "response",
+      "path": "/request",
+      "status": 202
+    },
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/empty",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "request",
+      "path": "/empty",
+      "status": null
+    },
+    {
+      "body": "body assigned to 204",
+      "hook": "responseheaders",
+      "path": "/empty",
+      "status": 204
+    },
+    {
+      "body": "body assigned to 204",
+      "hook": "response",
+      "path": "/empty",
+      "status": 204
+    },
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/trailers",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "request",
+      "path": "/trailers",
+      "status": null
+    },
+    {
+      "body": "local response with trailers",
+      "hook": "responseheaders",
+      "path": "/trailers",
+      "status": 202,
+      "trailers": [
+        [
+          "x-local-trailer",
+          "one"
+        ],
+        [
+          "x-local-trailer",
+          "two"
+        ]
+      ]
+    },
+    {
+      "body": "local response with trailers",
+      "hook": "response",
+      "path": "/trailers",
+      "status": 202,
+      "trailers": [
+        [
+          "x-local-trailer",
+          "one"
+        ],
+        [
+          "x-local-trailer",
+          "two"
+        ]
+      ]
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "responses": {
+    "/empty": {
+      "body": "body assigned to 204",
+      "headers": [
+        [
+          "Connection",
+          "close"
+        ],
+        [
+          "content-length",
+          "20"
+        ],
+        [
+          "X-Response-Headers",
+          "seen"
+        ],
+        [
+          "X-Response",
+          "seen"
+        ]
+      ],
+      "reason": "No Content",
+      "status": 204,
+      "version": "HTTP/1.1"
+    },
+    "/headers": {
+      "body": "from requestheaders | response hook",
+      "headers": [
+        [
+          "Connection",
+          "close"
+        ],
+        [
+          "X-Origin",
+          "requestheaders"
+        ],
+        [
+          "content-length",
+          "35"
+        ],
+        [
+          "X-Response-Headers",
+          "seen"
+        ],
+        [
+          "X-Response",
+          "seen"
+        ]
+      ],
+      "reason": "Created",
+      "status": 201,
+      "version": "HTTP/1.1"
+    },
+    "/request": {
+      "body": "from request | response hook",
+      "headers": [
+        [
+          "Connection",
+          "close"
+        ],
+        [
+          "X-Origin",
+          "request"
+        ],
+        [
+          "content-length",
+          "28"
+        ],
+        [
+          "X-Response-Headers",
+          "seen"
+        ],
+        [
+          "X-Response",
+          "seen"
+        ]
+      ],
+      "reason": "Accepted",
+      "status": 202,
+      "version": "HTTP/1.1"
+    },
+    "/trailers": {
+      "body": "local response with trailers | response hook",
+      "headers": [
+        [
+          "X-Origin",
+          "trailers"
+        ],
+        [
+          "content-length",
+          "44"
+        ],
+        [
+          "X-Response-Headers",
+          "seen"
+        ],
+        [
+          "X-Response",
+          "seen"
+        ]
+      ],
+      "reason": "Accepted",
+      "status": 202,
+      "version": "HTTP/1.1"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "encoding": {
+    "all": ["encode", "decode"],
+    "cached": {
+      "fields": ["encoded", "encoding", "errors", "decoded"],
+      "repr": "CachedDecode(encoded=b'abc', encoding='gzip', errors='strict', decoded=b'decoded')",
+      "state": ["b'abc'", "'gzip'", "'strict'", "b'decoded'"]
+    },
+    "custom_decode": {
+      "br": "decode_brotli",
+      "deflate": "decode_deflate",
+      "deflateraw": "decode_deflate",
+      "gzip": "decode_gzip",
+      "identity": "identity",
+      "none": "identity",
+      "zstd": "decode_zstd"
+    },
+    "custom_encode": {
+      "br": "encode_brotli",
+      "deflate": "encode_deflate",
+      "deflateraw": "encode_deflate",
+      "gzip": "encode_gzip",
+      "identity": "identity",
+      "none": "identity",
+      "zstd": "encode_zstd"
+    },
+    "deflateraw": {
+      "decoded": "616263",
+      "wire": "78014b4c4a0600024d0127"
+    },
+    "functions": {
+      "encode_brotli": "0b018061626303",
+      "encode_deflate": "78014b4c4a0600024d0127",
+      "encode_gzip": "1f8b08000000000004ff4b4c4a0600c241243503000000",
+      "encode_zstd": "28b52ffd2003190000616263",
+      "identity": "616263"
+    },
+    "roundtrips": {
+      "brotli": "616263",
+      "deflate": "616263",
+      "gzip": "616263",
+      "zstd": "616263"
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

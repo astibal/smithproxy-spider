@@ -1,0 +1,321 @@
+{
+  "reference": "12.3.1",
+  "cases": {
+    "merge/0": {
+      "error": null,
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "merge/1": {
+      "error": null,
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "merge/2": {
+      "error": null,
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original",
+        "second"
+      ],
+      "notifications": [
+        [
+          "names"
+        ]
+      ]
+    },
+    "merge/3": {
+      "error": "TypeError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "merge/4": {
+      "error": null,
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": [
+        [
+          "names"
+        ]
+      ]
+    },
+    "merge/5": {
+      "error": "TypeError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "merge/6": {
+      "error": null,
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "merge/7": {
+      "error": "KeyError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "merge/8": {
+      "error": null,
+      "flag": true,
+      "count": 2,
+      "names": [
+        "original"
+      ],
+      "notifications": [
+        [
+          "count",
+          "flag"
+        ]
+      ]
+    },
+    "merge/9": {
+      "error": "KeyError",
+      "flag": false,
+      "count": 2,
+      "names": [
+        "original"
+      ],
+      "notifications": [
+        [
+          "count"
+        ]
+      ]
+    },
+    "merge/10": {
+      "error": "TypeError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "merge/11": {
+      "error": "TypeError",
+      "flag": false,
+      "count": 2,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "merge/12": {
+      "error": null,
+      "flag": true,
+      "count": 1,
+      "names": [
+        "original",
+        "second"
+      ],
+      "notifications": [
+        [
+          "flag",
+          "names"
+        ]
+      ]
+    },
+    "setter/create/flag": {
+      "error": null,
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "setter/call/flag": {
+      "error": null,
+      "flag": true,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": [
+        [
+          "flag"
+        ]
+      ]
+    },
+    "toggler/create/flag": {
+      "error": null,
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "toggler/call/flag": {
+      "error": null,
+      "flag": true,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": [
+        [
+          "flag"
+        ]
+      ]
+    },
+    "setter/create/count": {
+      "error": null,
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "setter/call/count": {
+      "error": null,
+      "flag": false,
+      "count": true,
+      "names": [
+        "original"
+      ],
+      "notifications": [
+        [
+          "count"
+        ]
+      ]
+    },
+    "toggler/create/count": {
+      "error": "ValueError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "toggler/call/count": {
+      "error": "ValueError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "setter/create/names": {
+      "error": null,
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "setter/call/names": {
+      "error": "TypeError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "toggler/create/names": {
+      "error": "ValueError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "toggler/call/names": {
+      "error": "ValueError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "setter/create/missing": {
+      "error": "KeyError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "setter/call/missing": {
+      "error": "KeyError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "toggler/create/missing": {
+      "error": "KeyError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "toggler/call/missing": {
+      "error": "KeyError",
+      "flag": false,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": []
+    },
+    "toggler/current_value": {
+      "error": null,
+      "flag": true,
+      "count": 1,
+      "names": [
+        "original"
+      ],
+      "notifications": [
+        [
+          "flag"
+        ],
+        [
+          "flag"
+        ],
+        [
+          "flag"
+        ]
+      ]
+    }
+  }
+}

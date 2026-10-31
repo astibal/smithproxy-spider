@@ -21,6 +21,7 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
       heavy_traffic: {enabled: false, grace_seconds: 5, messages_per_second: 200, bytes_per_second: 1048576, sustain_seconds: 3, include_managed: false},
       collection: {saved: 0, bytes: 0, limit_bytes: 1000000, directory: '/tmp/samples', errors: 0, last_error: ''}};
     const writes = [];
+    const contentViewRequests = [];
     let replayTest = false;
     let savedFlow = null;
     let catalogRevision = 0, catalogFolders = [], catalogEdits = {};
@@ -102,6 +103,18 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
         state.traffic_rules = {...request.postDataJSON(), errors: []};
         body = state.traffic_rules;
       }
+      if (request.url().endsWith('/api/inspection/content-view')) {
+        const data = request.postDataJSON();
+        contentViewRequests.push(data);
+        if (data.action === 'list') body = {ok: true, deployment_id: 'script-1', views: [{
+          key: 'counter', name: 'Counter', syntax_highlight: 'yaml', interactive: true,
+        }]};
+        else if (data.action === 'render') body = {ok: true, deployment_id: 'script-1',
+          text: Buffer.from(data.data, 'base64').toString().toUpperCase(),
+          view_name: 'Counter', syntax_highlight: 'yaml', interactive: true};
+        else if (data.action === 'reencode') body = {ok: true, deployment_id: 'script-1',
+          data: Buffer.from(data.text.toLowerCase()).toString('base64')};
+      }
       if (request.url().endsWith('/api/inspection')) {
         if (request.method() === 'POST') {
           const data = request.postDataJSON(); writes.push(data);
@@ -110,6 +123,7 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
             state.chain.push({id: 'script-1', name: data.name, script: data.script, enabled: false,
               version: 1, runs: 0, errors: 0, last_run_ms: null, scope: data.scope, filter: data.filter,
               instancing: data.instancing, endpoint: data.endpoint, timeout_ms: data.timeout_ms,
+              script_api: data.script_api, addon_options: data.addon_options,
               error_limit: data.error_limit, max_instances: data.max_instances, idle_seconds: data.idle_seconds});
           } else if (data.operation === 'enable') {
             state.chain[0].enabled = data.enabled;
@@ -272,6 +286,40 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     assert.equal(await page.locator('#script-editor').inputValue(), 'if True:\n    return None');
     assert(await page.locator('.cm-lineNumbers').count());
     await editor.fill('return api.bytes.upper()');
+    assert.equal(await page.locator('#script-api').inputValue(), 'spider');
+    await page.locator('#script-api').selectOption('mitmproxy');
+    assert.equal(await page.locator('#chain-instancing').inputValue(), 'flow');
+    assert.equal(await page.locator('#chain-instancing').isDisabled(), true);
+    assert.equal(await page.locator('#chain-idle').isDisabled(), true);
+    assert.equal(await page.locator('#chain-addon-options').isDisabled(), false);
+    await page.locator('#chain-runtime-settings summary').click();
+    await page.locator('#chain-addon-options').fill('probe_count=7\nfeature=true');
+    await page.locator('#chain-runtime-settings summary').click();
+    await page.evaluate(() => {
+      const create = URL.createObjectURL.bind(URL);
+      URL.createObjectURL = blob => {
+        window.lastScriptExport = blob;
+        return create(blob);
+      };
+    });
+    await page.locator('#library-export').click();
+    assert.equal(await page.evaluate(() => window.lastScriptExport.text()),
+      '#!mitmproxy\nreturn api.bytes.upper()');
+    assert.equal(await editor.innerText(), 'return api.bytes.upper()');
+    await page.locator('#script-api').selectOption('spider');
+    assert.equal(await page.locator('#chain-instancing').isDisabled(), false);
+    assert.equal(await page.locator('#chain-idle').isDisabled(), false);
+    assert.equal(await page.locator('#chain-addon-options').isDisabled(), true);
+    await editor.fill('#!mitmproxy\ndef request(flow):\n    pass');
+    await page.locator('#script-api-status').filter({hasText: 'overrides'}).waitFor();
+    assert.equal(await page.locator('#chain-instancing').isDisabled(), true);
+    await page.locator('#library-export').click();
+    assert.equal(await page.evaluate(() => window.lastScriptExport.text()),
+      '#!mitmproxy\ndef request(flow):\n    pass');
+    await editor.fill('return api.bytes.upper()');
+    await page.locator('#library-export').click();
+    assert.equal(await page.evaluate(() => window.lastScriptExport.text()), 'return api.bytes.upper()');
+    assert.equal(await page.locator('#chain-instancing').isDisabled(), false);
     assert.equal(await page.locator('#library-deploy').isDisabled(), true);
     await page.locator('#library-save').click();
     assert.equal(writes.length, 0); // Save is never Deploy.
@@ -285,11 +333,13 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     await page.locator('#library-deploy').click();
     await page.locator('#chain-list').filter({hasText: 'GUI test'}).waitFor();
     assert.equal(writes[0].operation, 'deploy');
+    assert.equal(writes[0].script_api, 'spider');
     assert.equal(state.chain[0].enabled, false);
     assert.equal(writes[0].instancing, 'endpoint');
     assert.equal(writes[0].endpoint, 'source');
     assert.equal(writes[0].timeout_ms, 750);
     assert.equal(writes[0].error_limit, 2);
+    assert.deepEqual(writes[0].addon_options, []);
     await page.getByRole('button', {name: 'Enable', exact: true}).click();
     await page.getByRole('button', {name: 'Disable', exact: true}).waitFor();
     state.chain[0].enabled = false; state.chain[0].suspended = true;
@@ -311,6 +361,35 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
     await page.getByRole('button', {name: 'Insert example into editor'}).first().click();
     assert.match(await editor.innerText(), /api\.print/);
     await editor.fill('return None');
+
+    // A deployed addon can contribute a real payload renderer. Interactive
+    // edits are reencoded by that same generation and become a replacement,
+    // while removing the generation removes the selector again.
+    state.chain[0].script_api = 'mitmproxy';
+    state.chain[0].enabled = true;
+    state.chain[0].version += 1;
+    await page.locator('[data-tab="workbench-tab"]').click();
+    await page.locator('#payload-content-view').waitFor({state: 'visible'});
+    await page.evaluate(() => {
+      selectedPayload = {revision: 77, binaryPayload: new TextEncoder().encode('hello'),
+        event: {id: 'view-test', action: 'connection-content',
+          decision: {state: 'pending', id: 'decision-77'},
+          details: {info: {side: 'L', content: 'aGVsbG8='}}}};
+      payloadBytes = selectedPayload.binaryPayload.slice();
+      renderPayload();
+    });
+    await page.locator('#payload-content-view').selectOption('counter');
+    await page.waitForFunction(() => byId('payload-text').value === 'HELLO');
+    assert.match(await page.locator('#payload-view-title').innerText(), /Counter · YAML/);
+    assert.equal(await page.locator('#payload-text').isEditable(), true);
+    await page.locator('#payload-text').fill('EDITED');
+    await page.waitForFunction(() =>
+      byId('payload-view-status').textContent.includes('replacement ready'));
+    assert.equal(await page.evaluate(() => replacementBase64), 'ZWRpdGVk');
+    assert.equal(contentViewRequests.at(-1).action, 'reencode');
+    state.chain[0].script_api = 'spider';
+    state.chain[0].version += 1;
+    await page.locator('#payload-content-view').waitFor({state: 'hidden'});
 
     const restoredLegacyRules = await page.evaluate(() => restoreTrafficRules([
       {id: 'focus:192.0.2.2', address: '192.0.2.2', mode: 'focus', matches: 2},
@@ -710,6 +789,12 @@ const apiSchema = JSON.parse(require('node:child_process').execFileSync('python3
       } finally { delete document.hidden; renderFlowTab = original; }
     });
     assert.deepEqual(idleRendering, {saved: 0, unchanged: 0, hiddenScheduled: false, deferred: true, resumed: true});
+    state.recent = [{run_id: 9999, session_id: '', script_id: 'retired-addon',
+      phase: 'shutdown', ok: false, logs: ['cleanup details'], error: 'Addon cleanup hook failed'}];
+    await page.evaluate(() => refreshBackendInspection());
+    await page.waitForFunction(() => document.getElementById('backend-inspection-output')
+      .textContent.includes('shutdown retired-addon'));
+    assert.match(await page.locator('#backend-inspection-output').textContent(), /cleanup details/);
     assert.deepEqual(errors, []);
     console.log('Inspection GUI smoke test passed: library/save/deploy/enable/draft separation.');
   } finally { await browser.close(); }

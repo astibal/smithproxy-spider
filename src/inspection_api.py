@@ -197,6 +197,18 @@ class Message:
     def commit(self, update_content_length=True, *, safety=Safety.Easy):
         try:
             _validate_safety(safety)
+            translation = getattr(self, '_translation', None)
+            if translation is not None and translation.message_edits:
+                raise CommitException('Staged message replacements require message.translate()')
+            if translation is not None and translation.terminations:
+                raise CommitException('Staged H2 terminations require message.translate()')
+            if translation is not None and translation.pending_failures is not None:
+                raise CommitException('Staged pending request failures require message.translate()')
+            if translation is not None and translation.reset_failures:
+                raise CommitException('Staged reset stream failures require message.translate()')
+            h1_response = getattr(self, '_h1_response', None)
+            if h1_response is not None:
+                return h1_response.commit(update_content_length, safety=safety)
             return commit_message(self, update_content_length, safety=safety)
         except CommitException:
             raise
@@ -217,6 +229,57 @@ class Message:
             raise CommitException(getattr(self, '_translation_error',
                 'Translate requires a live flow deployment and a strict-control capable proxy'))
         return transaction.translate()
+
+    @api_method('part: RewritePart, *, reason: str = "Connection killed.", http2_error: int = 2', 'None',
+                'Stage protocol-owned termination of the message identified by its initial header Part. HTTP/1 commit suppresses the callback and requests callback-local connection close. HTTP/2 Translate suppresses the selected message and emits one RST_STREAM atomically. The reason is bounded diagnostic metadata; http2_error applies only to HTTP/2.',
+                'part = next(part for part in api.message.parts if part.headers is not None)\napi.message.terminate(part)\nreturn api.message.translate() if part.frame_type == 1 else api.message.commit()',
+                availability='Live HTTP/1 flow with negotiated connection-close, or live translated H2 flow with content-reverse from activation. The Part must be a callback-local initial request or response header which has not been published or retired.',
+                access='stage one protocol-owned message termination',
+                easy='HTTP/1 closes only the callback connection and emits no message bytes. HTTP/2 resets only the selected stream. Other connections, persistent addon state, sibling H2 streams and compression histories remain independent.',
+                expert='The same validation and atomicity rules apply. Expert does not expose a connection or stream identifier, raw transport close, or raw RST_STREAM construction.')
+    def terminate(self, part, *, reason='Connection killed.', http2_error=2):
+        transaction = getattr(self, '_translation', None)
+        if transaction is not None:
+            transaction.stage_termination(part, reason, http2_error)
+            return
+
+        transaction = getattr(self, '_h1_response', None)
+        if transaction is not None:
+            transaction.stage_termination(part, reason)
+            return
+
+        raise CommitException(getattr(
+            self,
+            '_translation_error',
+            'Termination requires a live HTTP/1 or translated HTTP/2 flow',
+        ))
+
+    @api_method('status: int = 200, headers: iterable[tuple[bytes, bytes]] = (), body: bytes = b"", trailers: iterable[tuple[bytes, bytes]] = (), *, request: RewritePart | None = None, reason: str | None = None', 'None',
+                'Stage a complete local response for one retained request. With request=None, exactly one complete request must be present. Commit suppresses that request and publishes the response in the opposite direction atomically. Content-Length, framing, ordering, HPACK and flow control remain protocol-owned.',
+                'if api.instance.mode != "flow":\n    return None\napi.message.respond(status=403, headers=[(b"content-type", b"text/plain")], body=b"blocked")\nif any(part.is_a(PartType.Http2.Part) for part in api.message.parts):\n    api.connection.set_mode(Mode.Translate)\n    return api.message.translate()\nreturn api.message.commit()',
+                availability='Live H1 or H2 flow with content-reverse from activation. The selected complete request and all of its content must still be retained and unpublished. H2 callers return translate(); H1 callers return commit().',
+                access='stage one protocol-owned local response',
+                easy='H2 header names must be lowercase. Connection-specific fields and pseudo-headers are rejected. H1 uses the request version and an optional reason phrase. Content-Length or chunked framing is repaired. Explicit bodies on HEAD, 204 and 304 are preserved as an intentional compatibility policy.',
+                expert='The same transport, validation, quota and atomicity rules apply. Expert does not expose raw reverse bytes or bypass stream state.')
+    def respond(self, status=200, headers=(), body=b'', trailers=(), *, request=None, reason=None):
+        transaction = getattr(self, '_translation', None)
+        if transaction is not None:
+            if reason is not None:
+                raise CommitException('HTTP/2 local responses do not have a reason phrase')
+            transaction.stage_local_response(request, status, headers, body, trailers)
+            return
+
+        transaction = getattr(self, '_h1_response', None)
+        if transaction is not None:
+            transaction.stage_local_response(
+                request, status, headers, body, trailers, reason=reason)
+            return
+
+        raise CommitException(getattr(
+            self,
+            '_translation_error',
+            'Local responses require a live H1 or translated H2 flow',
+        ))
 
     @api_method('', 'MessageSnapshot', 'Create an independent editable draft of this callback. No live bytes change until the script returns draft.commit().',
         'draft = api.message.snapshot()\napi.print(draft.http1.available)',
@@ -266,6 +329,14 @@ class Http1Draft:
         expert='Commit repairs supported Content-Digest and Content-Length. Unsupported digest dictionaries and other metadata may remain inconsistent; supply appropriate wire bytes yourself.')
     target: str | None = documented('Request target, or None for a response. May change length. Whitespace and control bytes are forbidden.',
         'draft = api.message.snapshot()\nif draft.http1.available and draft.http1.target is not None:\n    draft.http1.target = "/inspection"', access='mutable private draft')
+    method: str | None = documented('Request method, or None for a response. Assign a valid HTTP token to edit the request line.',
+        'draft = api.message.snapshot()\nif draft.http1.method is not None:\n    draft.http1.method = "HEAD"', access='mutable private draft')
+    status_code: int | None = documented('Response status code, or None for a request. Assign an integer in 100..599 to edit the response line.',
+        'draft = api.message.snapshot()\nif draft.http1.status_code is not None:\n    draft.http1.status_code = 404', access='mutable private draft')
+    reason: str | None = documented('Response reason phrase, or None for a request. Control bytes are forbidden.',
+        'draft = api.message.snapshot()\nif draft.http1.reason is not None:\n    draft.http1.reason = "Not Found"', access='mutable private draft')
+    http_version: str | None = documented('Observed HTTP/1.0 or HTTP/1.1 version. Assign either spelling to edit the start line.',
+        'draft = api.message.snapshot()\napi.print(draft.http1.http_version)', access='mutable private draft')
 
     @api_method('name: str, value: str', 'None', 'Replace all case-insensitive occurrences at the first occurrence, or append a new header. Validation happens at commit.',
         _DRAFT_EXAMPLE, availability='On a private HTTP/1 draft.', access='edit private draft')
@@ -280,6 +351,18 @@ class Http1Draft:
         availability='On a private HTTP/1 draft.', access='edit private draft')
     def remove_header(self, name: str) -> None:
         self.headers[:] = [header for header in self.headers if header.name.lower() != name.lower()]
+
+    @api_method('fields: iterable[tuple[str, str]]', 'None', 'Replace the complete ordered header list, preserving duplicate names. Validation happens at commit.',
+        'draft = api.message.snapshot()\nif draft.http1.available:\n    draft.http1.replace_headers([("Host", "example.test"), ("X-Test", "one"), ("X-Test", "two")])',
+        availability='On a private HTTP/1 draft.', access='edit private draft')
+    def replace_headers(self, fields) -> None:
+        replacements = []
+        for item in fields:
+            if (not isinstance(item, (tuple, list)) or len(item) != 2 or
+                    not all(isinstance(value, str) for value in item)):
+                raise TypeError('HTTP/1 header fields must be string pairs')
+            replacements.append(Header(item[0], item[1]))
+        self.headers[:] = replacements
 
 
 _HTTP_TOKEN = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
@@ -301,13 +384,17 @@ def _has_control_characters(value):
     return any((ord(char) < 32 and char != '\t') or ord(char) == 127 for char in value)
 
 
+def _has_start_line_control_characters(value):
+    return any(ord(char) < 32 or ord(char) == 127 for char in value)
+
+
 def _bodyless_status(status):
     return status is not None and (status < 200 or status in (204, 304))
 
 
 def _draft_http1(payload):
     """Conservative framing gate; never trust display enrichments or guessed body boundaries."""
-    draft = Http1Draft(False, [], b'', None)
+    draft = Http1Draft(False, [], b'', None, None, None, None, None)
     error, start = '', ''
     try:
         head, separator, body = payload.partition(b'\r\n\r\n')
@@ -353,7 +440,12 @@ def _draft_http1(payload):
             expected = int(lengths[0]) if lengths else 0
             if len(body) != expected:
                 raise CommitException('Incomplete body, trailing bytes, or pipelined messages')
-        draft.body, draft.target = body, request[2] if request else None
+        draft.body = body
+        draft.target = request[2] if request else None
+        draft.method = request[1] if request else None
+        draft.status_code = int(response[1]) if response else None
+        draft.reason = response[2] if response else None
+        draft.http_version = request[3] if request else start.split(' ', 1)[0]
         draft.available = True
     except CommitException as exc:
         error = str(exc)
@@ -369,7 +461,15 @@ class MessageSnapshot:
     def __init__(self, payload: bytes):
         self._original = bytes(payload)
         self.http1, self._start, self._error = _draft_http1(self._original)
-        self._initial = (tuple(self.http1.headers), self.http1.body, self.http1.target)
+        self._initial = (
+            tuple(self.http1.headers),
+            self.http1.body,
+            self.http1.target,
+            self.http1.method,
+            self.http1.status_code,
+            self.http1.reason,
+            self.http1.http_version,
+        )
 
     @api_method('*, safety: str = Safety.Easy', 'bytes', 'Validate and rebuild a single HTTP/1 message, recalculating Content-Length. Returns at most 1 MiB. No-op preserves exact original bytes. Raises CommitException for unsupported framing or invalid edits; catch it in the script. No partial publication.',
         _DRAFT_EXAMPLE, availability='On a message snapshot. H2, chunked, partial and pipelined edits are rejected.', access='assemble private draft',
@@ -379,7 +479,16 @@ class MessageSnapshot:
         try:
             _validate_safety(safety)
             self._validate_draft()
-            unchanged = (tuple(self.http1.headers), self.http1.body, self.http1.target) == self._initial
+            current = (
+                tuple(self.http1.headers),
+                self.http1.body,
+                self.http1.target,
+                self.http1.method,
+                self.http1.status_code,
+                self.http1.reason,
+                self.http1.http_version,
+            )
+            unchanged = current == self._initial
             result = self._original if unchanged else self._assemble(safety=safety)
             if len(result) > _MAX_REPLACEMENT_BYTES:
                 raise CommitException('Replacement exceeds 1 MiB')
@@ -421,7 +530,7 @@ class MessageSnapshot:
             if _has_control_characters(header.value):
                 raise CommitException('Control byte in HTTP header value')
 
-        original_headers, original_body, _ = self._initial
+        original_headers, original_body = self._initial[:2]
         names = {header.name.lower() for header in headers}
         all_names = names | {header.name.lower() for header in original_headers}
 
@@ -453,32 +562,43 @@ class MessageSnapshot:
             raise CommitException('Signed messages require signature recomputation')
 
     def _edited_start_line(self, safety=Safety.Easy):
+        draft = self.http1
+        version = draft.http_version
+        if version not in ('HTTP/1.0', 'HTTP/1.1'):
+            raise CommitException('HTTP version must be HTTP/1.0 or HTTP/1.1')
+
         if self._initial[2] is None:
-            if self.http1.target is not None:
-                raise CommitException('A response has no request target')
+            if draft.target is not None or draft.method is not None:
+                raise CommitException('A response has no request method or target')
+            if (type(draft.status_code) is not int or
+                    not 100 <= draft.status_code <= 599):
+                raise CommitException('Response status must be an integer in 100..599')
+            if (not isinstance(draft.reason, str) or
+                    _has_start_line_control_characters(draft.reason)):
+                raise CommitException('Invalid response reason phrase')
+            return f'{version} {draft.status_code} {draft.reason}'
 
-            return self._start
-
-        target = self.http1.target
-
+        if draft.status_code is not None or draft.reason is not None:
+            raise CommitException('A request has no response status or reason')
+        if not isinstance(draft.method, str) or not _HTTP_TOKEN.fullmatch(draft.method):
+            raise CommitException('Invalid request method')
+        target = draft.target
         if not isinstance(target, str) or not _REQUEST_TARGET.fullmatch(target):
             raise CommitException('Invalid request target')
-
-        method, _, version = self._start.split(' ')
         hosts = _header_values(self.http1.headers, 'host')
 
         if safety == Safety.Easy and version == 'HTTP/1.1' and (len(hosts) != 1 or not hosts[0]):
             raise CommitException('HTTP/1.1 request requires exactly one nonempty Host')
 
-        return f'{method} {target} {version}'
+        return f'{draft.method} {target} {version}'
 
     def _framed_headers(self, safety=Safety.Easy):
         """Compute framing on a copy; even successful commits leave the draft alone."""
         headers = list(self.http1.headers)
-        original_headers, _, original_target = self._initial
+        original_headers, _, original_target = self._initial[:3]
         lengths = _header_values(headers, 'content-length')
         original_lengths = _header_values(original_headers, 'content-length')
-        status = int(self._start.split(' ')[1]) if original_target is None else None
+        status = self.http1.status_code if original_target is None else None
 
         if _bodyless_status(status):
             if safety == Safety.Expert and not self.http1.body:
@@ -526,7 +646,7 @@ class MessageSnapshot:
         Easy rejects them rather than silently dropping an integrity claim.
         """
         values = _header_values(headers, 'content-digest')
-        original_headers, original_body, _ = self._initial
+        original_headers, original_body = self._initial[:2]
         original_values = _header_values(original_headers, 'content-digest')
 
         if not values or (self.http1.body == original_body and values == original_values):
@@ -736,7 +856,8 @@ def api_schema():
     """Generate reference directly from runtime dataclasses, types and field comments."""
     types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock,
              InstanceContext, SharedStorage, StorageNamespace, MessageSnapshot, Http1Draft, CommitException,
-             RewritePart, H2Body, PartContent, H2Headers, HpackField, PartList, HeldCommit, Connection, ConnectionHttp2]
+             RewritePart, H1ChunkedBody, H2Body, PartContent, H2Headers, HpackField,
+             PartList, HeldCommit, Connection, ConnectionHttp2]
     return {'version': '0.6', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),

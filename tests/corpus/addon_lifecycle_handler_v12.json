@@ -1,0 +1,35 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": [
+    {
+      "label": "success",
+      "events": [
+        ["first", true],
+        ["second", true]
+      ],
+      "returned_none": true,
+      "error": null
+    },
+    {
+      "label": "ordinary error",
+      "events": [
+        ["first", true],
+        ["second", true]
+      ],
+      "returned_none": true,
+      "error": null
+    },
+    {
+      "label": "options error",
+      "events": [
+        ["first", true]
+      ],
+      "returned_none": true,
+      "error": ["OptionsError", "configuration rejected"]
+    },
+    {
+      "label": "event without message",
+      "error": ["IndexError", "list index out of range"]
+    }
+  ]
+}

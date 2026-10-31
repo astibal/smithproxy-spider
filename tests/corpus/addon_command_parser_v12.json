@@ -1,0 +1,540 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "partial/''": {
+      "parsed": [],
+      "remaining": [
+        [
+          "",
+          "cmd",
+          "POSITIONAL_OR_KEYWORD"
+        ],
+        [
+          "",
+          "arg",
+          "POSITIONAL_OR_KEYWORD"
+        ]
+      ]
+    },
+    "partial/'e'": {
+      "parsed": [
+        [
+          "e",
+          "cmd",
+          false
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'echo'": {
+      "parsed": [
+        [
+          "echo",
+          "cmd",
+          true
+        ]
+      ],
+      "remaining": [
+        [
+          "text",
+          "str",
+          "POSITIONAL_OR_KEYWORD"
+        ]
+      ]
+    },
+    "partial/'echo '": {
+      "parsed": [
+        [
+          "echo",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ]
+      ],
+      "remaining": [
+        [
+          "text",
+          "str",
+          "POSITIONAL_OR_KEYWORD"
+        ]
+      ]
+    },
+    "partial/' echo h'": {
+      "parsed": [
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "echo",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "h",
+          "str",
+          true
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'echo h'": {
+      "parsed": [
+        [
+          "echo",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "h",
+          "str",
+          true
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'echo \"two words\"'": {
+      "parsed": [
+        [
+          "echo",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "\"two words\"",
+          "str",
+          true
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'echo \"unfinished'": {
+      "parsed": [
+        [
+          "echo",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "\"unfinished",
+          "str",
+          true
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'add 1'": {
+      "parsed": [
+        [
+          "add",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "1",
+          "int",
+          true
+        ]
+      ],
+      "remaining": [
+        [
+          "second",
+          "int",
+          "POSITIONAL_OR_KEYWORD"
+        ]
+      ]
+    },
+    "partial/'add 1 '": {
+      "parsed": [
+        [
+          "add",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "1",
+          "int",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ]
+      ],
+      "remaining": [
+        [
+          "second",
+          "int",
+          "POSITIONAL_OR_KEYWORD"
+        ]
+      ]
+    },
+    "partial/'add 1 x'": {
+      "parsed": [
+        [
+          "add",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "1",
+          "int",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "x",
+          "int",
+          false
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'add 1 2'": {
+      "parsed": [
+        [
+          "add",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "1",
+          "int",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "2",
+          "int",
+          true
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'add 1 2 '": {
+      "parsed": [
+        [
+          "add",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "1",
+          "int",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "2",
+          "int",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'pick '": {
+      "parsed": [
+        [
+          "pick",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ]
+      ],
+      "remaining": [
+        [
+          "value",
+          "choice",
+          "POSITIONAL_OR_KEYWORD"
+        ]
+      ]
+    },
+    "partial/'pick o'": {
+      "parsed": [
+        [
+          "pick",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "o",
+          "choice",
+          false
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'pick one'": {
+      "parsed": [
+        [
+          "pick",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "one",
+          "choice",
+          true
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'tail one two words'": {
+      "parsed": [
+        [
+          "tail",
+          "cmd",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "one",
+          "arg",
+          true
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "two",
+          "Unknown",
+          false
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "words",
+          "Unknown",
+          false
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'missing x'": {
+      "parsed": [
+        [
+          "missing",
+          "cmd",
+          false
+        ],
+        [
+          " ",
+          "Space",
+          true
+        ],
+        [
+          "x",
+          "Unknown",
+          false
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'echo   h'": {
+      "parsed": [
+        [
+          "echo",
+          "cmd",
+          true
+        ],
+        [
+          "   ",
+          "Space",
+          true
+        ],
+        [
+          "h",
+          "str",
+          true
+        ]
+      ],
+      "remaining": []
+    },
+    "partial/'echo\\th'": {
+      "parsed": [
+        [
+          "echo",
+          "cmd",
+          true
+        ],
+        [
+          "    ",
+          "Space",
+          true
+        ],
+        [
+          "h",
+          "str",
+          true
+        ]
+      ],
+      "remaining": []
+    },
+    "typename/str": {
+      "value": "str"
+    },
+    "typename/int": {
+      "value": "int"
+    },
+    "typename/bool": {
+      "value": "bool"
+    },
+    "typename/bytes": {
+      "value": "bytes"
+    },
+    "typename/path": {
+      "value": "path"
+    },
+    "typename/choice": {
+      "value": "choice"
+    },
+    "typename/unknown": {
+      "error": "CommandError",
+      "message": "unsupported type: float"
+    },
+    "typename/none": {
+      "error": "CommandError",
+      "message": "unsupported type: None"
+    },
+    "unquote/'hello'": "hello",
+    "unquote/'\"hello\"'": "hello",
+    "unquote/\"'hello'\"": "hello",
+    "unquote/'\"two words\"'": "two words",
+    "unquote/'\"line\\\\nnext\"'": "line\\nnext",
+    "unquote/'\"unfinished'": "\"unfinished",
+    "unquote/''": "",
+    "parsearg/int": {
+      "value": 12
+    },
+    "parsearg/bad_int": {
+      "error": "CommandError",
+      "message": "invalid literal for int() with base 10: 'twelve'"
+    },
+    "parsearg/quoted_str": {
+      "value": "\"two words\""
+    },
+    "parsearg/bool": {
+      "value": true
+    },
+    "parsearg/bad_bool": {
+      "error": "CommandError",
+      "message": "Booleans are 'true' or 'false', got True"
+    },
+    "parsearg/choice": {
+      "value": "one"
+    },
+    "argument/same": true,
+    "argument/type": "path",
+    "verify/missing": {
+      "error": "CommandError",
+      "message": "command argument mismatch: missing a required argument: 'first'"
+    },
+    "verify/one": {
+      "value": null
+    },
+    "verify/two": {
+      "value": null
+    },
+    "verify/keyword": {
+      "value": null
+    },
+    "verify/unknown": {
+      "error": "CommandError",
+      "message": "command argument mismatch: got an unexpected keyword argument 'other'"
+    },
+    "verify/varargs": {
+      "value": null
+    }
+  }
+}

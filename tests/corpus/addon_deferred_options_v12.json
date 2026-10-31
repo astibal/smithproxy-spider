@@ -1,0 +1,777 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "late_registration": [
+      {
+        "action": [
+          "set",
+          [
+            "later=3"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3
+        },
+        "events": []
+      }
+    ],
+    "replace_pending": [
+      {
+        "action": [
+          "set",
+          [
+            "later=2"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "set",
+          [
+            "later=3"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      }
+    ],
+    "duplicate_pending": [
+      {
+        "action": [
+          "set",
+          [
+            "later=2",
+            "later=3"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": []
+      }
+    ],
+    "known_and_unknown": [
+      {
+        "action": [
+          "set",
+          [
+            "count=4",
+            "later=3"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 4
+        },
+        "events": [
+          [
+            "count"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 4,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 4,
+          "later": 3
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      }
+    ],
+    "invalid_known": [
+      {
+        "action": [
+          "set",
+          [
+            "later=3",
+            "count=bad"
+          ]
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": []
+      }
+    ],
+    "invalid_pending": [
+      {
+        "action": [
+          "set",
+          [
+            "later=bad"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "set",
+          [
+            "later=5"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 5
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1,
+          "later": 5
+        },
+        "events": []
+      }
+    ],
+    "ordinary_update": [
+      {
+        "action": [
+          "set",
+          [
+            "later=3"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "set",
+          [
+            "later=5"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 5
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      }
+    ],
+    "partial_registration": [
+      {
+        "action": [
+          "set",
+          [
+            "later=3",
+            "other=4"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "add",
+          "other"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3,
+          "other": 1
+        },
+        "events": [
+          [
+            "other"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3,
+          "other": 4
+        },
+        "events": [
+          [
+            "other"
+          ]
+        ]
+      }
+    ],
+    "rejected_pending": [
+      {
+        "action": [
+          "set",
+          [
+            "later=7"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ],
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ],
+          [
+            "later"
+          ]
+        ]
+      }
+    ],
+    "registered_together": [
+      {
+        "action": [
+          "set",
+          [
+            "later=3",
+            "other=4"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "add",
+          "other"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1,
+          "other": 1
+        },
+        "events": [
+          [
+            "other"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3,
+          "other": 4
+        },
+        "events": [
+          [
+            "later",
+            "other"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3,
+          "other": 4
+        },
+        "events": []
+      }
+    ],
+    "invalid_batch": [
+      {
+        "action": [
+          "set",
+          [
+            "later=3",
+            "other=bad"
+          ]
+        ],
+        "error": null,
+        "values": {
+          "count": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "add",
+          "other"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1,
+          "other": 1
+        },
+        "events": [
+          [
+            "other"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1,
+          "later": 1,
+          "other": 1
+        },
+        "events": []
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1,
+          "later": 1,
+          "other": 1
+        },
+        "events": []
+      }
+    ],
+    "rejected_known": [
+      {
+        "action": [
+          "set",
+          [
+            "later=3",
+            "count=7"
+          ]
+        ],
+        "error": "OptionsError",
+        "values": {
+          "count": 1
+        },
+        "events": [
+          [
+            "count"
+          ],
+          [
+            "count"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "add",
+          "later"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 1
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      },
+      {
+        "action": [
+          "process"
+        ],
+        "error": null,
+        "values": {
+          "count": 1,
+          "later": 3
+        },
+        "events": [
+          [
+            "later"
+          ]
+        ]
+      }
+    ]
+  }
+}

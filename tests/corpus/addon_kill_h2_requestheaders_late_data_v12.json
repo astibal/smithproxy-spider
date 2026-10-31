@@ -1,0 +1,93 @@
+{
+  "client_events": [
+    {
+      "error": 2,
+      "stream": 1,
+      "type": "StreamReset"
+    },
+    {
+      "status": "200",
+      "stream": 3,
+      "type": "ResponseReceived"
+    },
+    {
+      "body": "survived",
+      "stream": 3,
+      "type": "DataReceived"
+    },
+    {
+      "body": "",
+      "stream": 3,
+      "type": "DataReceived"
+    },
+    {
+      "stream": 3,
+      "type": "StreamEnded"
+    }
+  ],
+  "client_late_data": [
+    {
+      "body": "late",
+      "end_stream": false
+    },
+    {
+      "body": "body",
+      "end_stream": true
+    }
+  ],
+  "hooks": [
+    {
+      "error": null,
+      "hook": "requestheaders",
+      "killable": true,
+      "live": true,
+      "path": "/kill-headers"
+    },
+    {
+      "error": "Connection killed.",
+      "hook": "requestheaders-after-kill",
+      "killable": false,
+      "live": false,
+      "path": "/kill-headers"
+    },
+    {
+      "error": "Connection killed.",
+      "hook": "error",
+      "killable": false,
+      "live": false,
+      "path": "/kill-headers"
+    },
+    {
+      "error": null,
+      "hook": "requestheaders",
+      "killable": true,
+      "live": true,
+      "path": "/survive"
+    },
+    {
+      "error": null,
+      "hook": "request",
+      "killable": true,
+      "live": true,
+      "path": "/survive"
+    },
+    {
+      "error": null,
+      "hook": "responseheaders",
+      "killable": true,
+      "live": true,
+      "path": "/survive"
+    },
+    {
+      "error": null,
+      "hook": "response",
+      "killable": true,
+      "live": true,
+      "path": "/survive"
+    }
+  ],
+  "origin_paths": [
+    "/survive"
+  ],
+  "reference": "mitmproxy 12.3.1"
+}

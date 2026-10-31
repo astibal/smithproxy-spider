@@ -1,0 +1,64 @@
+{
+  "client": {
+    "alpn": "http/1.1",
+    "body": "ok",
+    "connect_status": "HTTP/1.1 200 Connection established",
+    "status_line": "HTTP/1.1 200 OK"
+  },
+  "hooks": [
+    {
+      "alpn_offers": [
+        "http/1.1"
+      ],
+      "establish_server_tls_first": false,
+      "hook": "tls_clienthello",
+      "ignore_connection": false,
+      "sni": "probe.invalid"
+    },
+    {
+      "alpn": null,
+      "connection": "Server",
+      "hook": "tls_start_server",
+      "sni": null,
+      "tls": true,
+      "tls_established": false,
+      "tls_version": null,
+      "transport": "tcp"
+    },
+    {
+      "alpn": "http/1.1",
+      "connection": "Server",
+      "hook": "tls_established_server",
+      "sni": "probe.invalid",
+      "tls": true,
+      "tls_established": true,
+      "tls_version": "TLSv1.3",
+      "transport": "tcp"
+    },
+    {
+      "alpn": null,
+      "connection": "Client",
+      "hook": "tls_start_client",
+      "sni": "probe.invalid",
+      "tls": true,
+      "tls_established": false,
+      "tls_version": null,
+      "transport": "tcp"
+    },
+    {
+      "alpn": "http/1.1",
+      "connection": "Client",
+      "hook": "tls_established_client",
+      "sni": "probe.invalid",
+      "tls": true,
+      "tls_established": true,
+      "tls_version": "TLSv1.3",
+      "transport": "tcp"
+    }
+  ],
+  "origin": {
+    "alpn": "http/1.1",
+    "request_line": "GET /tls HTTP/1.1"
+  },
+  "reference": "mitmproxy 12.3.1"
+}

@@ -1,0 +1,82 @@
+{
+  "clients": {
+    "/headers": {
+      "body": "/headers",
+      "status_line": "HTTP/1.1 200 OK"
+    },
+    "/request": {
+      "body": "/request",
+      "status_line": "HTTP/1.1 200 OK"
+    }
+  },
+  "destination_requests": [
+    {
+      "host": "127.0.0.1:destination",
+      "path": "/headers"
+    },
+    {
+      "host": "127.0.0.1:destination",
+      "path": "/request"
+    }
+  ],
+  "hooks": [
+    {
+      "hook": "requestheaders-before",
+      "host": "127.0.0.1",
+      "host_header": "127.0.0.1:original",
+      "path": "/headers",
+      "port": "original"
+    },
+    {
+      "hook": "requestheaders-after",
+      "host": "127.0.0.1",
+      "host_header": "127.0.0.1:destination",
+      "path": "/headers",
+      "port": "destination"
+    },
+    {
+      "hook": "request-before",
+      "host": "127.0.0.1",
+      "host_header": "127.0.0.1:destination",
+      "path": "/headers",
+      "port": "destination"
+    },
+    {
+      "hook": "response",
+      "host": "127.0.0.1",
+      "host_header": "127.0.0.1:destination",
+      "path": "/headers",
+      "port": "destination"
+    },
+    {
+      "hook": "requestheaders-before",
+      "host": "127.0.0.1",
+      "host_header": "127.0.0.1:original",
+      "path": "/request",
+      "port": "original"
+    },
+    {
+      "hook": "request-before",
+      "host": "127.0.0.1",
+      "host_header": "127.0.0.1:original",
+      "path": "/request",
+      "port": "original"
+    },
+    {
+      "hook": "request-after",
+      "host": "127.0.0.1",
+      "host_header": "127.0.0.1:destination",
+      "path": "/request",
+      "port": "destination"
+    },
+    {
+      "hook": "response",
+      "host": "127.0.0.1",
+      "host_header": "127.0.0.1:destination",
+      "path": "/request",
+      "port": "destination"
+    }
+  ],
+  "original_contacts": 0,
+  "reference": "mitmproxy 12.3.1"
+}

@@ -1,0 +1,71 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "requests": [
+    {
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "x-pipeline-sequence",
+          "1"
+        ]
+      ],
+      "method": "GET",
+      "path": "/pipeline/1"
+    },
+    {
+      "headers": [
+        [
+          "content-length",
+          "0"
+        ],
+        [
+          "x-pipeline-sequence",
+          "2"
+        ]
+      ],
+      "method": "GET",
+      "path": "/pipeline/2"
+    }
+  ],
+  "responses": [
+    {
+      "body": "client-1",
+      "headers": [
+        [
+          "x-origin",
+          "1"
+        ],
+        [
+          "content-length",
+          "8"
+        ],
+        [
+          "x-pipeline-sequence",
+          "1"
+        ]
+      ],
+      "start": "HTTP/1.1 221 Pipeline 1"
+    },
+    {
+      "body": "client-2",
+      "headers": [
+        [
+          "x-origin",
+          "2"
+        ],
+        [
+          "content-length",
+          "8"
+        ],
+        [
+          "x-pipeline-sequence",
+          "2"
+        ]
+      ],
+      "start": "HTTP/1.1 222 Pipeline 2"
+    }
+  ]
+}

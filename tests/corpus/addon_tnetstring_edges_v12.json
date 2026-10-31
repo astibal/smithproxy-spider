@@ -1,0 +1,86 @@
+{
+  "cases": {
+    "dump": {
+      "ok": true,
+      "type": "dict",
+      "value": {
+        "result": null,
+        "wire": "383a313a613b313a31237d"
+      }
+    },
+    "dump-unsupported": {
+      "cause": null,
+      "message": "unserializable object: <object> (<class 'object'>)",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "load-empty": {
+      "cause": null,
+      "message": "not a tnetstring: empty file",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "load-invalid-prefix": {
+      "cause": null,
+      "message": "not a tnetstring: missing or invalid length prefix",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "load-missing-colon": {
+      "cause": null,
+      "message": "not a tnetstring: missing or invalid length prefix",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "load-negative": {
+      "cause": null,
+      "message": "not a tnetstring: missing or invalid length prefix",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "load-truncated": {
+      "cause": null,
+      "message": "index out of range",
+      "ok": false,
+      "type": "IndexError"
+    },
+    "load-valid": {
+      "ok": true,
+      "type": "dict",
+      "value": {
+        "bytes": "616263"
+      }
+    },
+    "loads-invalid-prefix": {
+      "cause": null,
+      "message": "not a tnetstring: missing or invalid length prefix: b'x:a,'",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "parse-invalid-boolean": {
+      "cause": null,
+      "message": "not a tnetstring: invalid boolean literal: <memory>",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "parse-invalid-float": {
+      "cause": null,
+      "message": "not a tnetstring: invalid float literal: <memory>",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "parse-invalid-null": {
+      "cause": null,
+      "message": "not a tnetstring: invalid null literal: <memory>",
+      "ok": false,
+      "type": "ValueError"
+    },
+    "split-invalid-prefix": {
+      "cause": null,
+      "message": "not a tnetstring: missing or invalid length prefix: b'abc:data'",
+      "ok": false,
+      "type": "ValueError"
+    }
+  },
+  "reference": "12.3.1"
+}

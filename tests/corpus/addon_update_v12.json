@@ -1,0 +1,43 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": [
+    {
+      "label": "add observer",
+      "events": [["load", "observer"]],
+      "chain": ["observer"]
+    },
+    {
+      "label": "add target",
+      "events": [["load", "target"]],
+      "chain": ["observer", "target"]
+    },
+    {
+      "label": "explicit update",
+      "events": [
+        ["update", "observer", ["target"]],
+        ["update", "target", ["target"]]
+      ],
+      "chain": ["observer", "target"]
+    },
+    {
+      "label": "remove target",
+      "events": [["done", "target"]],
+      "chain": ["observer"]
+    },
+    {
+      "label": "update after removal",
+      "events": [["update", "observer", ["target"]]],
+      "chain": ["observer"]
+    },
+    {
+      "label": "empty update",
+      "events": [["update", "observer", []]],
+      "chain": ["observer"]
+    },
+    {
+      "label": "remove observer",
+      "events": [["done", "observer"]],
+      "chain": []
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "execution": {
+    "async_result": null,
+    "events": [
+      {
+        "context": "missing",
+        "different_thread": true,
+        "kind": "sync",
+        "value": "one"
+      },
+      {
+        "context": "sync callback",
+        "different_thread": true,
+        "has_running_loop": true,
+        "kind": "async",
+        "value": "two"
+      },
+      {
+        "context": "sync callback",
+        "different_thread": true,
+        "kind": "following sync"
+      }
+    ],
+    "failure": {
+      "message": "concurrent failure",
+      "type": "RuntimeError"
+    },
+    "following_result": null,
+    "keyword_failure": {
+      "message": "concurrent.<locals>._concurrent() got an unexpected keyword argument 'value'",
+      "ok": false,
+      "type": "TypeError"
+    },
+    "sync_result": null
+  },
+  "reference": "mitmproxy 12.3.1",
+  "surface": {
+    "accepted_hooks": [
+      "done",
+      "running",
+      "update"
+    ],
+    "function_module": "mitmproxy.script.concurrent",
+    "implementation_has_all": false,
+    "noncallable": {
+      "integer": {
+        "message": "'int' object has no attribute '__name__'",
+        "ok": false,
+        "type": "AttributeError"
+      },
+      "lambda": {
+        "message": "Concurrent decorator not supported for '<lambda>' method.",
+        "ok": false,
+        "type": "NotImplementedError"
+      },
+      "none": {
+        "message": "'NoneType' object has no attribute '__name__'",
+        "ok": false,
+        "type": "AttributeError"
+      }
+    },
+    "package_all": [
+      "concurrent"
+    ],
+    "package_all_type": "list",
+    "package_has_path": true,
+    "rejection_mismatches": [],
+    "same_function": true,
+    "wrapper": {
+      "annotations": {},
+      "attributes": {},
+      "doc": null,
+      "is_coroutine_function": true,
+      "module": "mitmproxy.script.concurrent",
+      "name": "_concurrent",
+      "qualname": "concurrent.<locals>._concurrent",
+      "signature": "(*args)"
+    }
+  }
+}

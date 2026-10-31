@@ -1,0 +1,144 @@
+{
+  "cases": {
+    "connection_state_values": {
+      "CAN_READ": 1,
+      "CAN_WRITE": 2,
+      "CLOSED": 0,
+      "OPEN": 3
+    },
+    "equality_other_type": false,
+    "invalid_alpn": {
+      "message": "Invalid value for alpn. Expected <class 'bytes'>, got h2 (<class 'str'>).",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_alpn_offers": {
+      "message": "Invalid value for alpn_offers. Expected <class 'bytes'>, got http/1.1 (<class 'str'>).",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_cipher_list": {
+      "message": "Invalid value for cipher_list. Expected <class 'str'>, got b'other' (<class 'bytes'>).",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_peername_empty": {
+      "status": "ok",
+      "value": {
+        "peername": [],
+        "transport_protocol": "tcp"
+      }
+    },
+    "invalid_peername_extended": {
+      "status": "ok",
+      "value": {
+        "peername": ["client", 1234, 5678],
+        "transport_protocol": "tcp"
+      }
+    },
+    "invalid_peername_host": {
+      "message": "Invalid value for peername. Expected <class 'str'>, got 1234 (<class 'int'>).",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_peername_length": {
+      "message": "Invalid value for peername. Expected <class 'int'>, got extra (<class 'str'>).",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_peername_port": {
+      "message": "Invalid value for peername. Expected <class 'int'>, got 1234 (<class 'str'>).",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_peername_shape": {
+      "message": "Invalid value for peername. Expected <class 'int'>, got l (<class 'str'>).",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_peername_single": {
+      "status": "ok",
+      "value": {
+        "peername": ["client"],
+        "transport_protocol": "tcp"
+      }
+    },
+    "invalid_timestamp_start": {
+      "message": "Invalid value for timestamp_start. Expected <class 'float'>, got now (<class 'str'>).",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_tls": {
+      "message": "Invalid value for tls. Expected <class 'bool'>, got 1 (<class 'int'>).",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_transport_protocol": {
+      "message": "Invalid value for transport_protocol: 1 does not match any literal value.",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "invalid_transport_protocol_literal": {
+      "message": "Invalid value for transport_protocol: 'quic' does not match any literal value.",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "legacy_address": {
+      "value": ["192.0.2.20", 1234],
+      "warnings": [{
+        "category": "DeprecationWarning",
+        "message": "Client.address is deprecated, use Client.peername instead."
+      }]
+    },
+    "legacy_alpn": {
+      "value": {"bytes_hex": "6832"},
+      "warnings": [{
+        "category": "DeprecationWarning",
+        "message": "Connection.alpn_proto_negotiated is deprecated, use Connection.alpn instead."
+      }]
+    },
+    "legacy_cipher_name": {
+      "value": "TLS_AES_128_GCM_SHA256",
+      "warnings": [{
+        "category": "DeprecationWarning",
+        "message": "Client.cipher_name is deprecated, use Client.cipher instead."
+      }]
+    },
+    "legacy_empty_cert": {
+      "value": null,
+      "warnings": [{
+        "category": "DeprecationWarning",
+        "message": "Server.cert is deprecated, use Server.certificate_list instead."
+      }]
+    },
+    "legacy_empty_clientcert": {
+      "value": null,
+      "warnings": [{
+        "category": "DeprecationWarning",
+        "message": "Client.clientcert is deprecated, use Client.certificate_list instead."
+      }]
+    },
+    "legacy_ip_address": {
+      "value": ["192.0.2.10", 443],
+      "warnings": [{
+        "category": "DeprecationWarning",
+        "message": "Server.ip_address is deprecated, use Server.peername instead."
+      }]
+    },
+    "missing_peername": {
+      "message": "Attribute peername must not be None.",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "missing_proxy_mode": {
+      "message": "Attribute proxy_mode must not be None.",
+      "status": "error",
+      "type": "ValueError"
+    },
+    "missing_sockname": {
+      "message": "Attribute sockname must not be None.",
+      "status": "error",
+      "type": "ValueError"
+    }
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "tcp": [
+      [
+        "-> b''",
+        "(True, b'', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "-> b'hello'",
+        "(True, b'hello', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "-> b'\\x00\\xff'",
+        "(True, b'\\x00\\xff', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "<- b''",
+        "(False, b'', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "<- b'hello'",
+        "(False, b'hello', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "<- b'\\x00\\xff'",
+        "(False, b'\\x00\\xff', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "set-zero",
+        true,
+        true,
+        true
+      ],
+      [
+        "mutable-content",
+        true
+      ],
+      [
+        "flow",
+        "tcp",
+        true,
+        true,
+        false,
+        true,
+        true
+      ],
+      [
+        "killed",
+        false,
+        false,
+        "Connection killed.",
+        false
+      ]
+    ],
+    "udp": [
+      [
+        "-> b''",
+        "(True, b'', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "-> b'hello'",
+        "(True, b'hello', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "-> b'\\x00\\xff'",
+        "(True, b'\\x00\\xff', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "<- b''",
+        "(False, b'', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "<- b'hello'",
+        "(False, b'hello', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "<- b'\\x00\\xff'",
+        "(False, b'\\x00\\xff', 123.5)",
+        true,
+        true,
+        true
+      ],
+      [
+        "set-zero",
+        true,
+        true,
+        true
+      ],
+      [
+        "mutable-content",
+        true
+      ],
+      [
+        "flow",
+        "udp",
+        true,
+        true,
+        false,
+        true,
+        true
+      ],
+      [
+        "killed",
+        false,
+        false,
+        "Connection killed.",
+        false
+      ]
+    ]
+  }
+}

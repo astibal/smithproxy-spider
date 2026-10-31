@@ -8,6 +8,7 @@ import errno
 import fcntl
 import os
 import platform
+import stat
 import sysconfig
 
 
@@ -15,7 +16,35 @@ class SandboxUnavailable(RuntimeError):
     pass
 
 
-def install_script_sandbox(storage_directory=None):
+def install_script_sandbox(storage_directory=None, *, event_loop_fd=None,
+                           additional_event_loop_fds=(), wakeup_read_fds=(),
+                           wakeup_write_fds=()):
+    # Only a trusted loop created before administrator code runs can opt in.
+    # This does not allow creating epoll descriptors, sockets or connections.
+    event_loop_fds = (() if event_loop_fd is None else (event_loop_fd,))
+    event_loop_fds += tuple(additional_event_loop_fds)
+    for descriptor in event_loop_fds:
+        if type(descriptor) is not int or descriptor < 3:
+            raise SandboxUnavailable('Invalid event loop descriptor')
+        try:
+            target = os.readlink('/proc/self/fd/' + str(descriptor))
+        except OSError as error:
+            raise SandboxUnavailable('Cannot verify event loop descriptor') from error
+        if target != 'anon_inode:[eventpoll]':
+            raise SandboxUnavailable('Event loop descriptor must refer to epoll')
+    wakeup_read_fds = tuple(wakeup_read_fds)
+    wakeup_write_fds = tuple(wakeup_write_fds)
+    if bool(wakeup_read_fds or wakeup_write_fds) and not event_loop_fds:
+        raise SandboxUnavailable('Wakeup descriptors require an event loop')
+    for descriptor in wakeup_read_fds + wakeup_write_fds:
+        if type(descriptor) is not int or descriptor < 3:
+            raise SandboxUnavailable('Invalid event loop wakeup descriptor')
+        try:
+            mode = os.fstat(descriptor).st_mode
+        except OSError as error:
+            raise SandboxUnavailable('Cannot verify event loop wakeup descriptor') from error
+        if not stat.S_ISSOCK(mode):
+            raise SandboxUnavailable('Event loop wakeup descriptor must be a socket')
     if platform.system() != 'Linux' or platform.machine() not in ('x86_64', 'aarch64'):
         raise SandboxUnavailable('Script sandbox requires Linux x86_64 or aarch64')
 
@@ -102,8 +131,9 @@ def install_script_sandbox(storage_directory=None):
         raise SandboxUnavailable('Cannot create seccomp filter')
 
     try:
-        # File access is further restricted by Landlock. No sockets, processes,
-        # signals to other processes, ptrace, mount, io_uring or kernel APIs.
+        # File access is further restricted by Landlock. No external sockets,
+        # processes, signals to other processes, ptrace, mount, io_uring or
+        # kernel APIs. A tightly filtered clone rule below permits threads only.
         allowed = '''read write readv writev pread64 pwrite64 close close_range
             lseek fstat newfstatat stat lstat statx access faccessat faccessat2
             open openat getdents64 readlink readlinkat getcwd
@@ -121,6 +151,24 @@ def install_script_sandbox(storage_directory=None):
             if number >= 0 and seccomp.seccomp_rule_add(policy, 0x7fff0000, number, 0) != 0:
                 raise SandboxUnavailable('Cannot allow syscall: ' + name)
 
+        # glibc first attempts clone3 and falls back to clone only for ENOSYS.
+        # The fallback accepts exactly pthread's shared-process thread shape;
+        # omitting CLONE_THREAD, CLONE_VM or any other bit remains denied.
+        number = seccomp.seccomp_syscall_resolve_name(b'clone3')
+        if number >= 0:
+            action = 0x00050000 | errno.ENOSYS
+            if seccomp.seccomp_rule_add(policy, action, number, 0) != 0:
+                raise SandboxUnavailable('Cannot configure clone3 fallback')
+
+        number = seccomp.seccomp_syscall_resolve_name(b'clone')
+        if number < 0:
+            raise SandboxUnavailable('Cannot resolve thread clone syscall')
+        thread_clone_flags = 0x003d0f00
+        argument = Argument(0, 4, thread_clone_flags, 0)
+        if seccomp.seccomp_rule_add_array(policy, 0x7fff0000, number, 1,
+                                          ctypes.byref(argument)) != 0:
+            raise SandboxUnavailable('Cannot allow safe thread creation')
+
         # SQLite needs advisory locks and Python needs descriptor flags. Do not
         # allow F_SETOWN/F_SETSIG/F_SETLEASE: they can arrange cross-process signals.
         number = seccomp.seccomp_syscall_resolve_name(b'fcntl')
@@ -130,6 +178,31 @@ def install_script_sandbox(storage_directory=None):
             argument = Argument(1, 4, command, 0)  # argument 1 == command
             if seccomp.seccomp_rule_add_array(policy, 0x7fff0000, number, 1, ctypes.byref(argument)) != 0:
                 raise SandboxUnavailable('Cannot allow safe fcntl command')
+
+        if event_loop_fds:
+            # Permit polling and maintaining only the prepared epoll instances.
+            # New descriptors and socket operations remain denied. Monitoring a
+            # descriptor grants no read/write rights beyond the existing policy.
+            for descriptor in event_loop_fds:
+                for name in ('epoll_wait', 'epoll_pwait', 'epoll_pwait2', 'epoll_ctl'):
+                    number = seccomp.seccomp_syscall_resolve_name(name.encode())
+                    if number < 0:
+                        continue
+                    argument = Argument(0, 4, descriptor, 0)
+                    if seccomp.seccomp_rule_add_array(policy, 0x7fff0000, number, 1,
+                                                      ctypes.byref(argument)) != 0:
+                        raise SandboxUnavailable('Cannot allow event loop syscall: ' + name)
+
+        for name, descriptors in (
+                ('recvfrom', wakeup_read_fds), ('sendto', wakeup_write_fds)):
+            number = seccomp.seccomp_syscall_resolve_name(name.encode())
+            if descriptors and number < 0:
+                raise SandboxUnavailable('Cannot resolve event loop wakeup syscall: ' + name)
+            for descriptor in descriptors:
+                argument = Argument(0, 4, descriptor, 0)
+                if seccomp.seccomp_rule_add_array(policy, 0x7fff0000, number, 1,
+                                                  ctypes.byref(argument)) != 0:
+                    raise SandboxUnavailable('Cannot allow event loop wakeup syscall: ' + name)
 
         if seccomp.seccomp_load(policy) != 0:
             raise SandboxUnavailable('Cannot enforce seccomp filter')

@@ -22,6 +22,16 @@ let payloadScope = localStorage.getItem('spider-payload-scope') === 'l7' ? 'l7' 
 let eventSocket = null, reconnectTimer = null, followPayload = true, liveEdit = false;
 let replacementBase64 = null;
 let replacementPayload = null;
+let contentViewDeployment = '';
+let contentViewCatalogSignature = '';
+let contentViews = [];
+let selectedContentView = '';
+let contentViewRenderSequence = 0;
+let contentViewEditTimer = null;
+let contentViewInteractive = false;
+let contentViewOriginalData = '';
+let contentViewContentType = null;
+let contentViewResolvedName = '';
 let activeTab = 'workbench-tab', renderFrame = null, eventsDirty = true, payloadsDirty = true;
 let inspectionPayloadsReceived = 0, inspectionLastSeenAt = 0;
 const inspectionIngress = [];
@@ -2425,11 +2435,17 @@ function scriptEnrichments(record) {
 function renderPayload() {
   const l7 = l7PayloadView(selectedPayload, payloadBytes);
   const shownBytes = payloadScope === 'l7' ? l7.bytes : payloadBytes;
-  if (payloadMode === 'hex') byId('payload-hex').textContent = encodeHex(shownBytes);
-  else byId('payload-text').value = new TextDecoder().decode(shownBytes);
-  byId('payload-text').readOnly = payloadScope === 'l7';
-  byId('payload-text').title = payloadScope === 'l7'
-    ? 'L7 view is derived from wire content and is read-only' : '';
+  if (selectedContentView) {
+    byId('payload-text').hidden = false;
+    byId('payload-hex').hidden = true;
+    renderAddonContentView(shownBytes);
+  } else {
+    if (payloadMode === 'hex') byId('payload-hex').textContent = encodeHex(shownBytes);
+    else byId('payload-text').value = new TextDecoder().decode(shownBytes);
+    byId('payload-text').readOnly = payloadScope === 'l7';
+    byId('payload-text').title = payloadScope === 'l7'
+      ? 'L7 view is derived from wire content and is read-only' : '';
+  }
   for (const button of document.querySelectorAll('#payload-scope button')) {
     button.setAttribute('aria-pressed', String(button.dataset.scope === payloadScope));
     if (button.dataset.scope === 'l7') {
@@ -2444,10 +2460,12 @@ function renderPayload() {
     ? `r${selectedPayload.revision} · ${info.side || '?'} · ${payloadBytes.length} B · ${resolvedSessionLabel(info.session || selectedPayload.event.id)}`
     : `${payloadBytes.length} B sample`;
   byId('workbench-source').className = '';
-  byId('payload-view-title').textContent = `${payloadMode.toUpperCase()} ${payloadScope === 'l7' ? 'L7 body' : 'wire payload'}`;
-  byId('payload-view-status').textContent = selectedPayload
-    ? `${info.side || '?'} · ${payloadScope === 'l7' ? l7PayloadSummary(l7) : formatBytes(payloadBytes.length)} · r${selectedPayload.revision}`
-    : `${shownBytes.length} B`;
+  if (!selectedContentView) {
+    byId('payload-view-title').textContent = `${payloadMode.toUpperCase()} ${payloadScope === 'l7' ? 'L7 body' : 'wire payload'}`;
+    byId('payload-view-status').textContent = selectedPayload
+      ? `${info.side || '?'} · ${payloadScope === 'l7' ? l7PayloadSummary(l7) : formatBytes(payloadBytes.length)} · r${selectedPayload.revision}`
+      : `${shownBytes.length} B`;
+  }
   const inspection = payloadInspectionInfo(selectedPayload);
   renderWorkbenchInfo(inspection, selectedPayload);
   renderEnrichments(selectedPayload);
@@ -2565,6 +2583,9 @@ function payloadInspectionInfo(record) {
 
 let payloadMode = 'ascii';
 function setPayloadMode(mode) {
+  selectedContentView = '';
+  byId('payload-content-view').value = '';
+  ++contentViewRenderSequence;
   payloadMode = mode === 'hex' ? 'hex' : 'ascii';
   const hex = payloadMode === 'hex';
   byId('payload-text').hidden = hex;
@@ -4343,12 +4364,136 @@ async function inspectionRequest(path = '', body = undefined) {
   return result;
 }
 
+function updateContentViewSelect() {
+  const select = byId('payload-content-view');
+  const previous = selectedContentView;
+  select.replaceChildren(new Option('Addon view…', ''));
+  if (contentViews.length) {
+    select.append(new Option('Auto custom view', 'auto'));
+    for (const view of contentViews) {
+      const suffix = view.interactive ? ' · editable' : '';
+      select.append(new Option(`${view.name}${suffix}`, view.key));
+    }
+  }
+  select.hidden = contentViews.length === 0;
+  const available = contentViews.length > 0 &&
+    (previous === 'auto' || contentViews.some(view => view.key === previous));
+  selectedContentView = available ? previous : '';
+  select.value = selectedContentView;
+  if (!available) {
+    ++contentViewRenderSequence;
+    if (previous) {
+      for (const button of document.querySelectorAll('#payload-modes button')) {
+        button.setAttribute('aria-pressed', String(button.dataset.mode === payloadMode));
+      }
+      renderPayload();
+    }
+  }
+}
+
+async function refreshContentViewCatalog(state) {
+  const addon = (state.chain || []).find(item =>
+    item.enabled && item.script_api === 'mitmproxy');
+  const signature = addon ? `${addon.id}:${addon.version}` : '';
+  if (signature === contentViewCatalogSignature) return;
+  contentViewCatalogSignature = signature;
+  contentViewDeployment = addon?.id || '';
+  contentViews = [];
+  updateContentViewSelect();
+  if (!addon) return;
+
+  try {
+    const result = await inspectionRequest('/content-view', {
+      action: 'list', deployment_id: addon.id,
+    });
+    if (contentViewCatalogSignature !== signature) return;
+    if (!result.ok) throw new Error(result.error || 'Cannot list addon content views');
+    contentViews = Array.isArray(result.views) ? result.views : [];
+    updateContentViewSelect();
+  } catch (error) {
+    if (contentViewCatalogSignature !== signature) return;
+    contentViews = [];
+    updateContentViewSelect();
+    byId('payload-content-view').title = error.message;
+    contentViewCatalogSignature = '';
+  }
+}
+
+async function renderAddonContentView(bytes) {
+  const sequence = ++contentViewRenderSequence;
+  const requestedView = selectedContentView;
+  const deployment = contentViewDeployment;
+  const contentType = humanRecordContentType(selectedPayload, payloadRecords);
+  const encoded = encodeBase64(bytes);
+  contentViewInteractive = false;
+  byId('payload-text').readOnly = true;
+  byId('payload-text').title = 'Rendering through the deployed addon…';
+  byId('payload-text').value = '';
+  byId('payload-view-title').textContent = 'Addon content view';
+  byId('payload-view-status').textContent = 'rendering…';
+
+  try {
+    const result = await inspectionRequest('/content-view', {
+      action: 'render', deployment_id: deployment, data: encoded,
+      content_type: contentType, view_name: requestedView,
+    });
+    if (sequence !== contentViewRenderSequence ||
+        requestedView !== selectedContentView || deployment !== contentViewDeployment) return;
+    if (!result.ok) throw new Error(result.error || 'Content view failed');
+
+    contentViewOriginalData = encoded;
+    contentViewContentType = contentType;
+    contentViewResolvedName = result.view_name;
+    contentViewInteractive = Boolean(result.interactive) && payloadScope === 'wire';
+    byId('payload-text').value = result.text;
+    byId('payload-text').readOnly = !contentViewInteractive;
+    byId('payload-text').title = result.interactive && payloadScope === 'l7'
+      ? 'Interactive L7 views are read-only because replacing a derived body requires transport-aware framing'
+      : contentViewInteractive ? 'Editing re-encodes this view through the deployed addon' : 'Read-only addon content view';
+    byId('payload-view-title').textContent = `${result.view_name} · ${String(result.syntax_highlight || 'none').toUpperCase()}`;
+    byId('payload-view-status').textContent = contentViewInteractive
+      ? `${formatBytes(bytes.length)} · editable` : `${formatBytes(bytes.length)} · read-only`;
+  } catch (error) {
+    if (sequence !== contentViewRenderSequence) return;
+    contentViewInteractive = false;
+    byId('payload-text').readOnly = true;
+    byId('payload-text').value = error.message;
+    byId('payload-view-status').textContent = 'render failed';
+  }
+}
+
+async function reencodeAddonContentView(text, sequence) {
+  try {
+    const result = await inspectionRequest('/content-view', {
+      action: 'reencode', deployment_id: contentViewDeployment,
+      data: contentViewOriginalData, content_type: contentViewContentType,
+      view_name: contentViewResolvedName, text,
+    });
+    if (sequence !== contentViewRenderSequence || !contentViewInteractive) return;
+    if (!result.ok) throw new Error(result.error || 'Content view re-encoding failed');
+    replacementBase64 = result.data;
+    replacementPayload = selectedPayload;
+    byId('payload-view-status').textContent = `${formatBytes(decodeBase64(result.data).length)} · replacement ready`;
+    const pending = selectedPayload?.event?.decision?.state === 'pending' && !selectedPayload.decided;
+    byId('replace-payload').disabled = !pending;
+  } catch (error) {
+    if (sequence !== contentViewRenderSequence) return;
+    replacementBase64 = null;
+    byId('payload-view-status').textContent = `re-encode failed · ${error.message}`;
+    byId('replace-payload').disabled = true;
+  }
+}
+
 async function executeScript(record) {
   const bytes = record ? recordPayloadBytes(record) : payloadBytes.slice();
   const event = record?.event || {id: '', details: {info: {}}};
+  const addonOptions = (byId('chain-addon-options')?.value || '')
+    .split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   try {
     return await inspectionRequest('/run', {
       script: byId('script-editor').value,
+      script_api: byId('script-api')?.value || 'spider',
+      addon_options: addonOptions,
       event: {...event, details: {...event.details, info: {...event.details?.info, content: encodeBase64(bytes)}}},
       enrichments: (record?.enrichments || []).map(item => ({
         metadata: item.metadata || {}, content: encodeBase64(item.payload || new Uint8Array()),
@@ -4374,6 +4519,7 @@ async function refreshBackendInspection() {
       localStorage.setItem('spider-bypass-all', String(bypassAll));
     }
     window.dispatchEvent(new CustomEvent('inspection-state', {detail: state}));
+    refreshContentViewCatalog(state);
     inspectionRuns.completed = state.runs;
     inspectionRuns.failed = state.errors;
     inspectionRuns.running = state.running;
@@ -4381,7 +4527,8 @@ async function refreshBackendInspection() {
       ? 'Backend enabled · ' + state.scope + ' · revision ' + state.revision
       : 'Backend stopped · revision ' + state.revision;
     byId('backend-inspection-output').textContent = state.recent.map(run =>
-      '[' + run.run_id + ' ' + run.session_id + '] ' + (run.ok ? 'ok' : 'error') + '\n' +
+      '[' + run.run_id + ' ' + (run.phase === 'shutdown' ? 'shutdown ' + run.script_id : run.session_id) +
+      '] ' + (run.ok ? 'ok' : 'error') + '\n' +
       [...(run.logs || []), ...(run.error ? [run.error] : [])].join('\n')).join('\n\n');
     renderInspectionOverview();
   } catch (error) {
@@ -5020,6 +5167,15 @@ byId('accept-session').onclick = () => decideSelected('accept-session');
 byId('replace-payload').onclick = () => decideSelected('replace');
 byId('discard-payload').onclick = () => decideSelected('discard');
 byId('payload-text').oninput = event => {
+  if (selectedContentView) {
+    if (!contentViewInteractive) return;
+    clearTimeout(contentViewEditTimer);
+    const sequence = contentViewRenderSequence;
+    contentViewEditTimer = setTimeout(() => {
+      reencodeAddonContentView(event.target.value, sequence);
+    }, 200);
+    return;
+  }
   if (payloadScope === 'l7') return;
   payloadBytes = new TextEncoder().encode(event.target.value);
   if (payloadMode === 'hex') byId('payload-hex').textContent = encodeHex(payloadBytes);
@@ -5030,6 +5186,18 @@ for (const button of document.querySelectorAll('#payload-scope button')) {
 for (const button of document.querySelectorAll('#payload-modes button')) {
   button.onclick = () => setPayloadMode(button.dataset.mode);
 }
+byId('payload-content-view').onchange = event => {
+  selectedContentView = event.target.value;
+  ++contentViewRenderSequence;
+  for (const button of document.querySelectorAll('#payload-modes button')) {
+    button.setAttribute('aria-pressed', 'false');
+  }
+  if (!selectedContentView) {
+    setPayloadMode(payloadMode);
+    return;
+  }
+  renderPayload();
+};
 for (const button of document.querySelectorAll('#payload-views button')) {
   button.onclick = () => {
     payloadListView = button.dataset.view === 'flows' ? 'flows' : 'payloads';

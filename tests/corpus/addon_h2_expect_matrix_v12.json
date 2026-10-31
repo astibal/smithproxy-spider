@@ -1,0 +1,67 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "probe": "tests/probes/h2_expect_probe.py",
+  "observed_on": "2026-10-31",
+  "upstream_informational_statuses": [103, 100],
+  "upstream_informational_published": false,
+  "response_hooks": [
+    ["responseheaders", 200],
+    ["response", 200, "done"]
+  ],
+  "cases": [
+    {
+      "name": "baseline",
+      "expect_fields": ["100-continue"],
+      "body": "test",
+      "requestheaders_value": "100-continue",
+      "request_value": null,
+      "local_continue": true,
+      "expect_forwarded": false
+    },
+    {
+      "name": "mixed-case",
+      "expect_fields": ["100-Continue"],
+      "body": "test",
+      "requestheaders_value": "100-Continue",
+      "request_value": null,
+      "local_continue": true,
+      "expect_forwarded": false
+    },
+    {
+      "name": "duplicate",
+      "expect_fields": ["100-continue", "100-continue"],
+      "body": "test",
+      "requestheaders_value": "100-continue, 100-continue",
+      "request_value": "100-continue, 100-continue",
+      "local_continue": false,
+      "expect_forwarded": true
+    },
+    {
+      "name": "invalid",
+      "expect_fields": ["something-else"],
+      "body": "test",
+      "requestheaders_value": "something-else",
+      "request_value": "something-else",
+      "local_continue": false,
+      "expect_forwarded": true
+    },
+    {
+      "name": "absent",
+      "expect_fields": [],
+      "body": "test",
+      "requestheaders_value": null,
+      "request_value": null,
+      "local_continue": false,
+      "expect_forwarded": false
+    },
+    {
+      "name": "bodyless",
+      "expect_fields": ["100-continue"],
+      "body": "",
+      "requestheaders_value": "100-continue",
+      "request_value": null,
+      "local_continue": true,
+      "expect_forwarded": false
+    }
+  ]
+}

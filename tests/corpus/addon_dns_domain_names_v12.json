@@ -1,0 +1,131 @@
+{
+  "domain_names": {
+    "compressible_record_types": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      21,
+      24,
+      26,
+      30,
+      33,
+      35
+    ],
+    "compression": {
+      "cache": {
+        "0": [
+          "www.example.com",
+          6
+        ],
+        "6": [
+          "example.com",
+          13
+        ]
+      },
+      "cached_result": [
+        "www.example.com",
+        6
+      ],
+      "decompressed": "076578616d706c6503636f6d005441494c",
+      "long_label_error": {
+        "message": "unpack encountered a label of length 64",
+        "ok": false,
+        "type": "error"
+      },
+      "loop_error": {
+        "message": "unpack encountered domain name loop",
+        "ok": false,
+        "type": "error"
+      },
+      "record_cache": {
+        "0": [
+          "example.com",
+          13
+        ],
+        "13": [
+          "example.com",
+          2
+        ]
+      },
+      "result": [
+        "www.example.com",
+        6
+      ],
+      "root_pointer_cache": {
+        "0": [
+          "",
+          2
+        ],
+        "2": [
+          "",
+          1
+        ]
+      },
+      "root_pointer_result": [
+        "",
+        2
+      ]
+    },
+    "pack": {
+      "ascii": "03777777076578616d706c6503636f6d00",
+      "empty": "00",
+      "empty_label_error": {
+        "message": "domain name 'www..example' contains empty labels",
+        "ok": false,
+        "type": "ValueError"
+      },
+      "root_error": {
+        "message": "domain name '.' contains empty labels",
+        "ok": false,
+        "type": "ValueError"
+      },
+      "unicode": "0d786e2d2d62636865722d6b7661076578616d706c6500"
+    },
+    "unpack": {
+      "ascii": "www.example.com",
+      "from_suffix": [
+        "example.com",
+        19
+      ],
+      "long_label_error": {
+        "message": "unpack encountered a label of length 64",
+        "ok": false,
+        "type": "error"
+      },
+      "pointer_error": {
+        "message": "unpack encountered a pointer which is not supported in RDATA",
+        "ok": false,
+        "type": "error"
+      },
+      "root": "",
+      "trailing_error": {
+        "message": "unpack encountered a label of length 120",
+        "ok": false,
+        "type": "error"
+      },
+      "trailing_root_error": {
+        "message": "unpack requires a buffer of 1 bytes",
+        "ok": false,
+        "type": "error"
+      },
+      "truncated_error": {
+        "message": "unpack requires a label buffer of 3 bytes",
+        "ok": false,
+        "type": "error"
+      }
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

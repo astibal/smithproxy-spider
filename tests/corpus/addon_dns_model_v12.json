@@ -1,0 +1,869 @@
+{
+  "constant_conversions": {
+    "class_in": {
+      "value": "IN"
+    },
+    "opcode_query": {
+      "value": "QUERY"
+    },
+    "rcode_nxdomain": {
+      "value": "NXDOMAIN"
+    },
+    "rcode_status": {
+      "value": 404
+    },
+    "type_a": {
+      "value": "A"
+    },
+    "type_from_a": {
+      "value": 1
+    },
+    "type_from_number": {
+      "value": 65000
+    },
+    "type_unknown": {
+      "value": "TYPE(65000)"
+    }
+  },
+  "constants": {
+    "classes": {
+      "ANY": 255,
+      "CH": 3,
+      "HS": 4,
+      "IN": 1,
+      "NONE": 254
+    },
+    "op_codes": {
+      "DSO": 6,
+      "IQUERY": 1,
+      "NOTIFY": 4,
+      "QUERY": 0,
+      "STATUS": 2,
+      "UPDATE": 5
+    },
+    "response_codes": {
+      "DSOTYPENI": 11,
+      "FORMERR": 1,
+      "NOERROR": 0,
+      "NOTAUTH": 9,
+      "NOTIMP": 4,
+      "NOTZONE": 10,
+      "NXDOMAIN": 3,
+      "NXRRSET": 8,
+      "REFUSED": 5,
+      "SERVFAIL": 2,
+      "YXDOMAIN": 6,
+      "YXRRSET": 7
+    },
+    "types": {
+      "A": 1,
+      "A6": 38,
+      "AAAA": 28,
+      "AFSDB": 18,
+      "AMTRELAY": 260,
+      "ANY": 255,
+      "APL": 42,
+      "ATMA": 34,
+      "AVC": 258,
+      "AXFR": 252,
+      "CAA": 257,
+      "CDNSKEY": 60,
+      "CDS": 59,
+      "CERT": 37,
+      "CNAME": 5,
+      "CSYNC": 62,
+      "DHCID": 49,
+      "DLV": 32769,
+      "DNAME": 39,
+      "DNSKEY": 48,
+      "DOA": 259,
+      "DS": 43,
+      "EID": 31,
+      "EUI48": 108,
+      "EUI64": 109,
+      "GID": 102,
+      "GPOS": 27,
+      "HINFO": 13,
+      "HIP": 55,
+      "HTTPS": 65,
+      "IPSECKEY": 45,
+      "ISDN": 20,
+      "IXFR": 251,
+      "KEY": 25,
+      "KX": 36,
+      "L32": 105,
+      "L64": 106,
+      "LOC": 29,
+      "LP": 107,
+      "MAILA": 254,
+      "MAILB": 253,
+      "MB": 7,
+      "MD": 3,
+      "MF": 4,
+      "MG": 8,
+      "MINFO": 14,
+      "MR": 9,
+      "MX": 15,
+      "NAPTR": 35,
+      "NID": 104,
+      "NIMLOC": 32,
+      "NINFO": 56,
+      "NS": 2,
+      "NSAP": 22,
+      "NSAP_PTR": 23,
+      "NSEC": 47,
+      "NSEC3": 50,
+      "NSEC3PARAM": 51,
+      "NULL": 10,
+      "NXT": 30,
+      "OPENPGPKEY": 61,
+      "OPT": 41,
+      "PTR": 12,
+      "PX": 26,
+      "RKEY": 57,
+      "RP": 17,
+      "RRSIG": 46,
+      "RT": 21,
+      "SIG": 24,
+      "SINK": 40,
+      "SMIMEA": 53,
+      "SOA": 6,
+      "SPF": 99,
+      "SRV": 33,
+      "SSHFP": 44,
+      "SVCB": 64,
+      "TA": 32768,
+      "TALINK": 58,
+      "TKEY": 249,
+      "TLSA": 52,
+      "TSIG": 250,
+      "TXT": 16,
+      "UID": 101,
+      "UINFO": 100,
+      "UNSPEC": 103,
+      "URI": 256,
+      "WKS": 11,
+      "X25": 19,
+      "ZONEMD": 63
+    }
+  },
+  "errors": {
+    "fail_noerror": {
+      "error": "ValueError",
+      "message": "response_code must be an error code."
+    },
+    "invalid_id": {
+      "error": "ValueError",
+      "message": "DNS message's id 70000 is out of bounds."
+    },
+    "succeed_none": {
+      "error": "ValueError",
+      "message": "Attribute answers must not be None."
+    },
+    "unpack_trailing": {
+      "error": "error",
+      "message": "unpack requires a buffer of 30 bytes"
+    }
+  },
+  "failure": {
+    "json": {
+      "additionals": [],
+      "answers": [],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": "QUERY",
+      "query": false,
+      "questions": [
+        {
+          "class": "IN",
+          "name": "example.test",
+          "type": "A"
+        }
+      ],
+      "recursion_available": false,
+      "recursion_desired": true,
+      "response_code": "NXDOMAIN",
+      "size": 0,
+      "status_code": 404,
+      "timestamp": 201.0,
+      "truncation": false
+    },
+    "state": {
+      "additionals": [],
+      "answers": [],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": 0,
+      "query": false,
+      "questions": [
+        {
+          "class_": 1,
+          "name": "example.test",
+          "type": 1
+        }
+      ],
+      "recursion_available": false,
+      "recursion_desired": true,
+      "reserved": 0,
+      "response_code": 3,
+      "timestamp": 201.0,
+      "truncation": false
+    }
+  },
+  "flow_state": {
+    "backup": null,
+    "client_conn": {
+      "alpn": null,
+      "alpn_offers": [],
+      "certificate_list": [],
+      "cipher": null,
+      "cipher_list": [],
+      "error": null,
+      "id": "client-id",
+      "mitmcert": null,
+      "peername": {
+        "tuple": [
+          "client",
+          53000
+        ]
+      },
+      "proxy_mode": "regular",
+      "sni": null,
+      "sockname": {
+        "tuple": [
+          "proxy",
+          53
+        ]
+      },
+      "timestamp_end": null,
+      "timestamp_start": 10.0,
+      "timestamp_tls_setup": null,
+      "tls": false,
+      "tls_version": null,
+      "transport_protocol": "udp"
+    },
+    "comment": "",
+    "error": null,
+    "id": "dns-flow",
+    "intercepted": false,
+    "is_replay": null,
+    "marked": "",
+    "metadata": {},
+    "request": {
+      "additionals": [],
+      "answers": [],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": 0,
+      "query": true,
+      "questions": [
+        {
+          "class_": 1,
+          "name": "example.test",
+          "type": 1
+        }
+      ],
+      "recursion_available": false,
+      "recursion_desired": true,
+      "reserved": 0,
+      "response_code": 0,
+      "timestamp": 123.5,
+      "truncation": false
+    },
+    "response": {
+      "additionals": [],
+      "answers": [
+        {
+          "class_": 1,
+          "data": {
+            "bytes": "c0000201"
+          },
+          "name": "a.test",
+          "ttl": 10,
+          "type": 1
+        },
+        {
+          "class_": 1,
+          "data": {
+            "bytes": "20010db8000000000000000000000001"
+          },
+          "name": "aaaa.test",
+          "ttl": 20,
+          "type": 28
+        }
+      ],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": 0,
+      "query": false,
+      "questions": [
+        {
+          "class_": 1,
+          "name": "example.test",
+          "type": 1
+        }
+      ],
+      "recursion_available": true,
+      "recursion_desired": true,
+      "reserved": 0,
+      "response_code": 0,
+      "timestamp": 200.0,
+      "truncation": false
+    },
+    "server_conn": {
+      "address": {
+        "tuple": [
+          "resolver",
+          53
+        ]
+      },
+      "alpn": null,
+      "alpn_offers": [],
+      "certificate_list": [],
+      "cipher": null,
+      "cipher_list": [],
+      "error": null,
+      "id": "server-id",
+      "peername": null,
+      "sni": null,
+      "sockname": null,
+      "timestamp_end": null,
+      "timestamp_start": 11.0,
+      "timestamp_tcp_setup": null,
+      "timestamp_tls_setup": null,
+      "tls": false,
+      "tls_version": null,
+      "transport_protocol": "udp",
+      "via": null
+    },
+    "timestamp_created": 100.0,
+    "type": "dns",
+    "version": 21
+  },
+  "https": {
+    "alpn": {
+      "tuple": [
+        {
+          "bytes": "6832"
+        },
+        {
+          "bytes": "687474702f312e31"
+        }
+      ]
+    },
+    "constants": {
+      "ALPN": 1,
+      "ECH": 5,
+      "IPV4HINT": 4,
+      "IPV6HINT": 6,
+      "MANDATORY": 0,
+      "NO_DEFAULT_ALPN": 2,
+      "PORT": 3
+    },
+    "ech": "ZWNoZGF0YQ==",
+    "record_from_json": {
+      "class_": 1,
+      "data": {
+        "bytes": "000103737663076578616d706c65000001000c02683208687474702f312e3100050007656368646174610003000201bb"
+      },
+      "name": "example.test",
+      "ttl": 12,
+      "type": 65
+    },
+    "record_json": {
+      "class": "IN",
+      "data": {
+        "alpn": "\\x02h2\\x08http/1.1",
+        "ech": "echdata",
+        "port": "\\x01\\xbb",
+        "priority": 1,
+        "target_name": "svc.example"
+      },
+      "name": "example.test",
+      "ttl": 12,
+      "type": "HTTPS"
+    },
+    "record_state": {
+      "class_": 1,
+      "data": {
+        "bytes": "000103737663076578616d706c65000001000c02683208687474702f312e3100050007656368646174610003000201bb"
+      },
+      "name": "example.test",
+      "ttl": 12,
+      "type": 65
+    },
+    "record_text": "{'target_name': 'svc.example', 'priority': 1, 'alpn': '\\\\x02h2\\\\x08http/1.1', 'ech': 'echdata', 'port': '\\\\x01\\\\xbb'}",
+    "set_alpn": {
+      "class_": 1,
+      "data": {
+        "bytes": "000103737663076578616d706c65000001000602683302683200050007656368646174610003000201bb"
+      },
+      "name": "example.test",
+      "ttl": 12,
+      "type": 65
+    },
+    "set_ech": {
+      "class_": 1,
+      "data": {
+        "bytes": "000103737663076578616d706c65000001000c02683208687474702f312e31000500076e65772d6563680003000201bb"
+      },
+      "name": "example.test",
+      "ttl": 12,
+      "type": 65
+    },
+    "value_from_json": {
+      "params": {
+        "1": {
+          "bytes": "02683208687474702f312e31"
+        },
+        "3": {
+          "bytes": "01bb"
+        },
+        "5": {
+          "bytes": "65636864617461"
+        }
+      },
+      "priority": 1,
+      "target_name": "svc.example"
+    },
+    "value_json": {
+      "alpn": "\\x02h2\\x08http/1.1",
+      "ech": "echdata",
+      "port": "\\x01\\xbb",
+      "priority": 1,
+      "target_name": "svc.example"
+    }
+  },
+  "model_edges": {
+    "content_assignment": {
+      "error": "AttributeError",
+      "message": "property 'content' of 'DNSMessage' object has no setter"
+    },
+    "copy_changes_id": true,
+    "copy_preserves_timestamp": true,
+    "long_txt": {
+      "public_data_size": 256,
+      "roundtrip_data_size": 256,
+      "roundtrip_matches": true,
+      "wire_data_suffix": "0005010078787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878"
+    },
+    "message_from_json": {
+      "additionals": [],
+      "answers": [],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": 0,
+      "query": true,
+      "questions": [
+        {
+          "class_": 1,
+          "name": "example.test",
+          "type": 1
+        }
+      ],
+      "recursion_available": false,
+      "recursion_desired": true,
+      "reserved": 0,
+      "response_code": 0,
+      "timestamp": 123.5,
+      "truncation": false
+    },
+    "message_set_state_remaining": {
+      "value": {}
+    },
+    "question_copy": {
+      "class_": 1,
+      "name": "example.test",
+      "type": 1
+    },
+    "question_from_json": {
+      "class_": 1,
+      "name": "example.test",
+      "type": 1
+    },
+    "question_set_state_remaining": {
+      "value": {}
+    },
+    "rcode_http_statuses": {
+      "0": 200,
+      "1": 400,
+      "10": 404,
+      "11": 501,
+      "12": 500,
+      "13": 500,
+      "14": 500,
+      "15": 500,
+      "2": 500,
+      "3": 404,
+      "4": 501,
+      "5": 403,
+      "6": 409,
+      "7": 409,
+      "8": 410,
+      "9": 401
+    },
+    "record_copy": {
+      "class_": 1,
+      "data": {
+        "bytes": "c0000201"
+      },
+      "name": "a.test",
+      "ttl": 10,
+      "type": 1
+    },
+    "record_from_json": {
+      "class_": 1,
+      "data": {
+        "bytes": "c0000201"
+      },
+      "name": "a.test",
+      "ttl": 10,
+      "type": 1
+    },
+    "record_set_state_remaining": {
+      "value": {}
+    },
+    "type_from_lowercase": {
+      "error": "ValueError",
+      "message": "invalid literal for int() with base 10: 'a'"
+    },
+    "type_from_unknown_label": {
+      "value": 65000
+    },
+    "unpack_from": {
+      "offset": 36,
+      "state": {
+        "additionals": [],
+        "answers": [],
+        "authoritative_answer": false,
+        "authorities": [],
+        "id": 4660,
+        "op_code": 0,
+        "query": true,
+        "questions": [
+          {
+            "class_": 1,
+            "name": "example.test",
+            "type": 1
+          }
+        ],
+        "recursion_available": false,
+        "recursion_desired": true,
+        "reserved": 0,
+        "response_code": 0,
+        "timestamp": 456.0,
+        "truncation": false
+      }
+    }
+  },
+  "question": {
+    "json": {
+      "class": "IN",
+      "name": "example.test",
+      "type": "A"
+    },
+    "state": {
+      "class_": 1,
+      "name": "example.test",
+      "type": 1
+    },
+    "text": "example.test"
+  },
+  "records": [
+    {
+      "json": {
+        "class": "IN",
+        "data": "192.0.2.1",
+        "name": "a.test",
+        "ttl": 10,
+        "type": "A"
+      },
+      "state": {
+        "class_": 1,
+        "data": {
+          "bytes": "c0000201"
+        },
+        "name": "a.test",
+        "ttl": 10,
+        "type": 1
+      },
+      "text": "192.0.2.1"
+    },
+    {
+      "json": {
+        "class": "IN",
+        "data": "2001:db8::1",
+        "name": "aaaa.test",
+        "ttl": 20,
+        "type": "AAAA"
+      },
+      "state": {
+        "class_": 1,
+        "data": {
+          "bytes": "20010db8000000000000000000000001"
+        },
+        "name": "aaaa.test",
+        "ttl": 20,
+        "type": 28
+      },
+      "text": "2001:db8::1"
+    },
+    {
+      "json": {
+        "class": "IN",
+        "data": "target.test",
+        "name": "alias.test",
+        "ttl": 30,
+        "type": "CNAME"
+      },
+      "state": {
+        "class_": 1,
+        "data": {
+          "bytes": "06746172676574047465737400"
+        },
+        "name": "alias.test",
+        "ttl": 30,
+        "type": 5
+      },
+      "text": "target.test"
+    },
+    {
+      "json": {
+        "class": "IN",
+        "data": "ptr.test",
+        "name": "1.2.0.192.in-addr.arpa",
+        "ttl": 40,
+        "type": "PTR"
+      },
+      "state": {
+        "class_": 1,
+        "data": {
+          "bytes": "03707472047465737400"
+        },
+        "name": "1.2.0.192.in-addr.arpa",
+        "ttl": 40,
+        "type": 12
+      },
+      "text": "ptr.test"
+    },
+    {
+      "json": {
+        "class": "IN",
+        "data": "hello",
+        "name": "txt.test",
+        "ttl": 50,
+        "type": "TXT"
+      },
+      "state": {
+        "class_": 1,
+        "data": {
+          "bytes": "68656c6c6f"
+        },
+        "name": "txt.test",
+        "ttl": 50,
+        "type": 16
+      },
+      "text": "hello"
+    },
+    {
+      "json": {
+        "class": "IN",
+        "data": "0x00ff",
+        "name": "unknown.test",
+        "ttl": 60,
+        "type": "TYPE(65000)"
+      },
+      "state": {
+        "class_": 1,
+        "data": {
+          "bytes": "00ff"
+        },
+        "name": "unknown.test",
+        "ttl": 60,
+        "type": 65000
+      },
+      "text": "0x00ff"
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "request": {
+    "content_matches_packed": true,
+    "json": {
+      "additionals": [],
+      "answers": [],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": "QUERY",
+      "query": true,
+      "questions": [
+        {
+          "class": "IN",
+          "name": "example.test",
+          "type": "A"
+        }
+      ],
+      "recursion_available": false,
+      "recursion_desired": true,
+      "response_code": "NOERROR",
+      "size": 0,
+      "status_code": 200,
+      "timestamp": 123.5,
+      "truncation": false
+    },
+    "packed": "123401000001000000000000076578616d706c6504746573740000010001",
+    "question_is_first": true,
+    "size": 0,
+    "state": {
+      "additionals": [],
+      "answers": [],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": 0,
+      "query": true,
+      "questions": [
+        {
+          "class_": 1,
+          "name": "example.test",
+          "type": 1
+        }
+      ],
+      "recursion_available": false,
+      "recursion_desired": true,
+      "reserved": 0,
+      "response_code": 0,
+      "timestamp": 123.5,
+      "truncation": false
+    },
+    "text": "example.test"
+  },
+  "success": {
+    "json": {
+      "additionals": [],
+      "answers": [
+        {
+          "class": "IN",
+          "data": "192.0.2.1",
+          "name": "a.test",
+          "ttl": 10,
+          "type": "A"
+        },
+        {
+          "class": "IN",
+          "data": "2001:db8::1",
+          "name": "aaaa.test",
+          "ttl": 20,
+          "type": "AAAA"
+        }
+      ],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": "QUERY",
+      "query": false,
+      "questions": [
+        {
+          "class": "IN",
+          "name": "example.test",
+          "type": "A"
+        }
+      ],
+      "recursion_available": true,
+      "recursion_desired": true,
+      "response_code": "NOERROR",
+      "size": 20,
+      "status_code": 200,
+      "timestamp": 200.0,
+      "truncation": false
+    },
+    "packed": "123481800001000200000000076578616d706c65047465737400000100010161047465737400000100010000000a0004c00002010461616161047465737400001c000100000014001020010db8000000000000000000000001",
+    "roundtrip_state": {
+      "additionals": [],
+      "answers": [
+        {
+          "class_": 1,
+          "data": {
+            "bytes": "c0000201"
+          },
+          "name": "a.test",
+          "ttl": 10,
+          "type": 1
+        },
+        {
+          "class_": 1,
+          "data": {
+            "bytes": "20010db8000000000000000000000001"
+          },
+          "name": "aaaa.test",
+          "ttl": 20,
+          "type": 28
+        }
+      ],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": 0,
+      "query": false,
+      "questions": [
+        {
+          "class_": 1,
+          "name": "example.test",
+          "type": 1
+        }
+      ],
+      "recursion_available": true,
+      "recursion_desired": true,
+      "reserved": 0,
+      "response_code": 0,
+      "timestamp": 456.0,
+      "truncation": false
+    },
+    "state": {
+      "additionals": [],
+      "answers": [
+        {
+          "class_": 1,
+          "data": {
+            "bytes": "c0000201"
+          },
+          "name": "a.test",
+          "ttl": 10,
+          "type": 1
+        },
+        {
+          "class_": 1,
+          "data": {
+            "bytes": "20010db8000000000000000000000001"
+          },
+          "name": "aaaa.test",
+          "ttl": 20,
+          "type": 28
+        }
+      ],
+      "authoritative_answer": false,
+      "authorities": [],
+      "id": 4660,
+      "op_code": 0,
+      "query": false,
+      "questions": [
+        {
+          "class_": 1,
+          "name": "example.test",
+          "type": 1
+        }
+      ],
+      "recursion_available": true,
+      "recursion_desired": true,
+      "reserved": 0,
+      "response_code": 0,
+      "timestamp": 200.0,
+      "truncation": false
+    }
+  }
+}

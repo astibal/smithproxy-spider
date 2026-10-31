@@ -1,0 +1,41 @@
+{
+  "client_received": "client:echo:HELLO",
+  "hooks": [
+    {
+      "after": null,
+      "before": null,
+      "error": null,
+      "from_client": null,
+      "hook": "udp_start",
+      "message_count": 0
+    },
+    {
+      "after": "HELLO",
+      "before": "hello",
+      "error": null,
+      "from_client": true,
+      "hook": "udp_message",
+      "message_count": 1
+    },
+    {
+      "after": "client:echo:HELLO",
+      "before": "echo:HELLO",
+      "error": null,
+      "from_client": false,
+      "hook": "udp_message",
+      "message_count": 2
+    },
+    {
+      "after": null,
+      "before": null,
+      "error": null,
+      "from_client": null,
+      "hook": "udp_end",
+      "message_count": 2
+    }
+  ],
+  "origin": {
+    "received": "HELLO"
+  },
+  "reference": "mitmproxy 12.3.1"
+}

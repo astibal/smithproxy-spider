@@ -129,6 +129,7 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             event["inspection"] = script_result;
             event["inspection"].erase("replacement");
             event["inspection"].erase("replacement_reverse");
+            event["inspection"].erase("connection_close");
             event["decision"] = {{"state", "backend-inspected"}, {"mode", "inspect"}};
         }
     }
@@ -145,6 +146,25 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
 
         if (script_result.value("translate_failed", false))
             return {503, {{"error", "Translate callback failed; strict connection must close"}}};
+        if (script_result.value("ok", false) &&
+            script_result.contains("connection_close")) {
+            const auto& terminal = script_result["connection_close"];
+            const auto control = event.value("details", nlohmann::json::object())
+                .value("info", nlohmann::json::object())
+                .value("webhook_control", nlohmann::json::object());
+            const auto capability = control.find("connection-close");
+            if (!terminal.is_object() || !terminal.contains("reason") ||
+                !terminal["reason"].is_string() ||
+                capability == control.end() || !capability->is_boolean() ||
+                !capability->get<bool>()) {
+                return {503, {{"error", "Invalid callback-local connection close"}}};
+            }
+            return {200, {
+                {"action", "close"},
+                {"control", {{"mode", "strict"}}},
+                {"reason", terminal["reason"]},
+            }};
+        }
         if (script_result.value("translated", false) && script_result.value("ok", false)) {
             if (script_result.value("need_more", false))
                 return {200, {{"action", "need-more"}, {"control", {{"mode", "strict"}}}}};

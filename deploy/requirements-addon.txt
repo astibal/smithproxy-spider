@@ -1,0 +1,10 @@
+# Optional addon runtime. Install into the interpreter selected by CMake.
+# No mitmproxy dependency: Spider owns the addon facade and transport adapter.
+hpack>=4.0,<5
+Brotli>=1.2.1
+zstandard>=0.23
+cryptography>=42
+pyOpenSSL>=24
+emoji>=2.14,<3
+# Public WebSocket Opcode value only; Spider still owns transport processing.
+wsproto>=1.2,<2

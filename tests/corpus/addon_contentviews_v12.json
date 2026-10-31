@@ -1,0 +1,80 @@
+{
+  "cases": {
+    "all": [
+      "Contentview",
+      "InteractiveContentview",
+      "SyntaxHighlight",
+      "add",
+      "Metadata"
+    ],
+    "default": {
+      "contentview": true,
+      "interactive": false,
+      "name": "SpiderProbeDefault",
+      "prettified": "aBc",
+      "priority": 10000,
+      "syntax_highlight": "none"
+    },
+    "failures": {
+      "integer": {
+        "message": "'int' object has no attribute 'name'",
+        "type": "AttributeError"
+      },
+      "none": {
+        "message": "'NoneType' object has no attribute 'name'",
+        "type": "AttributeError"
+      },
+      "plain_class": {
+        "message": "'object' object has no attribute 'name'",
+        "type": "AttributeError"
+      }
+    },
+    "interactive": {
+      "contentview": true,
+      "interactive": true,
+      "name": "SpiderProbeInteractive",
+      "prettified": "value: abc",
+      "reencoded": "78797a",
+      "syntax_highlight": "yaml"
+    },
+    "metadata": {
+      "content_type": "text/x-spider-probe",
+      "dns_message": null,
+      "flow": null,
+      "http_message": null,
+      "original_data": "6f726967696e616c",
+      "protobuf_definitions": null,
+      "tcp_message": null,
+      "udp_message": null,
+      "websocket_message": null
+    },
+    "registry": {
+      "auto": "SpiderProbeReplacement",
+      "available": [
+        "spiderprobedefault",
+        "spiderprobeinteractive"
+      ],
+      "class_reinstantiated": true,
+      "duplicate_replaced": true,
+      "instance_preserved": true,
+      "missing_falls_back": "SpiderProbeReplacement",
+      "requested": "SpiderProbeInteractive"
+    },
+    "result": {
+      "equal": true,
+      "match_args": [
+        "text",
+        "syntax_highlight",
+        "view_name",
+        "description"
+      ],
+      "value": {
+        "description": "probe description",
+        "syntax_highlight": "yaml",
+        "text": "rendered",
+        "view_name": "Probe"
+      }
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

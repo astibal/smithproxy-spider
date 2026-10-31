@@ -2,6 +2,14 @@
 
 ## Scripting
 
+- **mitmproxy server lifecycle:** add truthful `server_connect`,
+  `server_connected`, `server_connect_error` and `server_disconnected` hooks once
+  Smithproxy publishes ordered target-selected, upstream-connected,
+  upstream-connect-failed and upstream-disconnected observations. Preserve one
+  Server object per upstream connection and verify synchronous hook ordering
+  against the mitmproxy 12.3.1 reference corpus. Do not synthesize these events
+  from connection setup in the meantime. The detailed integration contract is
+  recorded in `docs/ADDON_COMPATIBILITY.md`.
 - **Hold + fail-open (deliberately deferred):** after `need-more`, only Spider
   owns earlier bytes. Spider/proxy failure, timeout, queue overload or deployment
   changes can release the current fragment without the held prefix. Protect order

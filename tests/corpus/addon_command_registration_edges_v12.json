@@ -1,0 +1,28 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": {
+    "decorator/default": {"value": {"same_object": false, "name": "original", "doc": "Keep public metadata.", "annotations": {"value": "str", "return": "str"}, "signature": "(value: str = 'default') -> str", "command_name": "original", "has_wrapped": true, "call": "value"}},
+    "decorator/explicit": {"value": {"same_object": false, "command_name": "edge.explicit", "original_command_name": null, "call": "default"}},
+    "collect/duplicate_methods": {"value": null},
+    "call/duplicate_methods": {"value": "zeta"},
+    "call/implicit_name": {"value": "implicit"},
+    "collect/same_owner_again": {"value": null},
+    "call/same_owner_again": {"value": "zeta"},
+    "collect/first_owner": {"value": null},
+    "call/first_owner": {"value": "first"},
+    "collect/second_owner": {"value": null},
+    "call/second_owner": {"value": "second"},
+    "collect/first_owner_again": {"value": null},
+    "call/first_owner_again": {"value": "first"},
+    "replace/direct_valid": {"value": null},
+    "call/direct_valid": {"value": "valid replacement"},
+    "replace/direct_invalid": {"error": "CommandError", "message": "Argument value has an unknown type <class 'float'> in <function collect.<locals>.invalid_replacement at 0xADDRESS>."},
+    "call/after_direct_invalid": {"value": "valid replacement"},
+    "replace/collected_invalid": {"value": null},
+    "call/after_collected_invalid": {"value": "valid replacement"},
+    "collect/unusual_names": {"value": null},
+    "call/empty_name": {"error": "CommandError", "message": "Unknown command: "},
+    "call/unicode_name": {"value": "čaj"},
+    "registry/names": {"value": ["edge.duplicate", "edge.owner", "empty", "implicit", "příkaz.čaj"]}
+  }
+}

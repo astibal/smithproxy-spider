@@ -1,0 +1,266 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "flow": {
+      "registration": "ok",
+      "typed_result": "called",
+      "typed_identity": true,
+      "text/@all": {
+        "error": "CommandError",
+        "message": "Unknown command: view.flows.resolve"
+      },
+      "text/first,second": {
+        "error": "CommandError",
+        "message": "Unknown command: view.flows.resolve"
+      },
+      "text/": {
+        "error": "CommandError",
+        "message": "Unknown command: view.flows.resolve"
+      }
+    },
+    "http_flow": {
+      "registration": "CommandError"
+    },
+    "flows": {
+      "registration": "ok",
+      "typed_result": "called",
+      "typed_identity": true,
+      "text/@all": {
+        "error": "CommandError",
+        "message": "Unknown command: view.flows.resolve"
+      },
+      "text/first,second": {
+        "error": "CommandError",
+        "message": "Unknown command: view.flows.resolve"
+      },
+      "text/": {
+        "error": "CommandError",
+        "message": "Unknown command: view.flows.resolve"
+      }
+    },
+    "typing_flows": {
+      "registration": "CommandError"
+    },
+    "strings": {
+      "registration": "ok",
+      "typed_result": "called",
+      "typed_identity": true,
+      "text/@all": "called",
+      "argument/@all": [
+        "@all"
+      ],
+      "text/first,second": "called",
+      "argument/first,second": [
+        "first",
+        "second"
+      ],
+      "text/": "called",
+      "argument/": [
+        ""
+      ]
+    },
+    "integers": {
+      "registration": "CommandError"
+    },
+    "list_flows": {
+      "registration": "CommandError"
+    },
+    "resolver/single/0": {
+      "error": "CommandError",
+      "message": "Command requires one flow, specification matched 0.",
+      "resolver_calls": [
+        "@all"
+      ]
+    },
+    "resolver/single/1": {
+      "value": true,
+      "resolver_calls": [
+        "@all"
+      ]
+    },
+    "resolver/single/2": {
+      "error": "CommandError",
+      "message": "Command requires one flow, specification matched 2.",
+      "resolver_calls": [
+        "@all"
+      ]
+    },
+    "resolver/sequence/0": {
+      "value": true,
+      "resolver_calls": [
+        "@all"
+      ]
+    },
+    "resolver/sequence/1": {
+      "value": true,
+      "resolver_calls": [
+        "@all"
+      ]
+    },
+    "resolver/sequence/2": {
+      "value": true,
+      "resolver_calls": [
+        "@all"
+      ]
+    },
+    "return/flow/False": {
+      "error": "CommandError",
+      "message": "probe.result returned unexpected data - expected flow"
+    },
+    "return/flow/True": {
+      "identity": true
+    },
+    "return/flows/False": {
+      "error": "CommandError",
+      "message": "probe.result returned unexpected data - expected flow[]"
+    },
+    "return/flows/True": {
+      "identity": true
+    },
+    "return/strings/False": {
+      "error": "CommandError",
+      "message": "probe.result returned unexpected data - expected str[]"
+    },
+    "return/strings/True": {
+      "identity": true
+    },
+    "container/flows/empty_tuple": {
+      "identity": true
+    },
+    "container/flows/flow_tuple": {
+      "identity": true
+    },
+    "container/flows/mixed_tuple": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected flow[]"
+    },
+    "container/flows/string_tuple": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected flow[]"
+    },
+    "container/flows/string": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected flow[]"
+    },
+    "container/flows/empty_string": {
+      "identity": true
+    },
+    "container/flows/bytes": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected flow[]"
+    },
+    "container/flows/empty_bytes": {
+      "identity": true
+    },
+    "container/flows/mapping": {
+      "identity": true
+    },
+    "container/flows/string_mapping": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected flow[]"
+    },
+    "container/flows/flow_mapping": {
+      "identity": true
+    },
+    "container/flows/string_set": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected flow[]"
+    },
+    "container/flows/flow_set": {
+      "identity": true
+    },
+    "container/flows/empty_range": {
+      "identity": true
+    },
+    "container/flows/integer_range": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected flow[]"
+    },
+    "container/flows/none": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected flow[]"
+    },
+    "iterator/flows/empty": {
+      "identity": true,
+      "remaining": 0
+    },
+    "iterator/flows/flows": {
+      "identity": true,
+      "remaining": 0
+    },
+    "iterator/flows/strings": {
+      "error": "CommandError",
+      "message": "probe.iterator returned unexpected data - expected flow[]"
+    },
+    "container/strings/empty_tuple": {
+      "identity": true
+    },
+    "container/strings/flow_tuple": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "container/strings/mixed_tuple": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "container/strings/string_tuple": {
+      "identity": true
+    },
+    "container/strings/string": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "container/strings/empty_string": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "container/strings/bytes": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "container/strings/empty_bytes": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "container/strings/mapping": {
+      "identity": true
+    },
+    "container/strings/string_mapping": {
+      "identity": true
+    },
+    "container/strings/flow_mapping": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "container/strings/string_set": {
+      "identity": true
+    },
+    "container/strings/flow_set": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "container/strings/empty_range": {
+      "identity": true
+    },
+    "container/strings/integer_range": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "container/strings/none": {
+      "error": "CommandError",
+      "message": "probe.container returned unexpected data - expected str[]"
+    },
+    "iterator/strings/empty": {
+      "identity": true,
+      "remaining": 0
+    },
+    "iterator/strings/flows": {
+      "error": "CommandError",
+      "message": "probe.iterator returned unexpected data - expected str[]"
+    },
+    "iterator/strings/strings": {
+      "identity": true,
+      "remaining": 0
+    }
+  }
+}

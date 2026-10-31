@@ -1,0 +1,22 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "request": {
+    "body": "old-one",
+    "method": "POST",
+    "path": "/trailers",
+    "trailers": [
+      ["x-input-trailer", "request"],
+      ["x-addon-trailer", "request-first"],
+      ["x-addon-trailer", "request-second"]
+    ]
+  },
+  "response": {
+    "body": "origin-1",
+    "status": 201,
+    "trailers": [
+      ["x-input-trailer", "response"],
+      ["x-addon-trailer", "response-first"],
+      ["x-addon-trailer", "response-second"]
+    ]
+  }
+}

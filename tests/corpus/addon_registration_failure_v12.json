@@ -1,0 +1,325 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "deep-child-load-failure": [
+      {
+        "operation": "register",
+        "error": {
+          "type": "ValueError",
+          "message": "broken load failed"
+        },
+        "returned": null,
+        "events": [
+          [
+            "load",
+            "parent"
+          ],
+          [
+            "load",
+            "first"
+          ],
+          [
+            "load",
+            "broken"
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "never": false
+        },
+        "known_names": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "never": false
+        }
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned": null,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "never": false
+        },
+        "known_names": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "never": false
+        }
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned": null,
+        "events": [],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "never": false
+        },
+        "known_names": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "never": false
+        }
+      }
+    ],
+    "multi-add-partial-failure": [
+      {
+        "operation": "register",
+        "error": {
+          "type": "ValueError",
+          "message": "broken load failed"
+        },
+        "returned": null,
+        "events": [
+          [
+            "load",
+            "first"
+          ],
+          [
+            "load",
+            "broken"
+          ]
+        ],
+        "chain": [
+          "first"
+        ],
+        "known": {
+          "first": true,
+          "broken": false,
+          "never": false
+        },
+        "known_names": {
+          "first": true,
+          "broken": false,
+          "never": false
+        }
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned": null,
+        "events": [
+          [
+            "running",
+            "first"
+          ]
+        ],
+        "chain": [
+          "first"
+        ],
+        "known": {
+          "first": true,
+          "broken": false,
+          "never": false
+        },
+        "known_names": {
+          "first": true,
+          "broken": false,
+          "never": false
+        }
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned": null,
+        "events": [
+          [
+            "done",
+            "first"
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "first": false,
+          "broken": false,
+          "never": false
+        },
+        "known_names": {
+          "first": false,
+          "broken": false,
+          "never": false
+        }
+      }
+    ],
+    "parent-load-side-effect-before-failure": [
+      {
+        "operation": "register",
+        "error": {
+          "type": "ValueError",
+          "message": "parent load failed"
+        },
+        "returned": null,
+        "events": [
+          [
+            "load",
+            "parent"
+          ],
+          [
+            "load",
+            "side"
+          ]
+        ],
+        "chain": [
+          "side"
+        ],
+        "known": {
+          "parent": false,
+          "side": true
+        },
+        "known_names": {
+          "parent": false,
+          "side": true
+        }
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned": null,
+        "events": [
+          [
+            "running",
+            "side"
+          ]
+        ],
+        "chain": [
+          "side"
+        ],
+        "known": {
+          "parent": false,
+          "side": true
+        },
+        "known_names": {
+          "parent": false,
+          "side": true
+        }
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned": null,
+        "events": [
+          [
+            "done",
+            "side"
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "side": false
+        },
+        "known_names": {
+          "parent": false,
+          "side": false
+        }
+      }
+    ],
+    "child-side-effect-before-sibling-failure": [
+      {
+        "operation": "register",
+        "error": {
+          "type": "ValueError",
+          "message": "broken load failed"
+        },
+        "returned": null,
+        "events": [
+          [
+            "load",
+            "parent"
+          ],
+          [
+            "load",
+            "first"
+          ],
+          [
+            "load",
+            "side"
+          ],
+          [
+            "load",
+            "broken"
+          ]
+        ],
+        "chain": [
+          "side"
+        ],
+        "known": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "side": true
+        },
+        "known_names": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "side": true
+        }
+      },
+      {
+        "operation": "running",
+        "error": null,
+        "returned": null,
+        "events": [
+          [
+            "running",
+            "side"
+          ]
+        ],
+        "chain": [
+          "side"
+        ],
+        "known": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "side": true
+        },
+        "known_names": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "side": true
+        }
+      },
+      {
+        "operation": "clear",
+        "error": null,
+        "returned": null,
+        "events": [
+          [
+            "done",
+            "side"
+          ]
+        ],
+        "chain": [],
+        "known": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "side": false
+        },
+        "known_names": {
+          "parent": false,
+          "first": false,
+          "broken": false,
+          "side": false
+        }
+      }
+    ]
+  }
+}

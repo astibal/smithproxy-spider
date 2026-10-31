@@ -1,0 +1,261 @@
+{
+  "cases": {
+    "\"~comment 'first\\\\\\\\second'\"": {
+      "description": "comment matches /first\\second/im",
+      "type": "FComment"
+    },
+    "\"~comment 'first\\\\nsecond'\"": {
+      "description": "comment matches /first\nsecond/im",
+      "type": "FComment"
+    },
+    "\"~comment 'first\\\\qsecond'\"": {
+      "description": "comment matches /firstqsecond/im",
+      "type": "FComment"
+    },
+    "\"~comment 'first\\\\tsecond'\"": {
+      "description": "comment matches /first\tsecond/im",
+      "type": "FComment"
+    },
+    "\"~comment 'first\\\\u0041second'\"": {
+      "description": "comment matches /firstu0041second/im",
+      "type": "FComment"
+    },
+    "\"~comment 'first\\\\x41second'\"": {
+      "description": "comment matches /firstx41second/im",
+      "type": "FComment"
+    },
+    "\"~comment 'trailing\\\\'\"": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: \"~comment 'trailing\\\\'\""
+    },
+    "\"~h 'x-name: value with spaces'\"": {
+      "description": "header matches /x-name: value with spaces/im",
+      "type": "FHead"
+    },
+    "\"~meta '^key: value$'\"": {
+      "description": "flow metadata matches /^key: value$/im",
+      "type": "FMeta"
+    },
+    "\"~u ''\"": {
+      "description": "url matches //i",
+      "type": "FUrl"
+    },
+    "\"~u 'escaped\\\\'quote'\"": {
+      "description": "url matches /escaped'quote/i",
+      "type": "FUrl"
+    },
+    "\"~u 'path with spaces'\"": {
+      "description": "url matches /path with spaces/i",
+      "type": "FUrl"
+    },
+    "\"~u 'unfinished\"": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: \"~u 'unfinished\""
+    },
+    "' '": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: ' '"
+    },
+    "'! ! ~all'": {
+      "description": "not not all flows",
+      "type": "FNot"
+    },
+    "'! ( ~q | ( ~s & ~e ) )'": {
+      "description": "not (has no response or (has response and has error))",
+      "type": "FNot"
+    },
+    "'!!~all'": {
+      "description": "not not all flows",
+      "type": "FNot"
+    },
+    "'!'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '!'"
+    },
+    "'&&'": {
+      "description": "url matches /&&/i",
+      "type": "FUrl"
+    },
+    "'&'": {
+      "description": "url matches /&/i",
+      "type": "FUrl"
+    },
+    "''": {
+      "error": "ValueError",
+      "message": "Empty filter expression"
+    },
+    "'( )'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '( )'"
+    },
+    "'( ~q )&~s'": {
+      "description": "has no response and has response",
+      "type": "FAnd"
+    },
+    "'( ~q | ~s ) & ! ~e'": {
+      "description": "(has no response or has response) and not has error",
+      "type": "FAnd"
+    },
+    "'( ~q'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '( ~q'"
+    },
+    "'()'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '()'"
+    },
+    "'(~q)'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '(~q)'"
+    },
+    "'\\t'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '\\t'"
+    },
+    "'bare pattern second'": {
+      "description": "url matches /bare/i and url matches /pattern/i and url matches /second/i",
+      "type": "FAnd"
+    },
+    "'bare-pattern'": {
+      "description": "url matches /bare-pattern/i",
+      "type": "FUrl"
+    },
+    "'bare\\\\s+pattern'": {
+      "description": "url matches /bare\\s+pattern/i",
+      "type": "FUrl"
+    },
+    "'|'": {
+      "description": "url matches /|/i",
+      "type": "FUrl"
+    },
+    "'||'": {
+      "description": "url matches /||/i",
+      "type": "FUrl"
+    },
+    "'~all'": {
+      "description": "all flows",
+      "type": "FAll"
+    },
+    "'~c +1'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '~c +1'"
+    },
+    "'~c -1'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '~c -1'"
+    },
+    "'~c 001'": {
+      "description": "response code is 1",
+      "type": "FCode"
+    },
+    "'~c 200.5'": {
+      "description": "response code is 200 and url matches /.5/i",
+      "type": "FAnd"
+    },
+    "'~c 200x'": {
+      "description": "response code is 200 and url matches /x/i",
+      "type": "FAnd"
+    },
+    "'~c 200~q'": {
+      "description": "response code is 200 and has no response",
+      "type": "FAnd"
+    },
+    "'~m GET&~q'": {
+      "description": "method matches /GET&/i and has no response",
+      "type": "FAnd"
+    },
+    "'~m GET| ~s'": {
+      "description": "method matches /GET|/i and has response",
+      "type": "FAnd"
+    },
+    "'~q & ~m GET & ~d example'": {
+      "description": "has no response and method matches /GET/i and domain matches /example/i",
+      "type": "FAnd"
+    },
+    "'~q && ~s'": {
+      "description": "(has no response and url matches /&/i) and has response",
+      "type": "FAnd"
+    },
+    "'~q &&'": {
+      "description": "has no response and url matches /&/i",
+      "type": "FAnd"
+    },
+    "'~q &'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '~q &'"
+    },
+    "'~q &~m GET'": {
+      "description": "has no response and method matches /GET/i",
+      "type": "FAnd"
+    },
+    "'~q )'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '~q )'"
+    },
+    "'~q | ~s & ~m GET'": {
+      "description": "has no response or (has response and method matches /GET/i)",
+      "type": "FOr"
+    },
+    "'~q |'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '~q |'"
+    },
+    "'~q || ~s'": {
+      "description": "(has no response or url matches /|/i) and has response",
+      "type": "FAnd"
+    },
+    "'~q ||'": {
+      "description": "has no response or url matches /|/i",
+      "type": "FOr"
+    },
+    "'~q ~m GET ~d example'": {
+      "description": "has no response and method matches /GET/i and domain matches /example/i",
+      "type": "FAnd"
+    },
+    "'~u \"\"'": {
+      "description": "url matches //i",
+      "type": "FUrl"
+    },
+    "'~u \"escaped\\\\\"quote\"'": {
+      "description": "url matches /escaped\"quote/i",
+      "type": "FUrl"
+    },
+    "'~u \"get(Info|Routers)\"'": {
+      "description": "url matches /get(Info|Routers)/i",
+      "type": "FUrl"
+    },
+    "'~u \"literal~tilde\"'": {
+      "description": "url matches /literal~tilde/i",
+      "type": "FUrl"
+    },
+    "'~u \"unfinished'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '~u \"unfinished'"
+    },
+    "'~u ['": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '~u ['"
+    },
+    "'~u ^https://example\\\\.test/[a-z]+$'": {
+      "description": "url matches /^https://example\\.test/[a-z]+$/i",
+      "type": "FUrl"
+    },
+    "'~u café'": {
+      "description": "url matches /café/i",
+      "type": "FUrl"
+    },
+    "'~u 😀'": {
+      "description": "url matches /😀/i",
+      "type": "FUrl"
+    },
+    "'~u'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '~u'"
+    },
+    "'~unknown value'": {
+      "error": "ValueError",
+      "message": "Invalid filter expression: '~unknown value'"
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

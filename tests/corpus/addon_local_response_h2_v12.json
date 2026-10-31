@@ -1,0 +1,265 @@
+{
+  "connection_events": [
+    "RemoteSettingsChanged",
+    "WindowUpdated",
+    "SettingsAcknowledged"
+  ],
+  "hooks": [
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/headers",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/h2",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/empty",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/trailers",
+      "status": null
+    },
+    {
+      "body": "from requestheaders",
+      "hook": "request",
+      "path": "/headers",
+      "status": 201
+    },
+    {
+      "body": null,
+      "hook": "request",
+      "path": "/h2",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "request",
+      "path": "/empty",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "request",
+      "path": "/trailers",
+      "status": null
+    },
+    {
+      "body": "from requestheaders",
+      "hook": "responseheaders",
+      "path": "/headers",
+      "status": 201
+    },
+    {
+      "body": "from HTTP/2 request",
+      "hook": "responseheaders",
+      "path": "/h2",
+      "status": 203
+    },
+    {
+      "body": "body assigned to 204",
+      "hook": "responseheaders",
+      "path": "/empty",
+      "status": 204
+    },
+    {
+      "body": "local response with trailers",
+      "hook": "responseheaders",
+      "path": "/trailers",
+      "status": 202,
+      "trailers": [
+        [
+          "x-local-trailer",
+          "one"
+        ],
+        [
+          "x-local-trailer",
+          "two"
+        ]
+      ]
+    },
+    {
+      "body": "from requestheaders",
+      "hook": "response",
+      "path": "/headers",
+      "status": 201
+    },
+    {
+      "body": "from HTTP/2 request",
+      "hook": "response",
+      "path": "/h2",
+      "status": 203
+    },
+    {
+      "body": "body assigned to 204",
+      "hook": "response",
+      "path": "/empty",
+      "status": 204
+    },
+    {
+      "body": "local response with trailers",
+      "hook": "response",
+      "path": "/trailers",
+      "status": 202,
+      "trailers": [
+        [
+          "x-local-trailer",
+          "one"
+        ],
+        [
+          "x-local-trailer",
+          "two"
+        ]
+      ]
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "responses": {
+    "/empty": {
+      "body": "body assigned to 204",
+      "events": [
+        "ResponseReceived",
+        "DataReceived",
+        "DataReceived",
+        "StreamEnded"
+      ],
+      "headers": [
+        [
+          ":status",
+          "204"
+        ],
+        [
+          "content-length",
+          "20"
+        ],
+        [
+          "x-response-headers",
+          "seen"
+        ],
+        [
+          "x-response",
+          "seen"
+        ]
+      ],
+      "trailers": null
+    },
+    "/h2": {
+      "body": "from HTTP/2 request | response hook",
+      "events": [
+        "ResponseReceived",
+        "DataReceived",
+        "DataReceived",
+        "StreamEnded"
+      ],
+      "headers": [
+        [
+          ":status",
+          "203"
+        ],
+        [
+          "x-origin",
+          "request"
+        ],
+        [
+          "content-length",
+          "35"
+        ],
+        [
+          "x-response-headers",
+          "seen"
+        ],
+        [
+          "x-response",
+          "seen"
+        ]
+      ],
+      "trailers": null
+    },
+    "/headers": {
+      "body": "from requestheaders | response hook",
+      "events": [
+        "ResponseReceived",
+        "DataReceived",
+        "DataReceived",
+        "StreamEnded"
+      ],
+      "headers": [
+        [
+          ":status",
+          "201"
+        ],
+        [
+          "x-origin",
+          "requestheaders"
+        ],
+        [
+          "content-length",
+          "35"
+        ],
+        [
+          "x-response-headers",
+          "seen"
+        ],
+        [
+          "x-response",
+          "seen"
+        ]
+      ],
+      "trailers": null
+    },
+    "/trailers": {
+      "body": "local response with trailers | response hook",
+      "events": [
+        "ResponseReceived",
+        "DataReceived",
+        "TrailersReceived",
+        "StreamEnded"
+      ],
+      "headers": [
+        [
+          ":status",
+          "202"
+        ],
+        [
+          "x-origin",
+          "trailers"
+        ],
+        [
+          "content-length",
+          "44"
+        ],
+        [
+          "x-response-headers",
+          "seen"
+        ],
+        [
+          "x-response",
+          "seen"
+        ]
+      ],
+      "trailers": [
+        [
+          "x-local-trailer",
+          "one"
+        ],
+        [
+          "x-local-trailer",
+          "two"
+        ],
+        [
+          "X-Response-Trailer",
+          "seen"
+        ]
+      ]
+    }
+  }
+}

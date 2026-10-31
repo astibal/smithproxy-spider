@@ -1,0 +1,83 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "tree/sync": {
+      "events": [
+        "parent",
+        "child"
+      ],
+      "error": null,
+      "returned_none": true
+    },
+    "tree/async": {
+      "events": [
+        "parent",
+        "child"
+      ],
+      "error": null,
+      "returned_none": true
+    },
+    "failure/sync": {
+      "events": [
+        "parent"
+      ],
+      "error": "ValueError",
+      "returned_none": false
+    },
+    "failure/async": {
+      "events": [
+        "parent"
+      ],
+      "error": "ValueError",
+      "returned_none": false
+    },
+    "async/sync": {
+      "events": [],
+      "error": "AddonManagerError",
+      "returned_none": false
+    },
+    "async/async": {
+      "events": [
+        "async parent"
+      ],
+      "error": null,
+      "returned_none": true
+    },
+    "noncallable/sync": {
+      "events": [],
+      "error": "AddonManagerError",
+      "returned_none": false
+    },
+    "noncallable/async": {
+      "events": [],
+      "error": "AddonManagerError",
+      "returned_none": false
+    },
+    "missing/sync": {
+      "events": [],
+      "error": null,
+      "returned_none": true
+    },
+    "missing/async": {
+      "events": [],
+      "error": null,
+      "returned_none": true
+    },
+    "new_child/sync": {
+      "events": [
+        "parent",
+        "child"
+      ],
+      "error": null,
+      "returned_none": true
+    },
+    "new_child/async": {
+      "events": [
+        "parent",
+        "child"
+      ],
+      "error": null,
+      "returned_none": true
+    }
+  }
+}

@@ -1,0 +1,201 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "requests": [
+    {
+      "body": "request-1",
+      "headers": [
+        [
+          "content-length",
+          "9"
+        ],
+        [
+          "x-client",
+          "1"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "x-addon-count",
+          "1"
+        ],
+        [
+          "x-addon-duplicate",
+          "first"
+        ],
+        [
+          "x-addon-duplicate",
+          "second"
+        ]
+      ],
+      "method": "PUT",
+      "path": "/addon/1?source=compat"
+    },
+    {
+      "body": "request-2",
+      "headers": [
+        [
+          "x-client",
+          "2"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "x-addon-count",
+          "2"
+        ],
+        [
+          "x-addon-duplicate",
+          "first"
+        ],
+        [
+          "x-addon-duplicate",
+          "second"
+        ],
+        [
+          "content-length",
+          "9"
+        ]
+      ],
+      "method": "PUT",
+      "path": "/addon/2?source=compat"
+    },
+    {
+      "body": "request-3",
+      "headers": [
+        [
+          "content-length",
+          "29"
+        ],
+        [
+          "x-client",
+          "3"
+        ],
+        [
+          "content-type",
+          "application/octet-stream"
+        ],
+        [
+          "content-encoding",
+          "gzip"
+        ],
+        [
+          "x-addon-count",
+          "3"
+        ],
+        [
+          "x-addon-duplicate",
+          "first"
+        ],
+        [
+          "x-addon-duplicate",
+          "second"
+        ]
+      ],
+      "method": "PUT",
+      "path": "/addon/3?source=compat"
+    }
+  ],
+  "responses": [
+    {
+      "body": "response-1",
+      "headers": [
+        [
+          "content-type",
+          "text/plain"
+        ],
+        [
+          "x-origin",
+          "1"
+        ],
+        [
+          "content-length",
+          "10"
+        ],
+        [
+          "x-addon-count",
+          "1"
+        ],
+        [
+          "x-addon-duplicate",
+          "first"
+        ],
+        [
+          "x-addon-duplicate",
+          "second"
+        ]
+      ],
+      "reason": "Addon 1",
+      "status": 211
+    },
+    {
+      "body": "response-2",
+      "headers": [
+        [
+          "content-type",
+          "text/plain"
+        ],
+        [
+          "x-origin",
+          "2"
+        ],
+        [
+          "content-length",
+          "10"
+        ],
+        [
+          "x-addon-count",
+          "2"
+        ],
+        [
+          "x-addon-duplicate",
+          "first"
+        ],
+        [
+          "x-addon-duplicate",
+          "second"
+        ]
+      ],
+      "reason": "Addon 2",
+      "status": 212
+    },
+    {
+      "body": "response-3",
+      "headers": [
+        [
+          "content-type",
+          "text/plain"
+        ],
+        [
+          "x-origin",
+          "3"
+        ],
+        [
+          "content-encoding",
+          "gzip"
+        ],
+        [
+          "content-length",
+          "30"
+        ],
+        [
+          "x-addon-count",
+          "3"
+        ],
+        [
+          "x-addon-duplicate",
+          "first"
+        ],
+        [
+          "x-addon-duplicate",
+          "second"
+        ]
+      ],
+      "reason": "Addon 3",
+      "status": 213
+    }
+  ]
+}

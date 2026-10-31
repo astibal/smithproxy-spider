@@ -1,0 +1,51 @@
+{
+  "hooks": [
+    {
+      "body": null,
+      "hook": "requestheaders",
+      "path": "/trailers-chunked",
+      "status": null
+    },
+    {
+      "body": null,
+      "hook": "request",
+      "path": "/trailers-chunked",
+      "status": null
+    },
+    {
+      "body": "chunked local response",
+      "hook": "responseheaders",
+      "path": "/trailers-chunked",
+      "status": 203,
+      "trailers": [
+        [
+          "x-local-trailer",
+          "one"
+        ],
+        [
+          "x-local-trailer",
+          "two"
+        ]
+      ]
+    },
+    {
+      "body": "chunked local response",
+      "hook": "response",
+      "path": "/trailers-chunked",
+      "status": 203,
+      "trailers": [
+        [
+          "x-local-trailer",
+          "one"
+        ],
+        [
+          "x-local-trailer",
+          "two"
+        ]
+      ]
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "timed_out": true,
+  "wire": "HTTP/1.1 203 Non-Authoritative Information\r\nTransfer-Encoding: chunked\r\nX-Origin: trailers-chunked\r\nX-Response-Headers: seen\r\nX-Response: seen\r\n\r\n26\r\nchunked local response | response hook\r\n"
+}

@@ -76,6 +76,8 @@
   const toolbar = document.createElement('div');
   toolbar.className = 'library-toolbar';
   toolbar.innerHTML = '<label>Name <input id="library-name" maxlength="200"></label>' +
+    '<label>Script API <select id="script-api"><option value="spider">Spider native</option><option value="mitmproxy">mitmproxy 12 addon</option></select></label>' +
+    '<small id="script-api-status" role="status"></small>' +
     '<button id="library-save">Save to library</button><button id="library-export">Export script</button>' +
     '<span id="library-version"></span>' +
     '<label>Deploy target <select id="chain-target"><option value="">New disabled item</option></select></label>' +
@@ -88,6 +90,7 @@
     '<label>Errors before suspend <input id="chain-error-limit" type="number" min="1" max="100" value="3"></label>' +
     '<label>Max instances <input id="chain-max-instances" type="number" min="1" max="1024" value="128"></label>' +
     '<label>Idle expiry (s) <input id="chain-idle" type="number" min="1" max="86400" value="1800"></label>' +
+    '<label id="chain-addon-options-field">Addon option overrides · one <code>name=value</code> per line<textarea id="chain-addon-options" rows="3" maxlength="65536" spellcheck="false" placeholder="addheader=true"></textarea></label>' +
     '<small>Five consecutive slow runs (≥80% budget) suspend deployment. api.state resets on deploy/disable/resume.</small></div></details>' +
     '<small class="storage-preview-note">api.storage is persistent and shared — Run on selected writes there too.</small>' +
     '<button id="library-deploy">Deploy saved version…</button>';
@@ -98,8 +101,41 @@
   };
   byId('chain-instancing').onchange();
 
+  function hasAddonDirective(source) {
+    const firstLine = source.replace(/^\uFEFF/, '').split('\n', 1)[0].replace(/\r+$/, '');
+    return firstLine === '#!mitmproxy';
+  }
+
+  function addonDraftSelected() {
+    return hasAddonDirective(editor.value) || byId('script-api').value === 'mitmproxy';
+  }
+
+  function addonOptionSpecs() {
+    return byId('chain-addon-options').value.split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
+  }
+
   function renderVersion() {
-    const dirty = editor.value !== selected.source || byId('library-name').value !== selected.name;
+    const chosenApi = byId('script-api').value;
+    const directive = hasAddonDirective(editor.value);
+    const addon = directive || chosenApi === 'mitmproxy';
+    byId('script-api-status').textContent = directive
+      ? '#!mitmproxy overrides the selection · shared addon worker · flow deployment'
+      : addon ? 'Shared addon worker · flow deployment · isolated lifecycle preview'
+        : 'Native Spider scripting API';
+    if (addon) byId('chain-instancing').value = 'flow';
+    byId('chain-instancing').disabled = addon;
+    byId('chain-instancing').onchange();
+    if (addon) byId('chain-idle').disabled = true;
+    byId('chain-addon-options').disabled = !addon;
+    byId('chain-addon-options-field').title = addon
+      ? 'Applied after load() declares options and before the initial configure()/running() callbacks.'
+      : 'Option overrides are available for mitmproxy addon deployments.';
+    byId('chain-idle').title = addon
+      ? 'Addon connection state is retained until the connection closes.' : '';
+    const dirty = editor.value !== selected.source || byId('library-name').value !== selected.name ||
+      chosenApi !== (selected.script_api || 'spider');
     const deployed = state?.chain?.find(item => item.id === byId('chain-target').value);
     byId('library-version').textContent = `Saved v${selected.revision}` +
       (dirty ? ' · draft changed (not deployed)' : ' · saved') +
@@ -120,11 +156,17 @@
     byId('library-name').value = item.draftName ?? item.name;
     byId('chain-target').value = item.deployment?.backend === baseUrl() ? item.deployment.id : '';
     byId('chain-target').onchange?.();
+    byId('script-api').value = item.draftApi || item.script_api || 'spider';
     renderLibrary(); renderVersion();
     editor.dispatchEvent(new Event('input', {bubbles: true}));
   }
   editor.oninput = () => {
     selected.draft = editor.value; persist(); renderVersion();
+  };
+  byId('script-api').onchange = () => {
+    selected.draftApi = byId('script-api').value;
+    persist();
+    renderVersion();
   };
   byId('library-name').oninput = () => {
     selected.draftName = byId('library-name').value; persist(); renderVersion();
@@ -132,6 +174,8 @@
   byId('library-save').onclick = () => {
     if (!byId('library-name').value.trim()) return;
     selected.source = editor.value; selected.name = byId('library-name').value.trim();
+    selected.script_api = byId('script-api').value;
+    delete selected.draftApi;
     selected.revision++; delete selected.draft; delete selected.draftName;
     persist(); renderLibrary(); renderVersion();
   };
@@ -141,7 +185,15 @@
     byId('chain-target').value = ''; renderVersion();
   };
   byId('library-export').onclick = () => {
-    const url = URL.createObjectURL(new Blob([editor.value], {type: 'text/x-python'}));
+    let source = editor.value;
+    if (byId('script-api').value === 'mitmproxy' && !hasAddonDirective(source)) {
+      // A plain Python file cannot carry the library's API selection. Preserve
+      // it with the same directive understood by deployment and testing.
+      const bom = source.startsWith('\uFEFF') ? '\uFEFF' : '';
+      const newline = source.includes('\r\n') ? '\r\n' : '\n';
+      source = bom + '#!mitmproxy' + newline + source.slice(bom.length);
+    }
+    const url = URL.createObjectURL(new Blob([source], {type: 'text/x-python'}));
     const anchor = document.createElement('a'); anchor.href = url;
     anchor.download = (selected.name.replace(/[^a-z0-9_-]/gi, '_') || 'script') + '.py';
     anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -170,8 +222,10 @@
     if (!confirm(id ? 'Replace this backend version? If enabled, the new version will process live traffic.' :
       'Validate and deploy a new DISABLED backend item?')) return;
     change({operation: 'deploy', id, name: selected.name, script: selected.source,
+      script_api: selected.script_api || 'spider',
       scope: byId('chain-scope').value, filter: byId('chain-filter').value,
       instancing: byId('chain-instancing').value, endpoint: byId('chain-endpoint').value,
+      addon_options: addonDraftSelected() ? addonOptionSpecs() : [],
       timeout_ms: Number(byId('chain-timeout').value), error_limit: Number(byId('chain-error-limit').value),
       max_instances: Number(byId('chain-max-instances').value), idle_seconds: Number(byId('chain-idle').value)});
   };
@@ -184,6 +238,7 @@
     byId('chain-error-limit').value = target?.error_limit || 3;
     byId('chain-max-instances').value = target?.max_instances || 128;
     byId('chain-idle').value = target?.idle_seconds || 1800;
+    byId('chain-addon-options').value = (target?.addon_options || []).join('\n');
     byId('chain-instancing').onchange();
     renderVersion();
   };
@@ -212,7 +267,11 @@
       row.classList.toggle('chain-suspended', !!item.suspended);
       const stats = document.createElement('small');
       stats.textContent = `${item.enabled ? 'Enabled' : 'Disabled'} · ${item.runs} runs · ${item.errors} errors\n` +
+        `API: ${item.script_api || 'spider'}${item.script_api_source === 'shebang' ? ' (shebang)' : ''}\n` +
         `Traffic: ${item.scope} ${item.filter || ''}\nLast run: ${item.last_run_ms ? new Date(item.last_run_ms).toLocaleString() : 'never'}`;
+      if (item.addon_options?.length) {
+        stats.textContent += `\nAddon options: ${item.addon_options.length} override${item.addon_options.length === 1 ? '' : 's'}`;
+      }
       if (item.workers) stats.textContent += `\nWorkers: ${item.workers.idle || 0} ready · ${item.workers.busy || 0} busy · ${item.workers.starting || 0} starting / ${item.workers.capacity} · ${item.workers.restarts || 0} restarts`;
       stats.textContent += `\nInstance: ${item.instancing || 'message'}${item.instancing === 'endpoint' ? ' / ' + item.endpoint : ''} · ${item.instances || 0} retained · ${item.state_bytes || 0} B` +
         `\n${item.executing || 0} executing · ${item.waiting || 0} waiting · ${item.rejected || 0} rejected` +
@@ -223,7 +282,8 @@
         change({operation: 'enable', id: item.id, enabled: !item.enabled});
       });
       const edit = button('Copy to library', () => {
-        const copy = {id: crypto.randomUUID(), name: item.name, source: item.script, revision: 1};
+        const copy = {id: crypto.randomUUID(), name: item.name, source: item.script, revision: 1,
+          script_api: item.script_api || 'spider'};
         library.push(copy); persist(); select(copy);
         target.value = item.id; target.onchange();
       });

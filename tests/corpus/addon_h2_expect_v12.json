@@ -1,0 +1,64 @@
+{
+  "client": {
+    "body": "done",
+    "statuses": [
+      "100",
+      "200"
+    ]
+  },
+  "hooks": [
+    [
+      "requestheaders",
+      "100-continue",
+      true
+    ],
+    [
+      "request",
+      null,
+      "test"
+    ],
+    [
+      "responseheaders",
+      200
+    ],
+    [
+      "response",
+      200,
+      "done"
+    ]
+  ],
+  "origin": {
+    "expect_forwarded": false,
+    "headers": [
+      [
+        ":method",
+        "POST"
+      ],
+      [
+        ":scheme",
+        "https"
+      ],
+      [
+        ":path",
+        "/"
+      ],
+      [
+        ":authority",
+        "<origin>"
+      ],
+      [
+        "content-length",
+        "4"
+      ]
+    ]
+  },
+  "reference": "mitmproxy 12.3.1",
+  "request": {
+    "case": "baseline",
+    "body": "test",
+    "expect_fields": [
+      "100-continue"
+    ],
+    "method": "POST"
+  }
+}

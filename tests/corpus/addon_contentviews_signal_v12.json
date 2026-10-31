@@ -1,0 +1,18 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "observations": {
+    "type": "_SyncSignal",
+    "connect": {"value": null},
+    "register_instance": {"value": null},
+    "register_class": {"value": null},
+    "register_duplicate": {"value": null},
+    "disconnect": {"value": null},
+    "register_disconnected": {"value": null},
+    "disconnect_again": {"value": null},
+    "events": [
+      {"args": ["SignalEdgeA"], "kwargs": {}, "available": ["signaledgea"]},
+      {"args": ["SignalEdgeB"], "kwargs": {}, "available": ["signaledgea", "signaledgeb"]},
+      {"args": ["SignalEdgeA"], "kwargs": {}, "available": ["signaledgea", "signaledgeb"]}
+    ]
+  }
+}

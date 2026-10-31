@@ -1,0 +1,120 @@
+{
+  "cases": {
+    "cookie-attrs": {
+      "fields": "(('Path', '/first'), ('path', '/second'), ('Secure', None))",
+      "items": "[('Path', '/second'), ('Secure', None)]",
+      "items_multi": "[('Path', '/first'), ('path', '/second'), ('Secure', None)]",
+      "keys": "['Path', 'Secure']",
+      "keys_multi": "['Path', 'path', 'Secure']",
+      "length": 2,
+      "repr": "CookieAttrs[('Path', '/first'), ('path', '/second'), ('Secure', None)]",
+      "state": "(('Path', '/first'), ('path', '/second'), ('Secure', None))",
+      "type": "CookieAttrs",
+      "values": "['/second', None]",
+      "values_multi": "['/first', '/second', None]"
+    },
+    "cookie-copy": {
+      "fields": "(('Path', '/first'), ('path', '/second'), ('Secure', None))",
+      "items": "[('Path', '/second'), ('Secure', None)]",
+      "items_multi": "[('Path', '/first'), ('path', '/second'), ('Secure', None)]",
+      "keys": "['Path', 'Secure']",
+      "keys_multi": "['Path', 'path', 'Secure']",
+      "length": 2,
+      "repr": "CookieAttrs[('Path', '/first'), ('path', '/second'), ('Secure', None)]",
+      "state": "(('Path', '/first'), ('path', '/second'), ('Secure', None))",
+      "type": "CookieAttrs",
+      "values": "['/second', None]",
+      "values_multi": "['/first', '/second', None]"
+    },
+    "cookie-last-wins": "/second",
+    "owned": {
+      "fields": "(('a', 'one'), ('a', 'two'), ('b', 'three'))",
+      "items": "[('a', 'one'), ('b', 'three')]",
+      "items_multi": "[('a', 'one'), ('a', 'two'), ('b', 'three')]",
+      "keys": "['a', 'b']",
+      "keys_multi": "['a', 'a', 'b']",
+      "length": 2,
+      "repr": "MultiDict[('a', 'one'), ('a', 'two'), ('b', 'three')]",
+      "state": "(('a', 'one'), ('a', 'two'), ('b', 'three'))",
+      "type": "MultiDict",
+      "values": "['one', 'three']",
+      "values_multi": "['one', 'two', 'three']"
+    },
+    "owned-copy": {
+      "fields": "(('a', 'one'), ('a', 'two'), ('b', 'three'))",
+      "items": "[('a', 'one'), ('b', 'three')]",
+      "items_multi": "[('a', 'one'), ('a', 'two'), ('b', 'three')]",
+      "keys": "['a', 'b']",
+      "keys_multi": "['a', 'a', 'b']",
+      "length": 2,
+      "repr": "MultiDict[('a', 'one'), ('a', 'two'), ('b', 'three')]",
+      "state": "(('a', 'one'), ('a', 'two'), ('b', 'three'))",
+      "type": "MultiDict",
+      "values": "['one', 'three']",
+      "values_multi": "['one', 'two', 'three']"
+    },
+    "owned-from-state": {
+      "fields": "(('a', 'one'), ('a', 'two'), ('b', 'three'))",
+      "items": "[('a', 'one'), ('b', 'three')]",
+      "items_multi": "[('a', 'one'), ('a', 'two'), ('b', 'three')]",
+      "keys": "['a', 'b']",
+      "keys_multi": "['a', 'a', 'b']",
+      "length": 2,
+      "repr": "MultiDict[('a', 'one'), ('a', 'two'), ('b', 'three')]",
+      "state": "(('a', 'one'), ('a', 'two'), ('b', 'three'))",
+      "type": "MultiDict",
+      "values": "['one', 'three']",
+      "values_multi": "['one', 'two', 'three']"
+    },
+    "owned-missing-delete": {
+      "message": "'missing'",
+      "ok": false,
+      "type": "KeyError"
+    },
+    "owned-missing-get": {
+      "message": "'missing'",
+      "ok": false,
+      "type": "KeyError"
+    },
+    "owned-other-equality": false,
+    "owned-set-state": {
+      "fields": "(('a', 'one'), ('a', 'two'), ('b', 'three'))",
+      "items": "[('a', 'one'), ('b', 'three')]",
+      "items_multi": "[('a', 'one'), ('a', 'two'), ('b', 'three')]",
+      "keys": "['a', 'b']",
+      "keys_multi": "['a', 'a', 'b']",
+      "length": 2,
+      "repr": "MultiDict[('a', 'one'), ('a', 'two'), ('b', 'three')]",
+      "state": "(('a', 'one'), ('a', 'two'), ('b', 'three'))",
+      "type": "MultiDict",
+      "values": "['one', 'three']",
+      "values_multi": "['one', 'two', 'three']"
+    },
+    "view": {
+      "fields": "(('a', 'one'), ('a', 'two'))",
+      "items": "[('a', 'one')]",
+      "items_multi": "[('a', 'one'), ('a', 'two')]",
+      "keys": "['a']",
+      "keys_multi": "['a', 'a']",
+      "length": 1,
+      "repr": "MultiDictView[('a', 'one'), ('a', 'two')]",
+      "type": "MultiDictView",
+      "values": "['one']",
+      "values_multi": "['one', 'two']"
+    },
+    "view-cleared": {
+      "fields": "()",
+      "items": "[]",
+      "items_multi": "[]",
+      "keys": "[]",
+      "keys_multi": "[]",
+      "length": 0,
+      "repr": "MultiDictView[]",
+      "type": "MultiDictView",
+      "values": "[]",
+      "values_multi": "[]"
+    },
+    "view-repr": "MultiDictView[('a', 'one'), ('a', 'two')]"
+  },
+  "reference": "12.3.1"
+}
