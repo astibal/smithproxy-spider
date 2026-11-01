@@ -15,7 +15,7 @@ def _observation(description, example, default=MISSING):
     return field(default=default, metadata={
         'description': description,
         'example': example,
-        'availability': 'Flow callbacks after track_protocols() during setup.',
+        'availability': 'Flow callbacks after track_states() during setup.',
         'access': 'read-only snapshot',
         'easy': safety,
         'expert': safety,

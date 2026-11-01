@@ -2,9 +2,19 @@
 
 ## Scripting
 
+- **Editor API assistance (next):** add Spider-owned static descriptions for
+  the compatibility facade: hook names, flow/message types, method signatures
+  and hover documentation. Select assistance using the deployment API choice,
+  with `#!mitmproxy` taking precedence. Keep native assistance generated from
+  the runtime schema, including `track_states()`, `suspended_parts()` and
+  `terminate_held()`. Test completion, signatures, hover and mode switching;
+  do not import or execute mitmproxy to provide editor help.
+
 - **Protocol state API:** opt-in H1/H2 snapshots now use bounded, host-owned
-  connection checkpoints and native hold provenance. Next, consume these views
-  in header-hook interception and audit observations for remaining protocols;
+  connection checkpoints and native hold provenance. The HTTP addon adapter
+  enables tracking and uses native H2 header observations to admit header-hook
+  interception, including bodies still being received. Next, audit observations
+  for remaining protocols;
   do not invent transport states. See `PROTOCOL_STATE_API_PROPOSAL.md` for the
   implemented boundary and broader design.
 
@@ -17,8 +27,16 @@
 - **Flow suspension coverage:** completed H2 request/response interception now
   uses retained logical Parts in native Translate. Resume or kill is published
   on a subsequent callback of the owning connection, from either direction;
-  hooks are not replayed. Extend coverage to header-hook and generated-response
-  interception, then scope H1 and raw transport suspension. Keep the remaining
+  hooks are not replayed. Header-hook interception uses ordinary prefix holds
+  and bounded body reservations while input is incomplete, then logical
+  suspension after the complete body arrives. Resume delivers the deferred message hook,
+  preserving the public header object. A deferred hook may intercept again;
+  detached native Parts let it decide before any resume is staged. Generated
+  response interception remains rejected. Kill during prefix-held reception
+  now settles in a callback from either direction, without waiting for body
+  completion. Native Translate releases body reservations and sends the reset;
+  retained source headers preserve HPACK history without reaching the peer.
+  Extend those boundaries, then scope H1 and raw transport suspension. Keep the remaining
   gaps explicit and compare new behavior against the reference. The current
   contract is in `FLOW_SUSPENSION_API_PROPOSAL.md`.
   Idle wakeup and a possible downstream signaling channel are deliberately

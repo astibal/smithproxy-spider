@@ -52,6 +52,7 @@ class H2AddonEvents:
             )
             failures = tuple(failures) + tuple(resumed_failures)
             keys = tuple(keys) + tuple(resumed_keys)
+            keys += tuple(self._terminate_pending(connection_id, native_message, keys))
             result = native_message.translate()
             terminated = self.published(keys)
             later_failures = await self._finish_terminations(terminated)
@@ -60,6 +61,33 @@ class H2AddonEvents:
             self._failed = True
             self.generation.invalidate()
             raise
+
+    def _terminate_pending(self, connection_id, native_message, prepared):
+        """Settle kills made by later hooks, including the opposite direction.
+
+        Incomplete messages use prefix holds, not logical suspension. Their
+        bodies and source compression history remain entirely native-owned.
+        """
+        terminal = {key[2] for key, outcome in prepared
+                    if outcome in ('failed', 'terminated')}
+        published = []
+
+        for key, state in self._messages.items():
+            if key[0] != connection_id or state.published or key[2] in terminal:
+                continue
+            flow = self.generation.get_flow(connection_id, key[2])
+            if flow is None or not _killed(flow):
+                continue
+
+            native_message.terminate_held(
+                key[2], key[1], reason=Error.KILLED_MESSAGE, http2_error=2,
+            )
+            kind = 'request' if key[1] == 'L' else 'response'
+            state.termination_hook = kind if state.complete else kind + 'headers'
+            published.append((key, 'terminated'))
+            terminal.add(key[2])
+
+        return published
 
     async def _resume_pending(self, connection_id, native_message, http2, connection, prepared):
         """Publish completed intercepted messages without replaying their hooks.
@@ -85,6 +113,50 @@ class H2AddonEvents:
         failures, published = [], []
         for stream in streams:
             flow = self.generation.get_flow(connection_id, stream)
+
+            # Run deferred hooks against detached native views first. A hook
+            # may intercept again; in that case no resume command is staged
+            # and the native queue, deadline and flow-control debt stay put.
+            parts = ()
+            for direction in ('L', 'R'):
+                pending = self._messages.get((connection_id, direction, stream))
+                if pending is not None and not pending.complete:
+                    parts = native_message.suspended_parts(stream)
+                    break
+
+            for header in parts:
+                if not self._initial_header(header):
+                    continue
+                binding = H2MessageBinding(
+                    native_message, header, http2, connection=connection, parts=parts,
+                )
+                kind = 'request' if isinstance(binding.message, Request) else 'response'
+                side = 'L' if kind == 'request' else 'R'
+                key = (connection_id, side, stream)
+                state = self._messages[key]
+
+                # A header interception has not delivered the message hook.
+                # Restore its body from native Parts, preserving the public
+                # header object and any edits made while it was suspended.
+                if not state.complete and not _killed(flow):
+                    state.message = check_message_decisions(
+                        flow, kind, allow_termination=True,
+                    )
+                    state, dispatched = await dispatch_message(
+                        self.generation, flow, kind, binding, state,
+                        allow_termination=True,
+                        allow_completed_interception=True,
+                    )
+                    failures.extend(dispatched)
+
+                if flow.intercepted:
+                    break
+
+            if flow.intercepted:
+                continue
+
+            # Publication uses the real editable drafts, never the detached
+            # copies that were exposed to the deferred message hook above.
             parts = native_message.resume(stream)
             for header in parts:
                 if not self._initial_header(header):
@@ -96,6 +168,7 @@ class H2AddonEvents:
                 side = 'L' if kind == 'request' else 'R'
                 key = (connection_id, side, stream)
                 state = self._messages[key]
+
                 # Rebind the edited public object without rerunning its hook.
                 # Transport guards still apply to mutations made while held.
                 binding.message = check_message_decisions(
@@ -104,7 +177,8 @@ class H2AddonEvents:
                 outcome = 'normal'
                 if _killed(flow):
                     native_message.terminate(header, reason=Error.KILLED_MESSAGE, http2_error=2)
-                    state.termination_hook = kind
+                    if state.termination_hook is None:
+                        state.termination_hook = kind if state.complete else kind + 'headers'
                     outcome = 'terminated'
                 elif kind == 'request' and flow.response is not None:
                     failures.extend(await dispatch_local_response(self.generation, flow, binding))
@@ -116,6 +190,27 @@ class H2AddonEvents:
                 state.message = binding.message
                 published.append((key, outcome))
         return failures, published
+
+    @staticmethod
+    def _can_intercept_headers(http2, side, binding):
+        """Admit header interception from native header receive evidence.
+
+        Hook delivery and reception are different states: the addon has seen
+        only headers. Incomplete bodies stay in the ordinary native prefix hold
+        with reserved input credit; logical suspension starts after reception.
+        """
+        snapshot = http2.state
+        if snapshot is None:
+            return False
+
+        for stream in snapshot:
+            if stream.stream_id != binding.stream_id:
+                continue
+
+            message = stream.request if side == 'L' else stream.response
+            return not stream.reset and message.headers_complete
+
+        return False
 
     @staticmethod
     def _initial_header(part):
@@ -360,6 +455,7 @@ class H2AddonEvents:
                 allow_termination=True,
                 after_headers=handle_expect_continue,
                 allow_completed_interception=True,
+                allow_header_interception=self._can_intercept_headers(http2, side, binding),
             )
             self._messages[key] = state
             failures.extend(dispatched)
@@ -376,7 +472,7 @@ class H2AddonEvents:
                 )
                 prepared.append((index, binding, state, 'terminated'))
                 continue
-            if flow.intercepted and state.complete:
+            if flow.intercepted and binding.complete:
                 prepared.append((index, binding, state, 'suspended'))
                 continue
             if not binding.complete:
@@ -408,13 +504,55 @@ class H2AddonEvents:
                 published.append(((connection_id, side, binding.stream_id), outcome))
             elif index < hold_index:
                 if outcome == 'suspended':
-                    native_message.suspend(binding.header)
-                    state.suspended = True
-                    continue
-                if outcome != 'local':
+                    binding, outcome, dispatched = await self._settle_interception(
+                        connection_id, side, native_message, http2, connection,
+                        binding, state,
+                    )
+                    failures.extend(dispatched)
+                    if outcome == 'suspended':
+                        continue
+
+                if outcome == 'normal':
                     binding.apply()
                 published.append(((connection_id, side, binding.stream_id), outcome))
         return tuple(failures), tuple(published)
+
+    async def _settle_interception(self, connection_id, side, native_message,
+                                   http2, connection, binding, state):
+        """Resolve callback-local decisions before staging a native command.
+
+        A later stream in the same input batch may resume or kill this flow.
+        Do not stage suspend followed by resume: no bytes have been committed
+        yet, so the final decision can be published directly.
+        """
+        flow = self.generation.get_flow(connection_id, binding.stream_id)
+        failures = ()
+        if not flow.intercepted:
+            # The earlier binding exposes the public header-only draft.
+            # Recover the received body from Parts, not from that draft.
+            binding = H2MessageBinding(
+                native_message, binding.header, http2, connection=connection,
+            )
+            kind = 'request' if side == 'L' else 'response'
+            state, failures = await dispatch_message(
+                self.generation, flow, kind, binding, state,
+                allow_termination=True, allow_completed_interception=True,
+            )
+
+        if state.termination_hook is not None:
+            native_message.terminate(binding.header, reason=Error.KILLED_MESSAGE, http2_error=2)
+            return binding, 'terminated', failures
+
+        if flow.intercepted:
+            native_message.suspend(binding.header)
+            state.suspended = True
+            return binding, 'suspended', failures
+
+        if side == 'L' and flow.response is not None:
+            local_failures = await dispatch_local_response(self.generation, flow, binding)
+            return binding, 'local', tuple(failures) + tuple(local_failures)
+
+        return binding, 'normal', failures
 
     @staticmethod
     def _expects_continue(fields):

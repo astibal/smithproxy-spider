@@ -1996,6 +1996,7 @@ def done():
                                     connection=ApiConnection(phase='setup', instance_mode='flow'))
             adapter.setup(setup, SimpleNamespace(), SimpleNamespace())
             self.assertTrue(setup.connection._rewrite_requested)
+            self.assertTrue(setup.connection._protocol_tracking_requested)
             transport = Connection()
             output = bytearray()
             for wire in (encoded(REQUEST), frame(b'payload')):

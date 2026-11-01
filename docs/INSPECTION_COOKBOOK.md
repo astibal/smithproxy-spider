@@ -664,7 +664,7 @@ For a live **flow** deployment, opt in during setup:
 <!-- example: protocol-state fixture=setup expect=protocol-state -->
 ```python
 if api.phase == 'setup':
-    api.connection.track_protocols()
+    api.connection.track_states()
     return
 
 for message in api.http1.state or ():

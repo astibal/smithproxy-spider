@@ -1068,9 +1068,9 @@ class Connection:
 
     @api_method('', 'None',
                 'Enable bounded Spider-local H1/H2 state snapshots for this flow. Call during setup; read api.http1.state and api.http2.state in later callbacks. Does not change transport mode, reserve rewrite or add a parser. State is stored by the host with the connection, not in Python globals.',
-                "if api.phase == 'setup':\n    api.connection.track_protocols()\n    return\napi.print(api.http2.state)",
+                "if api.phase == 'setup':\n    api.connection.track_states()\n    return\napi.print(api.http2.state)",
                 availability='Live flow setup only.', access='stage protocol tracking')
-    def track_protocols(self):
+    def track_states(self):
         if self._phase != 'setup' or self._instance_mode != 'flow':
             raise CommitException('Protocol tracking must be enabled during flow setup')
 
@@ -1700,6 +1700,31 @@ class _TranslationSuspension:
         if side != 'L' or not openings or stream <= min(openings):
             return False
         return not flow._contains(flow.state[side].get('opened', {}), stream)
+
+    def suspended_parts(self, stream):
+        """Restore detached views without consuming queues or changing credit."""
+        self._check_command(stream)
+        self.check_deadlines()
+        key = str(stream)
+        directions = [side for side in ('L', 'R') if key in self.paused[side]]
+        if not directions:
+            raise CommitException('Stream is not suspended')
+
+        # release() reconstructs fresh Parts from immutable checkpoints. Only
+        # the temporary queue loses ownership; the live suspension is intact.
+        result = []
+        for side in directions:
+            parts = []
+            store = self.buffers[side].fork()
+            for batch, _ in store.release(stream):
+                parts.extend(batch)
+
+            # Keep request and response content groups independent even when
+            # both directions of the same stream are currently suspended.
+            _h2_content_groups(parts)
+            result.extend(parts)
+
+        return tuple(result)
 
     def resume(self, stream):
         self._check_command(stream)
@@ -2372,13 +2397,63 @@ class _Translation:
             'method': method,
         }
 
-    def stage_termination(self, header, reason, http2_error):
-        """Validate and stage a callback-local H2 stream termination."""
-        peer = self._resumed_owner(header)
-        if peer is not None:
-            peer.stage_termination(header, reason, http2_error)
-            self.peer_resume_operations['terminations'] = peer.terminations
+    def stage_held_termination(self, stream, side, reason, http2_error):
+        """Cancel a prefix-held message without borrowing its output context.
+
+        Peer HEADERS stay in the source checkpoint until that decoder runs
+        again. Cancellation discards their publication, not their HPACK history.
+        """
+        if self.result is not None:
+            raise CommitException('Termination must precede Translate publication')
+        if type(stream) is not int or not 0 < stream <= 0x7fffffff:
+            raise CommitException('Invalid held termination stream')
+        if side not in ('L', 'R'):
+            raise CommitException('Invalid held termination direction')
+        self._validate_termination(reason, http2_error)
+
+        # The current direction has live owned drafts. The other direction
+        # must supply an explicit host-owned prefix checkpoint, never an addon
+        # snapshot or a guessed stream identifier.
+        if side == self.settings.side:
+            parts = self.message.parts
+        else:
+            if not self.peer_hold_known or not self.peer_hold:
+                raise CommitException('No peer-held message for termination')
+            parts, _ = _restore(self.peer_hold)
+
+        pseudo = b':method' if side == 'L' else b':status'
+        headers = [part for part in parts
+                   if part.stream_id == stream and part.frame_type == 1
+                   and part.complete and part.headers is not None
+                   and any(field.name == pseudo for field in part.headers.entries)]
+        if len(headers) != 1:
+            raise CommitException('Held termination requires one initial header')
+        header = headers[0]
+        if getattr(header, '_translate_cancelled', False):
+            raise CommitException('Held termination stream is already cancelled')
+        if side == self.settings.side:
+            self.stage_termination(header, reason, http2_error)
             return
+
+        if side == 'R':
+            statuses = [field.value for field in header.headers.entries
+                        if field.name == b':status']
+            status = statuses[0]
+            if (len(statuses) != 1 or not isinstance(status, bytes)
+                    or len(status) != 3 or not status.isdigit()
+                    or not 200 <= int(status) <= 599):
+                raise CommitException('Held termination requires final response headers')
+
+        if any(item['stream'] == stream for item in self.terminations.values()):
+            raise CommitException('An H2 stream can be terminated only once')
+        self.terminations[('held', side, stream)] = {
+            'parts': (), 'stream': stream, 'side': side,
+            'kind': 'request' if side == 'L' else 'response',
+            'reason': reason, 'http2_error': http2_error,
+        }
+
+    def _validate_termination(self, reason, http2_error):
+        """Shared validation for owned Parts and directional held messages."""
         if 'flow' not in self.control_before:
             raise CommitException('H2 termination requires content-reverse from activation')
         if not isinstance(reason, str):
@@ -2389,6 +2464,15 @@ class _Translation:
             raise CommitException('H2 termination reason contains a control character')
         if type(http2_error) is not int or not 0 <= http2_error <= 0xffffffff:
             raise CommitException('H2 termination error must be an integer in 0..4294967295')
+
+    def stage_termination(self, header, reason, http2_error):
+        """Validate and stage a callback-local H2 stream termination."""
+        peer = self._resumed_owner(header)
+        if peer is not None:
+            peer.stage_termination(header, reason, http2_error)
+            self.peer_resume_operations['terminations'] = peer.terminations
+            return
+        self._validate_termination(reason, http2_error)
         if not any(part is header for part in self.message.parts):
             raise CommitException('Termination header must belong to the current message')
         if header.frame_type != 1 or not header.complete or header.headers is None:
@@ -2430,9 +2514,8 @@ class _Translation:
 
     def _prepare_terminations(self, flow):
         suppressed = set()
-        side = self.settings.side
-
         for termination in self.terminations.values():
+            side = termination.get('side', self.settings.side)
             stream = termination['stream']
             expected_side = 'L' if termination['kind'] == 'request' else 'R'
             if side != expected_side:
@@ -2443,8 +2526,7 @@ class _Translation:
                 raise CommitException('H2 termination cannot suppress already published headers')
 
             suppressed.update(id(part) for part in termination['parts'])
-            target = flow.peer if termination['kind'] == 'request' else flow.side
-            flow.terminate(stream, target, termination['http2_error'])
+            flow.terminate(stream, 'R', termination['http2_error'])
 
         return suppressed
 

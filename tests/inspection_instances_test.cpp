@@ -177,7 +177,7 @@ int main() {
     // callback failure breaks continuity; reconnect is required to restart it.
     deploy("flow", R"PY(
 if api.phase == 'setup':
-    api.connection.track_protocols()
+    api.connection.track_states()
     return
 
 if api.info.get('fail'):

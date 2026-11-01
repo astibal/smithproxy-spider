@@ -274,6 +274,24 @@ stream = api.message.suspend(part)
 return api.message.translate()
 ```
 
+### Message.suspended_parts
+
+Inspect detached copies of previously suspended H2 Parts without resuming, publishing or changing flow-control credit. Edits to these copies are discarded. Only already retained Parts are included, not bytes arriving in the current callback. Request and response retain their original direction. Existing suspension deadlines still apply.
+
+Availability: Live H2 flow; a stream suspended by an earlier callback, before a suspension command in this callback.
+
+Access: read detached retained Parts; type/result: `tuple[RewritePart, ...]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+parts = api.message.suspended_parts(1)
+api.print(len(parts))
+return api.message.translate()
+```
+
 ### Message.resume
 
 Resume the suspended directions of this stream and return editable retained Parts. Any later callback on the same connection may trigger resume. Translate publishes each draft through its original directional context, using reverse output when necessary. This is not an asynchronous transport operation.
@@ -327,6 +345,23 @@ if part is None:
     return None
 api.message.terminate(part)
 return api.message.translate() if part.frame_type == 1 else api.message.commit()
+```
+
+### Message.terminate_held
+
+Terminate an unpublished H2 message retained in the selected L/R direction. The current callback may have either direction. Translate discards retained body data, settles reservations and emits the client reset atomically. Source header history is retained until its decoder advances.
+
+Availability: Live H2 Translate with content-reverse; an owned initial header in current Parts or the host-provided peer hold. Already published messages are rejected.
+
+Access: stage directional retained message termination; type/result: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+api.message.terminate_held(1, "L")
+return api.message.translate()
 ```
 
 ### Message.respond
@@ -516,7 +551,7 @@ for header in api.http1.headers:
 
 ### Http1.state
 
-Immutable Spider-local message records at callback entry. None when tracking is disabled; an empty tuple means tracking is enabled with no retained observations. Enable during setup with api.connection.track_protocols(). Sequences are directional message identities, not paired exchanges. Publication describes local processing, never socket delivery; None means a raw replacement made publication unknown.
+Immutable Spider-local message records at callback entry. None when tracking is disabled; an empty tuple means tracking is enabled with no retained observations. Enable during setup with api.connection.track_states(). Sequences are directional message identities, not paired exchanges. Publication describes local processing, never socket delivery; None means a raw replacement made publication unknown.
 
 Availability: Tracked flow deployments only. Completed published records retire on a later callback.
 
@@ -2149,7 +2184,7 @@ api.connection.http2.enforce_header_table_limit(0)
 return api.message.translate()
 ```
 
-### Connection.track_protocols
+### Connection.track_states
 
 Enable bounded Spider-local H1/H2 state snapshots for this flow. Call during setup; read api.http1.state and api.http2.state in later callbacks. Does not change transport mode, reserve rewrite or add a parser. State is stored by the host with the connection, not in Python globals.
 
@@ -2163,7 +2198,7 @@ Expert: This member has the same behavior in both modes. It does not select or p
 
 ```python
 if api.phase == 'setup':
-    api.connection.track_protocols()
+    api.connection.track_states()
     return
 api.print(api.http2.state)
 ```
@@ -2401,7 +2436,7 @@ are messages too. Neither direction's sequence is a transport identifier.
 
 Directional message sequence, not an exchange ID.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `int`.
 
@@ -2418,7 +2453,7 @@ for message in api.http1.state or ():
 
 L for client input; R for server input.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `str`.
 
@@ -2435,7 +2470,7 @@ for message in api.http1.state or ():
 
 Native Parts supplied complete headers.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool`.
 
@@ -2452,7 +2487,7 @@ for message in api.http1.state or ():
 
 Complete received content; None means unknown.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool | None`.
 
@@ -2469,7 +2504,7 @@ for message in api.http1.state or ():
 
 An informational response, separate from the final response.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool`.
 
@@ -2486,7 +2521,7 @@ for message in api.http1.state or ():
 
 Spider retains this message locally, independently of input completeness.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool`.
 
@@ -2503,7 +2538,7 @@ for message in api.http1.state or ():
 
 Complete local publication, not peer delivery. None after an untracked raw replacement.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool | None`.
 
@@ -2524,7 +2559,7 @@ Local progress of one direction; None means content is not yet known.
 
 Complete initial headers were observed in this direction.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool`.
 
@@ -2541,7 +2576,7 @@ for stream in api.http2.state or ():
 
 END_STREAM was observed; None before message input is known.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool | None`.
 
@@ -2558,7 +2593,7 @@ for stream in api.http2.state or ():
 
 Spider retains this direction locally.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool`.
 
@@ -2575,7 +2610,7 @@ for stream in api.http2.state or ():
 
 Complete local publication, not peer delivery. None for untracked output.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool | None`.
 
@@ -2596,7 +2631,7 @@ Request and response progress, not an RFC stream-state enumeration.
 
 Native HTTP/2 stream identifier within this connection.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `int`.
 
@@ -2613,7 +2648,7 @@ for stream in api.http2.state or ():
 
 Client-side reception and local processing.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `H2MessageState`.
 
@@ -2630,7 +2665,7 @@ for stream in api.http2.state or ():
 
 Server-side reception and local processing.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `H2MessageState`.
 
@@ -2647,7 +2682,7 @@ for stream in api.http2.state or ():
 
 A native stream reset was observed; not inferred from GOAWAY.
 
-Availability: Flow callbacks after track_protocols() during setup.
+Availability: Flow callbacks after track_states() during setup.
 
 Access: read-only snapshot; type/result: `bool`.
 

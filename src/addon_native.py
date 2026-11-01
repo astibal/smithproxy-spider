@@ -99,6 +99,9 @@ class NativeAddonAdapter:
         api.connection.request_rewrite()
         raw_value = getattr(api, 'info', {}).get('raw_transport')
         if raw_value is None:
+            # Compatibility lifecycle decisions need native reception state,
+            # independently of which addon hooks have already been delivered.
+            api.connection.track_states()
             client_conn, server_conn = self._http_descriptors(
                 client_conn, server_conn)
             self._connections[identity] = _NativeConnection(

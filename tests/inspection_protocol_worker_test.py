@@ -31,7 +31,7 @@ class ProtocolWorkerTests(unittest.TestCase):
         self.assertEqual(response, json.dumps(decoded, separators=(',', ':')))
 
     def setup_tracking(self):
-        result = run('api.connection.track_protocols()', fixture('setup'),
+        result = run('api.connection.track_states()', fixture('setup'),
                      instance={'mode': 'flow'})
         self.assertTrue(result['ok'], result)
         self.assertFalse(result.get('rewrite_requested', False))
@@ -51,7 +51,7 @@ class ProtocolWorkerTests(unittest.TestCase):
 
         for event, mode in ((fixture('setup'), 'message'), (fixture('h1'), 'flow')):
             with self.subTest(mode=mode, action=event.get('action')):
-                rejected = run('api.connection.track_protocols()', event, instance={'mode': mode})
+                rejected = run('api.connection.track_states()', event, instance={'mode': mode})
                 self.assertFalse(rejected['ok'], rejected)
                 self.assertNotIn('protocol_state', rejected)
 

@@ -20,6 +20,69 @@ def suspend(stream):
 
 
 class SuspensionTests(unittest.TestCase):
+    def test_held_termination_validation_preserves_checkpoints(self):
+        peers = Peers()
+        self.request(peers, 1)
+
+        def hold(message):
+            message.parts.hold_from(message.parts[0])
+
+        peers.pump('L', peers.peers['L'].data_to_send(), hold)
+        before = copy.deepcopy((peers.bridge.tables, peers.bridge.control, peers.bridge.held))
+        message = peers.bridge.message('R', frame(b'12345678', 6, 0, 0))
+
+        for stream, side in ((True, 'L'), (0, 'L'), (3, 'L'), (1, 'X'), (1, 'R')):
+            with self.subTest(stream=stream, side=side):
+                with self.assertRaises(CommitException):
+                    message.terminate_held(stream, side)
+        self.assertEqual(message._translation.terminations, {})
+        self.assertEqual(before, (peers.bridge.tables, peers.bridge.control, peers.bridge.held))
+
+        message.terminate_held(1, 'L')
+        with self.assertRaisesRegex(CommitException, 'only once'):
+            message.terminate_held(1, 'L')
+        with self.assertRaisesRegex(CommitException, 'require message.translate'):
+            message.commit()
+
+        peers.bridge.publish('R', message)
+        with self.assertRaisesRegex(CommitException, 'precede'):
+            message.terminate_held(1, 'L')
+
+    def test_held_termination_rejects_already_published_headers(self):
+        peers = Peers()
+        self.request(peers, 1)
+        peers.pump('L', peers.peers['L'].data_to_send())
+        message = peers.bridge.message('R', frame(b'12345678', 6, 0, 0))
+
+        with self.assertRaisesRegex(CommitException, 'No peer-held'):
+            message.terminate_held(1, 'L')
+
+    def test_held_termination_failed_publication_does_not_adopt_cancellation(self):
+        peers = Peers()
+        self.request(peers, 1)
+
+        def hold(message):
+            message.parts.hold_from(message.parts[0])
+
+        peers.pump('L', peers.peers['L'].data_to_send(), hold)
+        before = copy.deepcopy((peers.bridge.control, peers.bridge.held))
+        message = peers.bridge.message('R', frame(b'12345678', 6, 0, 0))
+        message.terminate_held(1, 'L')
+        message.parts[0].set_bytes(b'87654321')
+
+        with self.assertRaises(CommitException):
+            peers.bridge.publish('R', message)
+        self.assertIsNone(message._translation.result)
+        self.assertEqual(before, (peers.bridge.control, peers.bridge.held))
+
+        # A fresh callback can still terminate the original held message.
+        retry = peers.bridge.message('R', frame(b'12345678', 6, 0, 0))
+        retry.terminate_held(1, 'L')
+        output = peers.bridge.publish('R', retry)
+        events = peers.peers['L'].receive_data(output)
+        resets = [event for event in events if isinstance(event, h2.events.StreamReset)]
+        self.assertEqual([event.stream_id for event in resets], [1])
+
     def request(self, peers, stream):
         peers.peers['L'].send_headers(stream, [
             (':method', 'POST'), (':scheme', 'https'),
@@ -44,6 +107,52 @@ class SuspensionTests(unittest.TestCase):
         with self.assertRaises(CommitException):
             self.wake(peers, 1)
         self.assertEqual(self.requests(peers), [1])
+
+    def test_detached_inspection_does_not_consume_hold_or_publish_edits(self):
+        peers = Peers()
+        self.request(peers, 1)
+        peers.peers['L'].send_data(1, b'original', end_stream=True)
+        peers.pump('L', peers.peers['L'].data_to_send(), suspend(1))
+        before = copy.deepcopy(peers.bridge.control)
+        message = peers.bridge.message('R', frame(b'12345678', 6, 0, 0))
+
+        first = message.suspended_parts(1)
+        header = next(part for part in first if part.frame_type == 1)
+        body = next(part for part in first if part.frame_type == 0)
+        self.assertTrue(header.content.complete)
+        body.set_bytes(b'not published')
+
+        second = message.suspended_parts(1)
+        original = next(part for part in second if part.frame_type == 0)
+        self.assertEqual(original.get_bytes(), b'original')
+        self.assertEqual(peers.bridge.control, before)
+        self.assertEqual(message._translation.suspension.commands, set())
+        self.assertEqual(self.requests(peers), [])
+
+        message.resume(1)
+        peers.bridge.publish('R', message)
+        events = peers.peers['R'].receive_data(peers.bridge.reverse)
+        self.assertEqual([
+            event.data for event in events if isinstance(event, h2.events.DataReceived)
+        ], [b'original'])
+
+    def test_detached_inspection_rejects_unknown_stream(self):
+        peers = Peers()
+        message = peers.bridge.message('L', frame(b'12345678', 6, 0, 0))
+
+        with self.assertRaisesRegex(CommitException, 'not suspended'):
+            message.suspended_parts(1)
+
+    def test_detached_inspection_respects_deadline(self):
+        peers = Peers()
+        self.request(peers, 1)
+        with patch('inspection_api._suspension_now_ms', return_value=100):
+            peers.pump('L', peers.peers['L'].data_to_send(), suspend(1))
+
+        message = peers.bridge.message('R', frame(b'12345678', 6, 0, 0))
+        with patch('inspection_api._suspension_now_ms', return_value=60101):
+            with self.assertRaisesRegex(CommitException, 'timed out'):
+                message.suspended_parts(1)
 
     def test_request_resumes_from_server_callback(self):
         peers = Peers()

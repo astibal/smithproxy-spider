@@ -234,6 +234,17 @@ class Message:
         return translation._suspension().suspend(part, timeout_ms)
 
     @api_method('stream_id: int', 'tuple[RewritePart, ...]',
+                'Inspect detached copies of previously suspended H2 Parts without resuming, publishing or changing flow-control credit. Edits to these copies are discarded. Only already retained Parts are included, not bytes arriving in the current callback. Request and response retain their original direction. Existing suspension deadlines still apply.',
+                'parts = api.message.suspended_parts(1)\napi.print(len(parts))\nreturn api.message.translate()',
+                availability='Live H2 flow; a stream suspended by an earlier callback, before a suspension command in this callback.',
+                access='read detached retained Parts')
+    def suspended_parts(self, stream_id):
+        translation = getattr(self, '_translation', None)
+        if translation is None:
+            raise CommitException('Suspended Parts inspection currently requires H2 Translate')
+        return translation._suspension().suspended_parts(stream_id)
+
+    @api_method('stream_id: int', 'tuple[RewritePart, ...]',
                 'Resume the suspended directions of this stream and return editable retained Parts. Any later callback on the same connection may trigger resume. Translate publishes each draft through its original directional context, using reverse output when necessary. This is not an asynchronous transport operation.',
                 '# Resume a stream saved by an earlier callback on this connection.\nparts = api.message.resume(1)\nreturn api.message.translate()',
                 availability='Live H2 flow with native hold and content-reverse support.',
@@ -282,6 +293,17 @@ class Message:
             '_translation_error',
             'Termination requires a live HTTP/1 or translated HTTP/2 flow',
         ))
+
+    @api_method('stream_id: int, side: str, *, reason: str = "Connection killed.", http2_error: int = 2', 'None',
+                'Terminate an unpublished H2 message retained in the selected L/R direction. The current callback may have either direction. Translate discards retained body data, settles reservations and emits the client reset atomically. Source header history is retained until its decoder advances.',
+                'api.message.terminate_held(1, "L")\nreturn api.message.translate()',
+                availability='Live H2 Translate with content-reverse; an owned initial header in current Parts or the host-provided peer hold. Already published messages are rejected.',
+                access='stage directional retained message termination')
+    def terminate_held(self, stream_id, side, *, reason='Connection killed.', http2_error=2):
+        translation = getattr(self, '_translation', None)
+        if translation is None:
+            raise CommitException('Held termination requires H2 Translate')
+        translation.stage_held_termination(stream_id, side, reason, http2_error)
 
     @api_method('status: int = 200, headers: iterable[tuple[bytes, bytes]] = (), body: bytes = b"", trailers: iterable[tuple[bytes, bytes]] = (), *, request: RewritePart | None = None, reason: str | None = None', 'None',
                 'Stage a complete local response for one retained request. With request=None, exactly one complete request must be present. Commit suppresses that request and publishes the response in the opposite direction atomically. Content-Length, framing, ordering, HPACK and flow control remain protocol-owned.',
@@ -751,7 +773,7 @@ class Http1:
     status: int | None = documented('HTTP response status code.', 'if api.http1.status is not None and api.http1.status >= 400:\n    api.print("HTTP error", api.http1.status)', 'None for requests or unavailable heads.')
     headers: tuple[Header, ...] = documented('Ordered headers including duplicates. Empty means no fields or unavailable; check available.', 'for header in api.http1.headers:\n    api.print(header.name, header.value)')
     state: tuple[H1MessageState, ...] | None = documented(
-        'Immutable Spider-local message records at callback entry. None when tracking is disabled; an empty tuple means tracking is enabled with no retained observations. Enable during setup with api.connection.track_protocols(). Sequences are directional message identities, not paired exchanges. Publication describes local processing, never socket delivery; None means a raw replacement made publication unknown.',
+        'Immutable Spider-local message records at callback entry. None when tracking is disabled; an empty tuple means tracking is enabled with no retained observations. Enable during setup with api.connection.track_states(). Sequences are directional message identities, not paired exchanges. Publication describes local processing, never socket delivery; None means a raw replacement made publication unknown.',
         'if api.http1.state is not None:\n    for message in api.http1.state:\n        api.print(message.side, message.sequence, message.content_complete)',
         availability='Tracked flow deployments only. Completed published records retire on a later callback.',
         default=None)

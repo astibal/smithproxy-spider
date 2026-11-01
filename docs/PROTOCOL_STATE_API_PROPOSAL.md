@@ -27,7 +27,7 @@ restored unit with missing state or a different direction is rejected rather
 than silently reassigned. The connection owner binds both tables to the event
 connection ID and invokes observation before script edits.
 
-Enable tracking explicitly during setup with `api.connection.track_protocols()`.
+Enable tracking explicitly during setup with `api.connection.track_states()`.
 Later callbacks expose immutable tuples at `api.http1.state` and `api.http2.state`.
 `None` means tracking is unavailable; an empty tuple means no retained observation.
 No existing script gains tracking overhead or changes transport mode implicitly.
@@ -50,7 +50,33 @@ If a callback fails, the host disables tracking for that instance and logs the
 loss of continuity. Reconnect to restart tracking; later input must not silently
 fill gaps left by fail-open processing. Existing callback failure policy is unchanged.
 
-No header-hook behavior changes yet. TCP/UDP and other protocol structures are
+The HTTP addon adapter enables tracking during setup. Its H2 driver now uses
+the native snapshot to admit header-hook interception once headers are received.
+The header hook still sees no body. Incomplete input stays in the existing
+directional prefix hold with bounded body reservations, including early H2
+credit; it does not gain a separate adapter buffer. A subsequent callback can
+resume the flow from either direction. If input is not complete yet, the final
+body or trailer callback delivers the message hook and publishes without an
+extra wakeup. A still-intercepted complete message enters logical suspension.
+Kill does not wait for body completion: `api.message.terminate_held(stream_id,
+side)` stages cancellation of an unpublished message in current Parts or the
+host-provided peer prefix hold. Translate discards the retained body, settles
+input credit and reservations, and sends the client reset in the same commit.
+Source HEADERS remain as non-publishing compression history until that direction
+runs again. The deferred message hook is skipped; the error hook runs once.
+This preserves existing prefix-hold ordering and quotas; it is not a promise
+of independently publishable streams during incomplete-body buffering.
+The native Parts checkpoint, not a second adapter body buffer, retains content.
+The deferred message hook can intercept again without restarting its deadline
+or replaying either hook. `api.message.suspended_parts(stream_id)` supplies
+detached copies of already retained Parts; editing those copies never publishes
+them. Only a later `resume()` restores the real output drafts. Current-callback
+bytes are not part of that detached view. The logical suspension deadline starts
+when the complete message enters that hold, not at its earlier header hook.
+This is an integration slice,
+not complete header-interception compatibility or a change to host failure policy.
+
+TCP/UDP and other protocol structures are
 not implemented by this initial H1/H2 core. Do not advertise these tables as a
 complete protocol API or full connection history.
 

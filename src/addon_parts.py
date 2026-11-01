@@ -120,6 +120,7 @@ async def dispatch_message(
         allow_termination=False,
         after_headers=None,
         allow_completed_interception=False,
+        allow_header_interception=False,
 ):
     """Deliver header and completed-message hooks around one native binding."""
     failures = []
@@ -137,7 +138,8 @@ async def dispatch_message(
         setattr(flow, kind, incoming)
         failures.extend(await generation.dispatch(kind + 'headers', flow))
         incoming = check_message_decisions(
-            flow, kind, allow_termination=allow_termination)
+            flow, kind, allow_termination=allow_termination,
+            allow_interception=allow_header_interception)
         state.message = incoming
         if _killed(flow):
             state.termination_hook = kind + 'headers'
@@ -145,6 +147,13 @@ async def dispatch_message(
             return state, tuple(failures)
         if after_headers is not None:
             after_headers(flow, state, binding)
+
+        # Retain only the public header draft here. Native Parts own the body
+        # until resume; receiving it is not permission to deliver its hook.
+        if flow.intercepted:
+            binding.message = state.message
+            return state, tuple(failures)
+
         # mitmproxy permits assigning content or trailers in a header hook, but
         # the subsequently received message replaces those provisional values.
         # Header side effects such as its automatically adjusted Content-Length
@@ -156,10 +165,29 @@ async def dispatch_message(
             incoming.timestamp_end = finished
     elif state.published:
         raise AddonMessageError('A published HTTP message was delivered again')
-    elif binding.complete and not state.complete:
-        state.message.raw_content = incoming.raw_content
-        state.message.trailers = incoming.trailers
-        state.message.timestamp_end = incoming.timestamp_end
+    else:
+        # Reassembled Parts can revisit a header while its body is still held.
+        # Observe decisions made by another callback before exposing new body
+        # data or delivering a hook. Reception does not end interception.
+        state.message = check_message_decisions(
+            flow, kind, allow_termination=allow_termination,
+            allow_late_stream=state.complete,
+            allow_interception=(allow_header_interception or
+                                (state.complete and allow_completed_interception)),
+        )
+        binding.message = state.message
+        if _killed(flow):
+            if state.termination_hook is None:
+                state.termination_hook = kind if state.complete else kind + 'headers'
+            return state, tuple(failures)
+
+        if flow.intercepted:
+            return state, tuple(failures)
+
+        if binding.complete and not state.complete:
+            state.message.raw_content = incoming.raw_content
+            state.message.trailers = incoming.trailers
+            state.message.timestamp_end = incoming.timestamp_end
 
     binding.message = state.message
     if binding.complete and not state.complete:
