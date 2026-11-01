@@ -8,10 +8,12 @@
 
 namespace spider {
 
+class AuthBrokerClient;
 class SessionStore;
 class SmithproxyManager;
 
 struct ServerConfig {
+    std::shared_ptr<const AuthBrokerClient> auth_broker;
     std::uint16_t port{8080};
     std::string bind_address{"127.0.0.1"};
     std::string token;

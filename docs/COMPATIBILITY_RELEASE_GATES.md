@@ -69,3 +69,11 @@ Before merge into `fc-api`:
    project changes;
 5. verify the branch base again; and
 6. commit, push or merge only after explicit user approval.
+
+## Authentication broker foundation
+
+Spider now has a host-owned `/v1/pap` Unix client and `--auth-check` diagnostic,
+with transport and optional real-PAM tests against Smithproxy `new-AAA`.
+See `AUTH_BROKER.md`. This does not close the SOCKS5/CONNECT producer gates:
+addon callback decisions are not yet delivered to waiting proxy connections,
+and worker socket permissions are unchanged.

@@ -1,4 +1,5 @@
 #include "http_server.hpp"
+#include "auth_broker.hpp"
 #include "session_store.hpp"
 #include "smithproxy_client.hpp"
 #include "smithproxy_manager.hpp"
@@ -36,6 +37,10 @@ void trim_trailing_slashes(std::string& value) {
 }
 
 int main(int argc, char** argv) {
+    std::string auth_socket;
+    bool auth_socket_configured = false;
+    std::string auth_check_user;
+    bool auth_check = false;
     spider::ServerConfig config;
     spider::SmithproxyConfig smithproxy;
     if (const char* token = std::getenv("SPIDER_TOKEN")) config.token = token;
@@ -46,6 +51,8 @@ int main(int argc, char** argv) {
         const std::string_view arg(argv[i]);
         if (arg == "--help") {
             std::cout << "Usage: smithproxy-spider [options]\n"
+                         "  --auth-socket PATH           authentication broker Unix socket\n"
+                         "  --auth-check USER            check a password from stdin, then exit\n"
                          "  --port N                     listen port (8080)\n"
                          "  --bind ADDRESS               listen address\n"
                          "  --smithproxy-url URL         Smithproxy API base URL\n"
@@ -64,6 +71,12 @@ int main(int argc, char** argv) {
                 return 2;
             }
             config.port = static_cast<std::uint16_t>(port);
+        } else if (arg == "--auth-socket" && i + 1 < argc) {
+            auth_socket = argv[++i];
+            auth_socket_configured = true;
+        } else if (arg == "--auth-check" && i + 1 < argc) {
+            auth_check_user = argv[++i];
+            auth_check = true;
         } else if (arg == "--bind" && i + 1 < argc) {
             config.bind_address = argv[++i];
         } else if (arg == "--smithproxy-url" && i + 1 < argc) {
@@ -85,6 +98,45 @@ int main(int argc, char** argv) {
             std::cerr << "Unknown or incomplete argument: " << arg << '\n';
             return 2;
         }
+    }
+
+    // Configure the host service before starting listeners or workers. The
+    // broker may start later: construction validates the path, not availability.
+    try {
+        if (auth_socket_configured) {
+            config.auth_broker = std::make_shared<spider::AuthBrokerClient>(auth_socket);
+        }
+    } catch (const std::exception&) {
+        std::cerr << "Invalid authentication broker configuration\n";
+        return 2;
+    }
+
+    if (auth_check) {
+        if (!config.auth_broker || auth_check_user.empty()) {
+            std::cerr << "--auth-check requires --auth-socket and a username\n";
+            return 2;
+        }
+
+        std::string password;
+        char byte;
+        while (std::cin.get(byte) && byte != '\n') {
+            if (password.size() == 1024) {
+                std::cerr << "Authentication password exceeds the input limit\n";
+                return 2;
+            }
+            password.push_back(byte);
+        }
+        const auto result = config.auth_broker->verify(auth_check_user, password);
+        if (result.status == spider::AuthStatus::accepted) {
+            std::cout << "accepted\n";
+            return 0;
+        }
+        if (result.status == spider::AuthStatus::rejected) {
+            std::cout << "rejected\n";
+            return 1;
+        }
+        std::cout << "unavailable\n";
+        return 1;
     }
 
     std::signal(SIGINT, stop_handler);

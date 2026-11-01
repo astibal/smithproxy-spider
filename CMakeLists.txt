@@ -81,6 +81,11 @@ target_include_directories(spider_protocol PUBLIC src)
 target_link_libraries(spider_protocol PUBLIC nlohmann_json::nlohmann_json)
 target_compile_options(spider_protocol PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 
+add_library(spider_auth src/auth_broker.cpp)
+target_include_directories(spider_auth PUBLIC src)
+target_link_libraries(spider_auth PUBLIC PkgConfig::CURL nlohmann_json::nlohmann_json)
+target_compile_options(spider_auth PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+
 add_library(spider_core
     src/inspection.cpp
     src/inspection_pool.cpp
@@ -99,7 +104,7 @@ add_library(spider_core
 target_include_directories(spider_core PUBLIC src)
 target_include_directories(spider_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(spider_core PRIVATE SPIDER_PYTHON="${Python3_EXECUTABLE}")
-target_link_libraries(spider_core PUBLIC spider_protocol nlohmann_json::nlohmann_json
+target_link_libraries(spider_core PUBLIC spider_auth spider_protocol nlohmann_json::nlohmann_json
     PkgConfig::CURL PkgConfig::NGHTTP2)
 target_link_libraries(spider_core PUBLIC ZLIB::ZLIB)
 target_compile_options(spider_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
@@ -568,3 +573,28 @@ endif()
 
 install(TARGETS smithproxy-spider RUNTIME DESTINATION bin)
 install(FILES deploy/smithproxy-spider.service DESTINATION lib/systemd/system)
+
+# Host authentication is independent of addon imports and worker permissions.
+if(BUILD_TESTING)
+    add_executable(auth_broker_probe tests/auth_broker_probe.cpp)
+    target_link_libraries(auth_broker_probe PRIVATE spider_auth)
+    add_test(NAME auth_broker_tests COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/auth_broker_test.py
+        --probe $<TARGET_FILE:auth_broker_probe>)
+    set_tests_properties(auth_broker_tests PROPERTIES TIMEOUT 30)
+
+    set(SPIDER_AUTH_BROKER_EXECUTABLE "" CACHE FILEPATH "new-AAA PAM broker executable for integration tests")
+    set(SPIDER_AUTH_PAM_TEST_MODULE "" CACHE FILEPATH "new-AAA test-only PAM module")
+    if(SPIDER_AUTH_BROKER_EXECUTABLE AND SPIDER_AUTH_PAM_TEST_MODULE)
+        add_test(NAME auth_broker_pam_tests COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/auth_broker_test.py
+            --probe $<TARGET_FILE:auth_broker_probe>
+            --broker ${SPIDER_AUTH_BROKER_EXECUTABLE}
+            --pam-module ${SPIDER_AUTH_PAM_TEST_MODULE})
+        set_tests_properties(auth_broker_pam_tests PROPERTIES TIMEOUT 45)
+    endif()
+    add_test(NAME auth_broker_cli_tests COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/auth_broker_cli_test.py
+        $<TARGET_FILE:smithproxy-spider>)
+    set_tests_properties(auth_broker_cli_tests PROPERTIES TIMEOUT 30)
+endif()

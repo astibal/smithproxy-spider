@@ -306,6 +306,12 @@ SPIDER_SMITHPROXY_KEY='configured-api-key' ./build/smithproxy-spider \
   --smithproxy-insecure
 ```
 
+The optional `--auth-socket PATH` configures the host's external PAM broker
+client. `--auth-check USERNAME` reads one password line from stdin, checks that
+broker and exits without starting services. See [the authentication broker
+contract](docs/AUTH_BROKER.md) for setup, limits and tests. This foundation does
+not yet connect addon authentication callbacks to waiting proxy connections.
+
 Smithproxy must have `settings.webhook.enabled=true` and
 `settings.webhook.api_override=true`. Spider exchanges the configured API key
 for session tokens, acquires an owned v2 webhook lease (with automatic fallback
