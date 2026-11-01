@@ -2,9 +2,11 @@
 
 Validation date: 2026-11-01, following Spider commit `d3ec179`.
 
-Current status: the three live acceptance scenarios now pass with Smithproxy
+Original acceptance status: the three live acceptance scenarios now pass with Smithproxy
 `8ab0ddc6` on `http1-flow-kill` and Spider's H1 webhook reverse-output fix.
 The original transport failure below is retained as the reason for both changes.
+The expanded six-scenario gate has five passes and one open fragmentation failure;
+see the adversarial coverage section below.
 
 ## Evidence added
 
@@ -85,6 +87,40 @@ Final Rhino evidence:
 These results cover the documented callback-driven scope. Idle publication,
 raw-protocol suspension and transport recovery after fail-open remain outside
 this change.
+
+## Expanded adversarial coverage
+
+The next test-only checkpoint adds three real-socket scenarios and strengthens
+ordinary pipeline replies with distinct bodies:
+
+- `pipeline` passes: the intercepted request and its three younger requests reach the origin
+  in order, and their distinct responses reach the client in order.
+- `encoded` passes: a gzip response uses chunk extensions and trailers; the last
+  trailer delimiter arrives in a later callback. Nothing reaches the client
+  while reception or interception is pending. A request callback resumes an
+  edited response after removing its obsolete trailers. The client receives
+  valid chunked gzip data with the new decoded body before the younger response.
+- `fragmented` fails: after an initial complete request establishes H1,
+  sending just `GE` from the next request already exposes `G` to the origin.
+  The test stops there; its later header-name and final-CRLF split checks have
+  not been reached and are not claimed as validated.
+
+The native HTTP parser can annotate partial start lines and headers, but
+`make_message_parts()` needs a complete header before creating a typed H1
+message. `NativeAddonAdapter.content()` selects H1 dispatch from those typed
+Parts. This path currently provides no retention for the incomplete header.
+The follow-up must retain annotated fragments in the native Parts path with
+bounded state and preserve hook identity. Do not add HTTP sniffing or a second
+parser to the compatibility facade to make this test green.
+
+On Rhino, CTest reports **5/6 passed**, with only
+`inspection_h1_suspension_e2e_fragmented` failing. Both existing H1 CTest suites (`addon_h1_suspend_tests` and
+`inspection_h1_corpus_tests`) also pass. The live log is
+`/tmp/spider-h1-lifecycle.Fsa0XT/h1-expanded-e2e.log`.
+The fragmentation assertion is intentionally neither disabled nor inverted:
+enabling `SPIDER_TEST_H1_E2E` now exposes this open acceptance gate. The option
+remains OFF by default. This is evidence of a pre-existing gap, not a claim
+that arbitrary fragmented HTTP headers can be intercepted safely.
 
 ## Reproduce
 

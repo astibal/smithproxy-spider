@@ -345,7 +345,9 @@ if(BUILD_TESTING)
         if(NOT SPIDER_TEST_ADDON_COMPAT OR NOT SPIDER_E2E_SMITHPROXY_SOURCE OR NOT SPIDER_E2E_SMITHPROXY_BINARY)
             message(FATAL_ERROR "H1 E2E requires addon tests and explicit Smithproxy source/binary paths")
         endif()
-        foreach(scenario peer both kill)
+        # The fragmented gate exposes an open header-retention gap; do not invert
+        # its result. See docs/H1_SUSPENSION_VALIDATION.md for recorded evidence.
+        foreach(scenario peer both kill fragmented pipeline encoded)
             add_test(NAME inspection_h1_suspension_e2e_${scenario}
                 COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/h1_suspension_e2e.py
                     --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}

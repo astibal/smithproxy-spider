@@ -54,6 +54,13 @@
   deferred; do not add a Smithproxy timer, management API endpoint or persistent
   channel as part of the callback-driven implementation.
 
+- **H1 fragmented-header retention:** the real `fragmented` E2E gate exposes
+  bytes reaching the origin before an incomplete request becomes a typed H1
+  message. Retain annotated partial headers through bounded native Parts state,
+  without adding a parser to the compatibility facade. Validate start-line,
+  header-name and final-CRLF splits, then resume and pipeline order. The gate
+  remains visibly failing; see `H1_SUSPENSION_VALIDATION.md`.
+
 - **mitmproxy server lifecycle:** add truthful `server_connect`,
   `server_connected`, `server_connect_error` and `server_disconnected` hooks once
   Smithproxy publishes ordered target-selected, upstream-connected,
