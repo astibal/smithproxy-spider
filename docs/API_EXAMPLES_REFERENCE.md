@@ -1433,7 +1433,7 @@ Assembler-level H2 or Opaque part. No implicit future-message translation.
 
 ### RewritePart.type
 
-opaque, http2.header, http2.data, or http2.frame.
+opaque, http1.header, http1.body, http2.header, http2.data, or http2.frame.
 
 Availability: Always available for a content callback.
 
@@ -1498,7 +1498,7 @@ part.flags |= 1  # END_STREAM on DATA/HEADERS
 
 ### RewritePart.complete
 
-Complete frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.
+Complete H1 header, H2 frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.
 
 Availability: Always available for a content callback.
 
@@ -1564,7 +1564,7 @@ part.max_frame_size = 16384
 
 ### RewritePart.http1
 
-H1 header draft for an annotated Content-Length or chunked message; None on other parts. Edit the body through its Body part.
+H1 draft for a complete annotated header; None while its header is incomplete or on other parts. Edit the body through its Body part.
 
 Availability: Always available for a content callback.
 
@@ -1669,7 +1669,7 @@ Complete logical body and trailers of one HTTP/1 chunked message.
 
 ### H1ChunkedBody.type
 
-opaque, http2.header, http2.data, or http2.frame.
+opaque, http1.header, http1.body, http2.header, http2.data, or http2.frame.
 
 Availability: Always available for a content callback.
 
@@ -1734,7 +1734,7 @@ part.flags |= 1  # END_STREAM on DATA/HEADERS
 
 ### H1ChunkedBody.complete
 
-Complete frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.
+Complete H1 header, H2 frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.
 
 Availability: Always available for a content callback.
 
@@ -1800,7 +1800,7 @@ part.max_frame_size = 16384
 
 ### H1ChunkedBody.http1
 
-H1 header draft for an annotated Content-Length or chunked message; None on other parts. Edit the body through its Body part.
+H1 draft for a complete annotated header; None while its header is incomplete or on other parts. Edit the body through its Body part.
 
 Availability: Always available for a content callback.
 

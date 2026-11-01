@@ -51,8 +51,6 @@ class H1AddonEvents:
             bindings.append(H1MessageBinding(native_message, header))
             cursor += 2
 
-        if not bindings:
-            raise AddonMessageError('An HTTP/1 callback has no typed message')
         return tuple(bindings)
 
     def _new_request(self, connection_id):
@@ -125,7 +123,17 @@ class H1AddonEvents:
             parts = native_message.resume(0, side=side)
             state.suspended = False
 
+        # Match H2 prefix holds: a partial native header has no public flow
+        # yet. Complete older messages may still publish before this suffix.
+        pending_header = None
+        if parts and parts[-1].type == 'http1.header' and not parts[-1].complete:
+            pending_header = parts[-1]
+            parts = parts[:-1]
+
         bindings = self._bindings(native_message, parts)
+        if not bindings and pending_header is None:
+            raise AddonMessageError('An HTTP/1 callback has no typed message')
+
         active_used = False
         response_offset = 0
         failures = []
@@ -234,6 +242,10 @@ class H1AddonEvents:
                 binding.apply()
 
             published.append(key)
+
+        if (pending_header is not None and side == callback_side
+                and terminated is None and native_message.parts._held_from is None):
+            native_message.parts.hold_from(pending_header)
 
         return failures, published, terminated
 

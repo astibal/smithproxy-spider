@@ -240,17 +240,17 @@ class PartContent:
 @dataclass(init=False)
 class RewritePart:
     """Assembler-level H2 or Opaque part. No implicit future-message translation."""
-    type: str = documented('opaque, http2.header, http2.data, or http2.frame.', 'if part.type == PartType.Http2.Data:\n    part.set_bytes(b"new body")')
+    type: str = documented('opaque, http1.header, http1.body, http2.header, http2.data, or http2.frame.', 'if part.type == PartType.Http2.Data:\n    part.set_bytes(b"new body")')
     stream_id: int = documented('H2 stream identifier, or 1 for Opaque. Zero remains zero.', 'part.stream_id = 3', access='mutable rewrite draft')
     frame_type: int | None = documented('Numeric frame type; None for Opaque.', 'api.print(part.frame_type)', access='mutable rewrite draft')
     flags: int = documented('Frame flags; END_HEADERS is rebuilt when a header block is edited.', 'part.flags |= 1  # END_STREAM on DATA/HEADERS', access='mutable rewrite draft')
-    complete: bool = documented('Complete frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.', 'if part.complete:\n    api.print(part.get_bytes()[:16].hex())')
+    complete: bool = documented('Complete H1 header, H2 frame or HEADERS/PUSH_PROMISE block including CONTINUATION available. Hold incomplete parts to continue them in a later callback before assembly.', 'if part.complete:\n    api.print(part.get_bytes()[:16].hex())')
     content: PartContent = documented('Separate whole-content completeness, based on original callback parts.', 'api.print(part.complete, part.content.complete)')
     headers: H2Headers | None = documented('HPACK instructions for a complete parseable HEADERS or PUSH_PROMISE block; None otherwise. Active translate resolves logical names and values using the shared directional table.', 'if part.headers is not None:\n    part.headers.set_header(b"x-test", b"yes")', access='mutable rewrite draft')
     max_frame_size: int = documented('Output splitting limit, default 16384. Caller may set a known peer limit up to 16777215.', 'part.max_frame_size = 16384', access='mutable rewrite draft',
         easy='Commit accepts 16384..16777215 and rejects oversized control/unknown frames.',
         expert='Commit accepts 1..16777215 for fragmentation and permits control/unknown frames above this limit. Positive frame capacity, wire representation and output quota remain mandatory.')
-    http1: Http1Draft | None = documented('H1 header draft for an annotated Content-Length or chunked message; None on other parts. Edit the body through its Body part.', 'for part in api.message.parts:\n    if part.http1 is not None:\n        part.http1.set_header("X-Test", "held")', access='mutable rewrite draft')
+    http1: Http1Draft | None = documented('H1 draft for a complete annotated header; None while its header is incomplete or on other parts. Edit the body through its Body part.', 'for part in api.message.parts:\n    if part.http1 is not None:\n        part.http1.set_header("X-Test", "held")', access='mutable rewrite draft')
     chunks: tuple[RewritePart, ...] = documented('Physical data-chunk views owned by a chunked H1 Body; empty on other parts. Edit chunk bytes or the whole Body, never both. Do not emit these views separately or reorder them.',
         'for chunk in part.chunks:\n    api.print(chunk.get_bytes().hex())', access='read-only tuple of editable views',
         easy='Rebuild changed chunk sizes. Body edits with trailers are rejected until trailer dependencies can be repaired.',

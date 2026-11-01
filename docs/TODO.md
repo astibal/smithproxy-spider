@@ -46,6 +46,8 @@
   same-direction and peer resume preserve hook identity and pipeline order.
   Local-response resume matches the new H1 reference corpus; kill deliberately
   uses native close instead of reproducing the reference's pending connection.
+  Annotated partial H1 headers now use the same bounded prefix checkpoint
+  mechanism as incomplete H2 Parts; hooks wait for complete headers.
   Broader adversarial H1 transport coverage remains useful;
   raw transport suspension remains deferred. Keep the remaining
   gaps explicit and compare new behavior against the reference. The current
@@ -53,13 +55,6 @@
   Idle wakeup and a possible downstream signaling channel are deliberately
   deferred; do not add a Smithproxy timer, management API endpoint or persistent
   channel as part of the callback-driven implementation.
-
-- **H1 fragmented-header retention:** the real `fragmented` E2E gate exposes
-  bytes reaching the origin before an incomplete request becomes a typed H1
-  message. Retain annotated partial headers through bounded native Parts state,
-  without adding a parser to the compatibility facade. Validate start-line,
-  header-name and final-CRLF splits, then resume and pipeline order. The gate
-  remains visibly failing; see `H1_SUSPENSION_VALIDATION.md`.
 
 - **mitmproxy server lifecycle:** add truthful `server_connect`,
   `server_connected`, `server_connect_error` and `server_disconnected` hooks once

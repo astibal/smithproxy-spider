@@ -355,7 +355,7 @@ See `PROTOCOL_STATE_API_PROPOSAL.md` for receive/publication distinctions.
 | Incremental HTTP streaming | Complete-message buffering is not streaming. Follow `STREAMING_API_PROPOSAL.md`; implementation needs approval. |
 | Destination changes | Native upstream-selection boundary is required; see `DESTINATION_ROUTING_API_PROPOSAL.md`. |
 | Replay/shutdown | Public detached helpers do not imply live proxy replay or shutdown authority. See `HOST_CONTROL_PROPOSAL.md`. |
-| Split H1 start lines/headers | Producer annotation coverage remains a boundary. Do not add a second HTTP parser to the facade. |
+| Split H1 start lines/headers | Annotated fragments now use native Parts prefix holds, like incomplete H2 Parts; see `H1_SUSPENSION_VALIDATION.md`. Opaque input before producer detection remains outside this scope. |
 | Hold failure recovery | Host fail-open behavior with retained prefixes remains explicitly deferred. |
 | Opaque diagnostics | Later task: count recognized versus opaque source bytes once, excluding duplicate views and rewritten/resumed bytes. |
 | Editor hints | Later UI task for native and facade API help, respecting explicit mode and shebang precedence. |

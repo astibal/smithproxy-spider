@@ -406,8 +406,19 @@ class _H1Suspension:
         message = owner.message
         if not any(header is part for _, header, _ in owner._groups()):
             raise CommitException('Suspend an owned HTTP/1 header Part')
-        if message.parts._held_from is not None and message.parts._held_from is not part:
-            raise CommitException('HTTP/1 suspension conflicts with an existing hold boundary')
+        boundary = message.parts._held_from
+        if boundary is not None and boundary is not part:
+            # Resume may leave a younger incomplete header in a prefix hold.
+            # A deferred hook can pause the older message again, widening that
+            # same suffix instead of conflicting with its reassembly boundary.
+            positions = {id(value): index for index, value in enumerate(message.parts)}
+            wider_resume = (
+                self.commands.get(side) == 'resume'
+                and isinstance(boundary, _H1PendingHeader)
+                and positions[id(part)] < positions[id(boundary)]
+            )
+            if not wider_resume:
+                raise CommitException('HTTP/1 suspension conflicts with an existing hold boundary')
         if self.transaction.termination is not None:
             raise CommitException('Cannot suspend a terminated HTTP/1 connection')
 
@@ -449,7 +460,8 @@ class _H1Suspension:
         # ordinary reassembly hold. Only complete prefixes may reach the peer.
         message.parts._held_from = None
         for part in message.parts:
-            if isinstance(part, _H1Part) and part.is_header and not part.content.complete:
+            if isinstance(part, _H1PendingHeader) or (
+                    isinstance(part, _H1Part) and part.is_header and not part.content.complete):
                 message.parts.hold_from(part)
                 break
 

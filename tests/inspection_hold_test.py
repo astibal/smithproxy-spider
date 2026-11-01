@@ -28,7 +28,100 @@ def resume(held, data, info=None, enrichments=()):
     return msg
 
 
+
+def header_fragment_info(wire, start, end):
+    """Clip producer ranges to one callback without interpreting its fragment."""
+    line_end = wire.index(b'\r\n') + 2
+    head_end = wire.index(b'\r\n\r\n') + 4
+    ranges = ((0, line_end, 'http1.start_line'),
+              (line_end, head_end, 'http1.headers'))
+    annotations = []
+    for begin, finish, kind in ranges:
+        left = max(begin, start)
+        right = min(finish, end)
+        if left < right:
+            annotations.append([left - start, right - start, kind])
+    return {'content_annotations': annotations}
+
 class HoldTests(unittest.TestCase):
+    def test_h1_every_header_split_restores_through_json_checkpoint(self):
+        wires = (
+            HEAD + b'abcdef',
+            b'HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nabcdef',
+        )
+        for wire in wires:
+            header_end = wire.index(b'\r\n\r\n') + 4
+            for split in range(1, header_end):
+                with self.subTest(wire=wire[:16], split=split):
+                    info = header_fragment_info(wire, 0, split)
+                    message = Message(wire[:split], split, info)
+                    self.assertEqual(message.parts[0].type, PartType.Http1.Header)
+                    self.assertFalse(message.parts[0].complete)
+                    self.assertIsNone(message.parts[0].http1)
+                    with self.assertRaisesRegex(CommitException, 'Incomplete H1 header'):
+                        message.commit()
+
+                    held = checkpoint(message)
+                    info = header_fragment_info(wire, split, len(wire))
+                    restored = resume(held, wire[split:], info)
+                    self.assertTrue(restored.parts[0].complete)
+                    self.assertEqual(restored.parts[1].get_bytes(), b'abcdef')
+                    self.assertEqual(restored.commit(), wire)
+
+    def test_h1_one_byte_callbacks_then_body_hold_and_pipeline(self):
+        held = None
+        for offset in range(len(HEAD)):
+            data = HEAD[offset:offset + 1]
+            info = header_fragment_info(HEAD, offset, offset + 1)
+            if held is None:
+                message = Message(data, len(data), info)
+            else:
+                message = resume(held, data, info)
+            held = checkpoint(message)
+
+        self.assertTrue(message.parts[0].complete)
+        self.assertFalse(message.parts[1].content.complete)
+
+        # Header reception becomes the existing body hold, then the remainder
+        # starts an independently annotated message in the same callback.
+        younger = b'GET /next HTTP/1.1\r\nHost: test\r\n\r\n'
+        info = header_fragment_info(younger, 0, len(younger))
+        info['content_annotations'] = [
+            [start + 6, end + 6, kind]
+            for start, end, kind in info['content_annotations']]
+        restored = resume(held, b'abcdef' + younger, info)
+        self.assertEqual(len(restored.parts), 4)
+        self.assertEqual(restored.commit(), HEAD + b'abcdef' + younger)
+
+    def test_h1_pending_header_requires_annotations_and_rejects_edits(self):
+        data = b'PO'
+        opaque = Message(data, len(data), {})
+        self.assertEqual(opaque.parts[0].type, PartType.Opaque)
+
+        info = header_fragment_info(HEAD, 0, 2)
+        message = Message(data, len(data), info)
+        held = checkpoint(message)
+        with self.assertRaisesRegex(CommitException, 'valid annotated continuation'):
+            resume(held, HEAD[2:])
+
+        message.parts[0].set_bytes(b'GE')
+        edited = checkpoint(message)
+        with self.assertRaisesRegex(CommitException, 'edited incomplete H1 header'):
+            resume(edited, HEAD[2:], header_fragment_info(HEAD, 2, len(HEAD)))
+
+    def test_h1_pending_header_limit_applies_when_continuation_completes(self):
+        prefix = b'GET / HTTP/1.1\r\nX-Large: '
+        data = prefix + b'a' * (65536 - len(prefix))
+        line_end = prefix.index(b'\r\n') + 2
+        info = {'content_annotations': [
+            [0, line_end, 'http1.start_line'],
+            [line_end, len(data), 'http1.headers'],
+        ]}
+        held = checkpoint(Message(data, len(data), info))
+        with self.assertRaisesRegex(CommitException, '64 KiB'):
+            resume(held, b'\r\n\r\n', {
+                'content_annotations': [[0, 4, 'http1.headers']]})
+
     def test_multiple_annotated_h1_messages_form_independent_groups(self):
         first = b'POST /one HTTP/1.1\r\nHost: test\r\nContent-Length: 3\r\n\r\none'
         second = b'GET /two HTTP/1.1\r\nHost: test\r\n\r\n'

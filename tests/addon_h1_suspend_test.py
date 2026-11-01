@@ -9,6 +9,7 @@ from pathlib import Path
 from addon_parts_test import AddonGeneration, H1AddonEvents
 from inspection_api import CommitException, HeldCommit
 import inspection_chunked_test as native_tests
+from inspection_hold_test import header_fragment_info
 
 
 def request(path):
@@ -36,11 +37,11 @@ class H1AddonSuspensionTests(unittest.IsolatedAsyncioTestCase):
         await self.addon.start()
         self.driver = H1AddonEvents(self.addon)
 
-    async def callback(self, side, *items):
+    async def callback(self, side, *items, info=None):
         peer = 'R' if side == 'L' else 'L'
         message = native_tests.H1SuspensionTests().callback(
             side, *items, state=self.state,
-            held=self.held[side], peer=self.held[peer])
+            held=self.held[side], peer=self.held[peer], info=info)
 
         result, failures = await self.driver.rewrite(
             'test', side, message, None, None)
@@ -58,6 +59,30 @@ class H1AddonSuspensionTests(unittest.IsolatedAsyncioTestCase):
 
         forward = result.prefix if isinstance(result, HeldCommit) else result
         return forward, transaction.reverse_output
+
+    async def test_fragmented_response_delivers_each_hook_once(self):
+        await self.start('''
+events = []
+def responseheaders(flow):
+    events.append('headers')
+def response(flow):
+    events.append('response')
+''')
+        await self.callback('L', request('/first'))
+        header_end = RESPONSE.index(b'\r\n\r\n') + 4
+
+        for offset in range(header_end):
+            forward, reverse = await self.callback(
+                'R', RESPONSE[offset:offset + 1],
+                info=header_fragment_info(RESPONSE, offset, offset + 1))
+            self.assertEqual((forward, reverse), (b'', b''))
+            expected = ['headers'] if offset == header_end - 1 else []
+            self.assertEqual(self.addon.addon.module.events, expected)
+
+        forward, reverse = await self.callback('R', RESPONSE[header_end:])
+        self.assertEqual((forward, reverse), (RESPONSE, b''))
+        self.assertEqual(self.addon.addon.module.events, ['headers', 'response'])
+        self.assertIsNone(self.held['R'])
 
     async def test_response_resumes_edited_request_without_hook_replay(self):
         await self.start('''

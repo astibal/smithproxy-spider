@@ -15,7 +15,7 @@ from inspection_api import (
     Message, PartType, Safety, CommitException, Header,
     _prepare_h1_responses,
 )
-from inspection_hold_test import checkpoint, resume
+from inspection_hold_test import checkpoint, resume, header_fragment_info
 
 HEAD = b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
 WIRE = b'03;hello="world"\r\nabc\r\n2\r\nde\r\n0\r\n\r\n'
@@ -71,7 +71,7 @@ class H1SuspensionTests(unittest.TestCase):
     response = b'HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nbody'
 
     def callback(self, side, *items, state=None, held=None, peer=None,
-                 allow_hold=True, reverse=True):
+                 allow_hold=True, reverse=True, info=None):
         data = b''.join(items)
         annotations = []
         offset = 0
@@ -85,7 +85,8 @@ class H1SuspensionTests(unittest.TestCase):
                 ))
             offset += len(item)
 
-        info = {'content_annotations': annotations}
+        if info is None:
+            info = {'content_annotations': annotations}
         if held is not None:
             message = resume(held, data, info)
         else:
@@ -216,6 +217,58 @@ class H1SuspensionTests(unittest.TestCase):
                                   state=callback._h1_response.checkpoint)
         self.assertEqual(completed.commit(), head + b'abcd')
         self.assertEqual(completed._h1_response.checkpoint['slots'], ['origin'])
+
+    def test_peer_resume_publishes_prefix_and_keeps_partial_younger_header(self):
+        message = self.callback('L', self.request)
+        pending = Message(b'GE', 2, header_fragment_info(self.later, 0, 2))
+        message.parts.extend(pending.parts)
+
+        # Prepare again after constructing the full callback so native identity
+        # checks cover both the complete request and its incomplete successor.
+        _prepare_h1_responses(message, {
+            'instance': {'mode': 'flow'}, 'hold_allowed': True,
+            'event': {'details': {'info': {
+                'side': 'L', 'webhook_control': {'content-reverse': True},
+            }}},
+        })
+        message.suspend(message.parts[0])
+        held = message.commit()
+
+        callback = self.callback('R', state=message._h1_response.checkpoint,
+                                 peer=held.checkpoint)
+        callback.resume(0, side='L')
+        self.assertEqual(callback.commit(), b'')
+        self.assertEqual(callback._h1_response.reverse_output, self.request)
+        next_hold = callback._h1_response.suspension.peer_hold_result
+        self.assertIsNotNone(next_hold)
+
+        completed = self.callback(
+            'L', self.later[2:], held=next_hold,
+            state=callback._h1_response.checkpoint,
+            info=header_fragment_info(self.later, 2, len(self.later)))
+        self.assertEqual(completed.commit(), self.later)
+        self.assertEqual(completed._h1_response.checkpoint['slots'], ['origin', 'origin'])
+
+    def test_resume_can_pause_again_before_a_pending_header(self):
+        message = self.callback('L', self.request)
+        pending = Message(b'GE', 2, header_fragment_info(self.later, 0, 2))
+        message.parts.extend(pending.parts)
+        _prepare_h1_responses(message, {
+            'instance': {'mode': 'flow'}, 'hold_allowed': True,
+            'event': {'details': {'info': {
+                'side': 'L', 'webhook_control': {'content-reverse': True},
+            }}},
+        })
+        message.suspend(message.parts[0])
+        held = message.commit()
+
+        callback = self.callback('R', state=message._h1_response.checkpoint,
+                                 peer=held.checkpoint)
+        parts = callback.resume(0, side='L')
+        callback.suspend(parts[0])
+        self.assertEqual(callback.commit(), b'')
+        self.assertEqual(callback._h1_response.reverse_output, b'')
+        self.assertIn('L', callback._h1_response.checkpoint['paused'])
 
     def test_peer_termination_discards_both_lanes(self):
         held, state = self.pause()

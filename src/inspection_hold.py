@@ -352,6 +352,47 @@ def _hold_ranges(info, size):
     return result
 
 
+class _H1PendingHeader(RewritePart):
+    """Annotated header prefix retained through the ordinary Parts checkpoint."""
+
+    def __init__(self, wire, annotations):
+        super().__init__(wire, data=wire, complete=False)
+        self.type = 'http1.header'
+        self._annotations = annotations
+
+    def _assemble(self, header_override=None, *, safety=Safety.Easy):
+        raise CommitException('Incomplete H1 header: hold and await more content')
+
+
+def _pending_h1_header(data, annotations, start):
+    # Only producer-owned, contiguous header ranges admit a pending H1 Part.
+    # Opaque bytes never become HTTP merely because they resemble a request.
+    ranges = []
+    cursor = start
+    for begin, end, kind in annotations:
+        if begin < start:
+            continue
+        if begin != cursor or kind not in ('http1.start_line', 'http1.headers'):
+            break
+        if not ranges and kind != 'http1.start_line':
+            break
+        if ranges and ranges[-1][2] == 'http1.headers' and kind == 'http1.start_line':
+            break
+        ranges.append((begin - start, end - start, kind))
+        cursor = end
+
+    if not ranges or cursor != len(data):
+        return None
+
+    wire = data[start:]
+    if b'\r\n\r\n' in wire or b'\n\n' in wire:
+        return None
+    if len(wire) > 65536:
+        raise CommitException('Incomplete H1 header exceeds 64 KiB')
+
+    return _H1PendingHeader(wire, ranges)
+
+
 def make_message_parts(data, info, enrichments):
     """H1 boundaries require supplied annotations, never protocol sniffing."""
     annotations = _hold_ranges(info, len(data))
@@ -377,6 +418,12 @@ def make_message_parts(data, info, enrichments):
 
         if not group.content_part.complete:
             break
+
+    if cursor < len(data):
+        pending = _pending_h1_header(data, annotations, cursor)
+        if pending is not None:
+            parts.append(pending)
+            cursor = len(data)
 
     if not parts:
         return make_rewrite_parts(data, info, enrichments)
@@ -405,7 +452,7 @@ def _h1_head_ranges(annotations):
 def _checkpoint_types():
     """Both directions use the same closed set of data-only checkpoint types."""
     classes = (
-        RewritePart, HpackField, H2Headers, PartContent,
+        RewritePart, HpackField, H2Headers, PartContent, _H1PendingHeader,
         _H1Part, _H1Group, _ChunkedGroup, H1ChunkedBody, _H1Chunk, Http1Draft, Header,
     )
     return {cls.__name__: cls for cls in classes}
@@ -515,13 +562,46 @@ def _remaining_parts(message, consumed, info, enrichments):
     return make_message_parts(message.bytes[consumed:], remaining_info, adjusted)
 
 
+def _resume_h1_header(part, data, info):
+    if part._pending is not None:
+        raise CommitException('Cannot append input to an edited incomplete H1 header')
+
+    old = bytes(part._wire)
+    annotations = list(part._annotations)
+    for start, end, kind in _hold_ranges(info, len(data)):
+        start += len(old)
+        end += len(old)
+        if annotations and annotations[-1][1] == start and annotations[-1][2] == kind:
+            begin, _, _ = annotations[-1]
+            annotations[-1] = (begin, end, kind)
+        else:
+            annotations.append((start, end, kind))
+
+    # Rebuild native Parts from retained producer boundaries. This does not
+    # replay input through the producer or introduce a facade HTTP parser.
+    combined = old + data
+    header_end = combined.find(b'\r\n\r\n')
+    header_size = len(combined) if header_end < 0 else header_end + 4
+    if header_size > 65536:
+        raise CommitException('Incomplete H1 header exceeds 64 KiB')
+
+    result = make_message_parts(combined, {'content_annotations': annotations}, ())
+    if not result or result[0].type != 'http1.header':
+        raise CommitException('Held H1 header has no valid annotated continuation')
+    return result
+
+
 def resume_message(message, checkpoint, info, enrichments):
     held, baselines = _restore(checkpoint)
     old_sizes = {id(group[0]): sum(len(p._data) for p in group if p.frame_type == 0)
                  for group in _h2_content_groups(held)}
     data, consumed = message.bytes, 0
 
-    if held and isinstance(held[-1], _H1Part) and not held[-1].content.complete:
+    if held and isinstance(held[-1], _H1PendingHeader):
+        if data:
+            held[-1:] = _resume_h1_header(held[-1], data, info)
+            consumed = len(data)
+    elif held and isinstance(held[-1], _H1Part) and not held[-1].content.complete:
         consumed = _resume_h1_body(held[-1], data)
     elif held and not held[-1].complete and held[-1].frame_type is not None:
         part = held[-1]

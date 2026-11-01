@@ -5,8 +5,8 @@ Validation date: 2026-11-01, following Spider commit `d3ec179`.
 Original acceptance status: the three live acceptance scenarios now pass with Smithproxy
 `8ab0ddc6` on `http1-flow-kill` and Spider's H1 webhook reverse-output fix.
 The original transport failure below is retained as the reason for both changes.
-The expanded six-scenario gate has five passes and one open fragmentation failure;
-see the adversarial coverage section below.
+The expanded fragmentation failure is resolved by native incomplete-header Parts;
+see the follow-up section below for the implementation and validation scope.
 
 ## Evidence added
 
@@ -88,39 +88,75 @@ These results cover the documented callback-driven scope. Idle publication,
 raw-protocol suspension and transport recovery after fail-open remain outside
 this change.
 
-## Expanded adversarial coverage
+## Expanded adversarial coverage: original failure
 
-The next test-only checkpoint adds three real-socket scenarios and strengthens
-ordinary pipeline replies with distinct bodies:
+The test-only checkpoint `2d34ee7` added three real-socket scenarios and
+strengthened ordinary pipeline replies with distinct bodies:
 
-- `pipeline` passes: the intercepted request and its three younger requests reach the origin
-  in order, and their distinct responses reach the client in order.
-- `encoded` passes: a gzip response uses chunk extensions and trailers; the last
+- `pipeline` passed: the intercepted request and its three younger requests
+  reached the origin in order, and their distinct responses reach the client in order.
+- `encoded` passed: a gzip response uses chunk extensions and trailers; the last
   trailer delimiter arrives in a later callback. Nothing reaches the client
   while reception or interception is pending. A request callback resumes an
   edited response after removing its obsolete trailers. The client receives
   valid chunked gzip data with the new decoded body before the younger response.
-- `fragmented` fails: after an initial complete request establishes H1,
+- `fragmented` failed: after an initial complete request establishes H1,
   sending just `GE` from the next request already exposes `G` to the origin.
   The test stops there; its later header-name and final-CRLF split checks have
   not been reached and are not claimed as validated.
 
 The native HTTP parser can annotate partial start lines and headers, but
-`make_message_parts()` needs a complete header before creating a typed H1
-message. `NativeAddonAdapter.content()` selects H1 dispatch from those typed
-Parts. This path currently provides no retention for the incomplete header.
-The follow-up must retain annotated fragments in the native Parts path with
-bounded state and preserve hook identity. Do not add HTTP sniffing or a second
-parser to the compatibility facade to make this test green.
+`make_message_parts()` previously needed a complete header before creating
+a typed H1 message. `NativeAddonAdapter.content()` selects H1 dispatch from those typed
+Parts. That path provided no retention for the incomplete header.
+The required follow-up was to retain annotated fragments in the native Parts
+path with bounded state and preserve hook identity, without adding HTTP
+sniffing or another parser to the compatibility facade.
 
-On Rhino, CTest reports **5/6 passed**, with only
+At that checkpoint, Rhino CTest reported **5/6 passed**, with only
 `inspection_h1_suspension_e2e_fragmented` failing. Both existing H1 CTest suites (`addon_h1_suspend_tests` and
 `inspection_h1_corpus_tests`) also pass. The live log is
 `/tmp/spider-h1-lifecycle.Fsa0XT/h1-expanded-e2e.log`.
-The fragmentation assertion is intentionally neither disabled nor inverted:
-enabling `SPIDER_TEST_H1_E2E` now exposes this open acceptance gate. The option
+At that checkpoint, the fragmentation assertion was neither disabled nor
+inverted: enabling `SPIDER_TEST_H1_E2E` exposed the open acceptance gate. The option
 remains OFF by default. This is evidence of a pre-existing gap, not a claim
 that arbitrary fragmented HTTP headers can be intercepted safely.
+
+## Fragmented-header resolution
+
+H1 now follows H2's incomplete-Part lifecycle: `hold_from()` retains an ordinary
+suffix in the existing host-owned JSON checkpoint, and `resume_message()` joins
+its next annotated input. A pending `http1.header` has `complete == False` and
+no `http1` draft. Complete prefix messages may publish while the pending suffix
+remains held. The addon dispatches header hooks only when the native header is
+complete; its existing body hold then takes over if necessary.
+
+The retained header includes the producer's start-line/header ranges. Resume
+rebases and merges those ranges before rebuilding native Parts. It does not
+replay producer observations, add a compatibility parser or keep a second
+addon-owned byte buffer. Pending headers are limited to 64 KiB in addition to
+the existing checkpoint quotas. Edited pending headers and continuations without
+valid producer boundaries are rejected. Peer resume also preserves a partial
+younger header while publishing the complete prefix.
+
+Unit coverage checks every byte split of request and response headers,
+one-byte reception followed by body retention and pipelining, missing
+annotations, edited fragments, the header limit, peer publication, repeated
+interception before a pending younger header, and exactly
+one delivery of each addon response hook. The real `fragmented` scenario now
+passes all its start-line, header-name and final-CRLF splits before interception
+and peer resume.
+
+Final Rhino validation passed **118/118 CTests**, including all six real H1
+scenarios. The complete log is
+`/tmp/spider-h1-lifecycle.Fsa0XT/h1-header-regression-final.log`.
+The first full run found only a stale generated API reference in the snapshot;
+the final run includes the regenerated reference and the repeated-interception
+regression. Local native suites also passed 18 hold tests and 51 chunked/H1 tests.
+
+This capability requires native H1 annotations. It does not claim detection or
+retention of opaque bytes before the producer has identified HTTP. Existing
+fail-open and idle-publication boundaries remain unchanged.
 
 ## Reproduce
 
