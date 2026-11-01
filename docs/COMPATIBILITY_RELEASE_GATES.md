@@ -22,6 +22,7 @@ drop-in replacement while any required gate below remains open.
 | --- | --- | --- |
 | Reference corpus is executable | Pass | Every checked JSON corpus is named by a registered direct test; `addon_corpus_inventory_test.py` enforces this and prevents runtime leakage. |
 | HTTP/1 mutation and control | Pass for implemented operations | Native integration covers headers, bodies, trailers, local responses, pipelining and callback-local `flow.kill()`. |
+| Live H1 interception transport | Pass for the recorded callback-driven scope | Smithproxy `8ab0ddc6` plus Spider webhook reverse forwarding pass three real socket scenarios: peer resume, both lanes paused and kill. See `H1_SUSPENSION_VALIDATION.md`; both project changes are required. |
 | HTTP/2 mutation and control | Pass for implemented operations | Native integration covers fragmented headers and bodies, multiplexing, HPACK checkpoints, credit accounting, local responses, informational responses, reset, GOAWAY and `flow.kill()`. |
 | Persistent addon state | Pass | One worker owns a deployment generation; multiple connections share script state. Cross-protocol flow capacity and deterministic retirement are tested. |
 | Public model and helper surface | Pass for audited surface | Exact class and service inventories, module exports, hooks, helpers, options, commands, filters, I/O and official examples are corpus-tested. |
@@ -35,7 +36,6 @@ objective's approval rules prohibit implementing them implicitly.
 | Capability | Current boundary | Required decision |
 | --- | --- | --- |
 | Long-lived `flow.intercept()` / `resume()` | H1/H2 header, complete-message and generated-response hooks retain native Parts across callbacks; publication uses a callback of the owning connection in either direction. H1 holds the ordered pipeline suffix. Raw suspension and idle wakeup remain open. | Keep the documented local-response kill deviation explicit; see `FLOW_SUSPENSION_API_PROPOSAL.md`. Idle wakeup and its transport are deferred. |
-| Live H1 interception transport | Native Parts, addon and host tests pass, but real Smithproxy `192944a8` advertises no H1 `content-reverse` capability. All three optional live suspension gates reject interception. | Agree the Smithproxy H1 reverse-output contract; see `H1_SUSPENSION_VALIDATION.md`. Do not claim live support from injected test metadata. |
 | Header-hook streaming | Reference behavior and executable H1/H2 corpora exist; complete-message hooks work | Approve the phased native operation in `STREAMING_API_PROPOSAL.md`. |
 | Request destination changes | Reference reroute corpus and contract exist; incompatible mutation fails closed | Approve `DESTINATION_ROUTING_API_PROPOSAL.md` and the Smithproxy routing boundary. |
 | Host shutdown and live replay | Detached `load_flow()` is supported; proxy-owned actions are absent rather than simulated | Choose and approve a scope in `HOST_CONTROL_PROPOSAL.md`. |

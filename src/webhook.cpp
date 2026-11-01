@@ -177,8 +177,15 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
         }
         if (script_result.value("ok", false) && script_result.value("need_more", false))
             return {200, {{"action", "need-more"}}};
-        if (script_result.value("ok", false) && !script_result.value("replacement", nlohmann::json(nullptr)).is_null())
-            return {200, {{"action", "replace"}, {"content", script_result["replacement"]}}};
+        if (script_result.value("ok", false) && !script_result.value("replacement", nlohmann::json(nullptr)).is_null()) {
+            // H1 commit can publish a resumed peer lane without H2 Translate.
+            // Keep both native outputs in the same directional replacement.
+            nlohmann::json reply = {{"action", "replace"}, {"content", script_result["replacement"]}};
+            if (script_result.contains("replacement_reverse")) {
+                reply["content-reverse"] = script_result["replacement_reverse"];
+            }
+            return {200, std::move(reply)};
+        }
         return {200, {{"action", "unchanged"}}};
     }
     if (action == "connection-content") return decisions.wait(ticket, event);

@@ -177,5 +177,23 @@ int main() {
     assert(h2_reply["action"] == "replace");
     const std::string changed = std::string("\x82\x00\x01x\x09", 5) + "rewritten";
     assert(h2_reply["content"] == spider::base64_encode(h2frame(1, 4, changed)));
+
+    // H1 commit can have no forward bytes and still carry a local response.
+    // The webhook must preserve reverse output without requiring Translate.
+    configure({{"operation", "deploy"}, {"id", deployment}, {"name", "H1 local response"},
+        {"script", "api.message.respond(200, body=b'local', request=api.message.parts[0])\n"
+                   "return api.message.commit()"},
+        {"scope", "all"}, {"instancing", "flow"}});
+    auto local_event = event("h1-local-response", "L", head + "abcdef", true);
+    local_event["details"]["info"]["webhook_control"] = {{"content-reverse", true}};
+    const auto local_reply = spider::process_webhook(
+        store, decisions, local_event, std::nullopt, &enrichment, &engine).body;
+
+    assert(local_reply.at("action") == "replace");
+    assert(local_reply.at("content") == "");
+    assert(local_reply.at("content-reverse") == spider::base64_encode(
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nlocal"));
+    assert(!local_reply.contains("control"));
+
     std::cout << "Live H1 hold: need-more, isolation, release, lifecycle and fail-open verified\n";
 }

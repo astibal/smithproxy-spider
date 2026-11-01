@@ -2,6 +2,10 @@
 
 Validation date: 2026-11-01, following Spider commit `d3ec179`.
 
+Current status: the three live acceptance scenarios now pass with Smithproxy
+`8ab0ddc6` on `http1-flow-kill` and Spider's H1 webhook reverse-output fix.
+The original transport failure below is retained as the reason for both changes.
+
 ## Evidence added
 
 `tests/addon_h1_suspend_test.py` covers simultaneous request/response pauses,
@@ -19,7 +23,7 @@ replaying retained traffic or old hooks.
 These checks do not promise transport fail-closed behavior after retirement.
 The host's existing fail-open policy remains unchanged.
 
-## Real proxy result: blocked by missing H1 reverse capability
+## Original real proxy failure (resolved)
 
 The optional `tests/h1_suspension_e2e.py` runs real Smithproxy and Spider
 processes with loopback SOCKS clients and controlled HTTP/1 origin sockets.
@@ -34,7 +38,7 @@ The three acceptance scenarios are:
 - `kill`: an earlier response kills the intercepted request and closes the
   connection without publishing the held suffix.
 
-All three currently fail at the first interception against Smithproxy
+Before the correction, all three failed at the first interception against Smithproxy
 `192944a8` (`http1-flow-kill`), with socle `decc93fe` and lmhpp `d97ff6ae`:
 
 ```text
@@ -44,19 +48,43 @@ CommitException: HTTP/1 suspension requires hold and content-reverse support
 Smithproxy's `MitmProxy::content_webhook()` advertises `content-reverse` only
 when `flow_ctx_->can_inject()` is true. `ProtocolViews::can_inject()` requires
 an active rewrite adapter, and `src/inspect/protocol_adapter.cpp` currently
-registers only the HTTP/2 adapter. Thus the tested H1 callbacks advertise no
+registered only the HTTP/2 adapter. Thus those H1 callbacks advertised no
 reverse capability. Spider correctly rejects suspension rather than claiming
 that it can atomically publish the peer lane.
 
-This is a producer integration gap, not a failed native lane-ordering test.
+This was a producer integration gap, not a failed native lane-ordering test.
 Do not report live H1 interception as supported based only on injected host
-metadata or packaged-worker tests. Keep the acceptance scenarios failing until
-the real producer supplies the capability; do not fake it in the test relay or
-relax Spider's capability check.
+metadata or packaged-worker tests. The fix supplies the capability through the native adapter; it does not fake
+metadata in a test relay or relax Spider's capability check.
 
-A Smithproxy change needs a separately agreed contract for H1 reverse output,
-including endpoint observation, request/response ordering and native ownership.
-No Smithproxy source or runtime behavior was changed in this validation.
+## Resolution and final evidence
+
+Smithproxy `8ab0ddc6` registers an H1 adapter using the existing
+`Http1Connection` parser and the existing directional-output contract. Each
+endpoint has independent framing and a request-method FIFO. Held requests do
+not advance the server's queue before publication. Protocol transitions based
+on ALPN retire both outer H1 views together, and unrelated inspector metadata
+remains owned by its original inspector.
+
+The first adapter run also exposed a Spider webhook bug: it forwarded
+`replacement_reverse` only for Translate results. The H1 commit result already
+contained the correct peer bytes, but they were absent from the webhook reply.
+The ordinary replacement path now includes them without introducing Translate
+controls or another transport. A direct webhook test covers a local H1 response
+with empty forward output and nonempty reverse output.
+
+Final Rhino evidence:
+
+- 236 Smithproxy native tests passed, including eight new H1 view cases;
+- seven existing transport suites passed: STARTTLS, H1 need-more in JSON/SXBN,
+  and H2 protocol views/injection in JSON/SXBN;
+- all 112 standard Spider CTests passed after the webhook fix;
+- the subsequently added direct webhook test passed; and
+- all three real H1 acceptance scenarios passed again with the final adapter.
+
+These results cover the documented callback-driven scope. Idle publication,
+raw-protocol suspension and transport recovery after fail-open remain outside
+this change.
 
 ## Reproduce
 
@@ -84,4 +112,8 @@ The isolated Rhino snapshot is `/tmp/spider-h1-lifecycle.Fsa0XT`. It contains
 111/112 gates; the clean-room gate lacked a requirements file omitted from the
 snapshot. After copying the unchanged `deploy/requirements-addon.txt`, that
 gate passed. All 24 focused H1/corpus/clean-room checks and the generated API
-consistency check also passed. The three live acceptance failures remain open.
+consistency check also passed. Those initial live acceptance failures were resolved as described above.
+
+Final logs in the same snapshot are `smithproxy/h1-unit-final.log`,
+`smithproxy/h1-transport-regression.log`, `spider-final-regression.log`,
+`h1-webhook-test.log`, and `h1-e2e-final.log`.
