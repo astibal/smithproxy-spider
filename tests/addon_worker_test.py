@@ -3039,4 +3039,25 @@ def error(flow):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    import argparse
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--group', choices=('all', 'http1', 'http2', 'runtime'), default='all')
+    options, remaining = parser.parse_known_args()
+
+    # Keep every test in exactly one CTest group. The full suite remains the
+    # default for direct execution; splitting does not relax per-group budgets.
+    names = unittest.defaultTestLoader.getTestCaseNames(AddonWorkerTests)
+    selected = []
+
+    for name in names:
+        group = 'runtime'
+        if '_http1_' in name or '_h1_' in name:
+            group = 'http1'
+        elif '_http2_' in name or '_h2_' in name:
+            group = 'http2'
+
+        if options.group in ('all', group):
+            selected.append('AddonWorkerTests.' + name)
+
+    unittest.main(argv=[sys.argv[0], *remaining], defaultTest=selected)

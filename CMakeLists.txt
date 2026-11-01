@@ -290,10 +290,15 @@ if(BUILD_TESTING)
     add_test(NAME addon_dns_tests
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_test.py)
         add_test(NAME addon_worker_tests
-            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_worker_test.py)
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_worker_test.py --group runtime)
+        add_test(NAME addon_worker_http1_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_worker_test.py --group http1)
+        add_test(NAME addon_worker_http2_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_worker_test.py --group http2)
         add_test(NAME inspection_translate_message_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_message_test.py)
-        set_tests_properties(addon_parts_tests addon_raw_events_tests addon_dns_tests addon_worker_tests inspection_translate_message_tests
+        set_tests_properties(addon_parts_tests addon_raw_events_tests addon_dns_tests
+                             addon_worker_tests addon_worker_http1_tests addon_worker_http2_tests inspection_translate_message_tests
                              PROPERTIES TIMEOUT 45 LABELS "addon;protocol")
     endif()
     add_executable(inspection_tests tests/inspection_test.cpp)
