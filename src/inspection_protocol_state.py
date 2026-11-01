@@ -6,7 +6,7 @@ and suspension are separate transitions; parsing a message never sends it.
 
 from __future__ import annotations
 
-from dataclasses import MISSING, asdict, dataclass, field, replace
+from dataclasses import MISSING, dataclass, field, replace
 
 
 def _observation(description, example, default=MISSING):
@@ -108,10 +108,25 @@ class H1StateTable:
 
     def checkpoint(self):
         """Return detached JSON data; never retain a script-owned dictionary."""
+        # Records contain only immutable scalars. Spell out the storage schema
+        # instead of recursively copying every dataclass on every callback.
+        messages = []
+
+        for message in self.snapshot():
+            messages.append({
+                'sequence': message.sequence,
+                'side': message.side,
+                'headers_complete': message.headers_complete,
+                'content_complete': message.content_complete,
+                'informational': message.informational,
+                'suspended': message.suspended,
+                'published': message.published,
+            })
+
         return {
             'version': 1,
             'sequences': dict(self._sequences),
-            'messages': [asdict(message) for message in self.snapshot()],
+            'messages': messages,
         }
 
     @classmethod
@@ -308,6 +323,16 @@ class H2StreamState:
         'for stream in api.http2.state or ():\n    api.print(stream.reset)', False)
 
 
+def _h2_message_checkpoint(message):
+    """Allocate the small wire record without deep-copying immutable fields."""
+    return {
+        'headers_complete': message.headers_complete,
+        'content_complete': message.content_complete,
+        'suspended': message.suspended,
+        'published': message.published,
+    }
+
+
 class H2StateTable:
     """Bounded local state for one connection, with private candidate updates.
 
@@ -332,9 +357,19 @@ class H2StateTable:
         return tuple(self._streams[key] for key in sorted(self._streams))
 
     def checkpoint(self):
+        streams = []
+
+        for stream in self.snapshot():
+            streams.append({
+                'stream_id': stream.stream_id,
+                'request': _h2_message_checkpoint(stream.request),
+                'response': _h2_message_checkpoint(stream.response),
+                'reset': stream.reset,
+            })
+
         return {
             'version': 1,
-            'streams': [asdict(stream) for stream in self.snapshot()],
+            'streams': streams,
         }
 
     @classmethod
@@ -621,7 +656,10 @@ class ProtocolStateOwner:
                 elif message.content_complete is True:
                     published = True
 
-            self.h1._messages[key] = replace(message, suspended=suspended, published=published)
+            # Most callbacks affect only a few messages. Preserve immutable
+            # records whose disposition did not change, including old views.
+            if suspended != message.suspended or published != message.published:
+                self.h1._messages[key] = replace(message, suspended=suspended, published=published)
 
         for stream_id, stream in list(self.h2._streams.items()):
             directions = {}
@@ -640,9 +678,11 @@ class ProtocolStateOwner:
                     elif not stream.reset and message.headers_complete and message.content_complete is True:
                         published = True
 
-                directions[name] = replace(message, suspended=suspended, published=published)
+                if suspended != message.suspended or published != message.published:
+                    directions[name] = replace(message, suspended=suspended, published=published)
 
-            self.h2._streams[stream_id] = replace(stream, **directions)
+            if directions:
+                self.h2._streams[stream_id] = replace(stream, **directions)
 
     def checkpoint(self):
         import json

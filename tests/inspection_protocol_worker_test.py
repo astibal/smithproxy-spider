@@ -1,14 +1,35 @@
 """Protocol snapshots cross actual sandbox workers, not shared Python objects."""
 import base64
 import copy
+import json
+import subprocess
+import sys
 import unittest
 
-from inspection_cookbook_test import fixture, run
-from inspection_protocol_state import ProtocolStateOwner
+from inspection_cookbook_test import WORKER, fixture, run
+from inspection_protocol_state import H1MessageState, H2MessageState, H2StreamState, ProtocolStateOwner
 import inspection_protocol_state_test as state_fixtures
+from worker_bootstrap import packed_arguments
 
 
 class ProtocolWorkerTests(unittest.TestCase):
+    def test_persistent_worker_compact_json_preserves_logs_and_response_identity(self):
+        initialization = {'script': 'api.print("spaces stay inside strings: λ")'}
+        callback = {'event': fixture('h1'), '_request_id': 7}
+        wire = json.dumps(initialization) + '\n' + json.dumps(callback) + '\n'
+
+        process = subprocess.run(
+            [sys.executable, '-I', '-c', *packed_arguments(WORKER), '--persistent'],
+            input=wire, capture_output=True, text=True, check=True, timeout=10)
+        ready, response = process.stdout.splitlines()
+        decoded = json.loads(response)
+
+        self.assertTrue(json.loads(ready)['ready'])
+        self.assertTrue(decoded['ok'], decoded)
+        self.assertEqual(decoded['_request_id'], 7)
+        self.assertEqual(decoded['logs'], ['spaces stay inside strings: λ'])
+        self.assertEqual(response, json.dumps(decoded, separators=(',', ':')))
+
     def setup_tracking(self):
         result = run('api.connection.track_protocols()', fixture('setup'),
                      instance={'mode': 'flow'})
@@ -189,6 +210,32 @@ return api.message.translate()
 
 
 class ProtocolOwnerTests(unittest.TestCase):
+    def test_finish_reuses_unchanged_records_without_mutating_old_snapshots(self):
+        owner = ProtocolStateOwner('one')
+        h1 = H1MessageState(1, 'L', True, False)
+        request = H2MessageState(True, True, suspended=True)
+        stream = H2StreamState(1, request=request)
+        sibling = H2StreamState(3, request=H2MessageState(True, False))
+        owner.h1._messages[('L', 1)] = h1
+        owner.h2._streams = {1: stream, 3: sibling}
+
+        # Releasing one completed direction should allocate only its changed
+        # records, not rebuild every message and the unaffected peer direction.
+        owner.finish({}, set(), known_publication=True)
+        released = owner.h2.stream(1)
+
+        self.assertIs(owner.h1.snapshot()[0], h1)
+        self.assertIs(owner.h2.stream(3), sibling)
+        self.assertIs(released.response, stream.response)
+        self.assertIsNot(released, stream)
+        self.assertTrue(released.request.published)
+        self.assertFalse(released.request.suspended)
+        self.assertTrue(stream.request.suspended)
+        self.assertFalse(stream.request.published)
+
+        owner.finish({}, set(), known_publication=True)
+        self.assertIs(owner.h2.stream(1), released)
+
     def test_failed_observation_does_not_retire_committed_records(self):
         owner = ProtocolStateOwner('one')
         owner.observe('L', state_fixtures.H1StateTests.parts(b'GET / HTTP/1.1\r\n\r\n'))

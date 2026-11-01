@@ -1,6 +1,6 @@
 """Local state consumes native Parts, without a proxy or compatibility runtime."""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, asdict
 import copy
 import json
 import pathlib
@@ -13,6 +13,18 @@ from inspection_protocol_state import H1StateTable, H2StateTable
 
 
 class H1StateTests(unittest.TestCase):
+    def test_checkpoint_preserves_complete_dataclass_schema(self):
+        table = H1StateTable()
+        table.observe('L', self.parts(b'GET / HTTP/1.1\r\n\r\n'))
+        table.observe('R', self.parts(b'HTTP/1.1 103 Early Hints\r\n\r\n'))
+        table.suspend('L', 1)
+
+        checkpoint = table.checkpoint()
+
+        self.assertEqual(checkpoint['messages'], [asdict(item) for item in table.snapshot()])
+        checkpoint['messages'][0]['suspended'] = False
+        self.assertTrue(table.snapshot()[0].suspended)
+
     @staticmethod
     def parts(wire):
         line = wire.index(b'\r\n') + 2
@@ -180,6 +192,17 @@ class H1StateTests(unittest.TestCase):
 
 
 class H2StateTests(unittest.TestCase):
+    def test_checkpoint_preserves_complete_dataclass_schema(self):
+        self.table.observe('L', [self.headers(end=True)])
+        self.table.observe('R', [self.headers(response=True)])
+        self.table.suspend(1, 'L')
+
+        checkpoint = self.table.checkpoint()
+
+        self.assertEqual(checkpoint['streams'], [asdict(item) for item in self.table.snapshot()])
+        checkpoint['streams'][0]['request']['suspended'] = False
+        self.assertTrue(self.table.stream(1).request.suspended)
+
     def setUp(self):
         self.table = H2StateTable()
         self.http2 = make_views({}, b'', ()).http2

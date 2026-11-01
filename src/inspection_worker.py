@@ -670,7 +670,11 @@ def serve_persistent():
         response['_request_id'] = current['_request_id']
         response['_worker_rotate'] = rotate
         response['_worker_recycle'] = recycle
-        json.dump(response, sys.stdout)
+
+        # This is an internal JSON channel, not formatted diagnostic output.
+        # Encode compactly and write once instead of visiting the stream for
+        # every scalar. The existing response-size guard remains conservative.
+        sys.stdout.write(json.dumps(response, separators=(',', ':')))
         sys.stdout.write('\n')
         sys.stdout.flush()
         if recycle:
