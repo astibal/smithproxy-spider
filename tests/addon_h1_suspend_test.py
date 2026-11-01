@@ -409,6 +409,114 @@ def request(flow):
         self.assertEqual(self.held, original_held)
         self.assertEqual(self.state, original_state)
 
+    async def test_both_lanes_pause_and_peer_resume_can_pause_request_again(self):
+        await self.start('''
+events = []
+waiting = None
+responding = None
+
+def requestheaders(flow):
+    global waiting
+
+    events.append(('requestheaders', flow.request.path))
+    if flow.request.path == '/wait':
+        waiting = flow
+        flow.intercept()
+
+def request(flow):
+    events.append(('request', flow.request.path))
+    if flow.request.path == '/wait':
+        assert flow is waiting
+        flow.intercept()
+
+def responseheaders(flow):
+    global responding
+
+    events.append(('responseheaders', flow.request.path))
+    if flow.request.path == '/first':
+        responding = flow
+        flow.intercept()
+
+def response(flow):
+    events.append(('response', flow.request.path))
+    if flow.request.path == '/first':
+        waiting.resume()
+''')
+        forward, reverse = await self.callback(
+            'L', request('/first'), request('/wait'), request('/younger'))
+        self.assertEqual((forward, reverse), (request('/first'), b''))
+        self.assertEqual(await self.callback('R', RESPONSE), (b'', b''))
+        self.assertIsNotNone(self.held['L'])
+        self.assertIsNotNone(self.held['R'])
+
+        # Releasing the response runs its deferred hook, which releases the
+        # request header pause. The request hook then pauses that lane again.
+        module = self.addon.addon.module
+        module.responding.resume()
+        self.assertEqual(await self.callback('R', b''), (RESPONSE, b''))
+        self.assertIsNone(self.held['R'])
+        self.assertIsNotNone(self.held['L'])
+        self.assertTrue(module.waiting.intercepted)
+        self.assertEqual(module.events, [
+            ('requestheaders', '/first'), ('request', '/first'),
+            ('requestheaders', '/wait'), ('responseheaders', '/first'),
+            ('response', '/first'), ('request', '/wait'),
+        ])
+
+        # Only the second resume publishes the request and its younger suffix.
+        module.waiting.resume()
+        forward, reverse = await self.callback('L', b'')
+        self.assertEqual(forward, request('/wait') + request('/younger'))
+        self.assertFalse(reverse)
+        self.assertEqual(self.held, {'L': None, 'R': None})
+        self.assertEqual(module.events[-2:], [
+            ('requestheaders', '/younger'), ('request', '/younger')])
+        self.assertEqual(module.events.count(('request', '/wait')), 1)
+
+        self.assertEqual(await self.callback('R', RESPONSE, RESPONSE),
+                         (RESPONSE + RESPONSE, b''))
+        self.assertEqual(module.events[-4:], [
+            ('responseheaders', '/wait'), ('response', '/wait'),
+            ('responseheaders', '/younger'), ('response', '/younger'),
+        ])
+        self.assertEqual(self.addon.active_flows, 0)
+
+    async def test_kill_discards_both_paused_lanes_and_younger_suffix(self):
+        await self.start('''
+waiting = None
+errors = []
+requests = []
+
+def request(flow):
+    global waiting
+
+    requests.append(flow.request.path)
+    if flow.request.path == '/wait':
+        waiting = flow
+        flow.intercept()
+
+def responseheaders(flow):
+    flow.intercept()
+
+def error(flow):
+    errors.append((flow.request.path, flow.error.msg))
+''')
+        await self.callback('L', request('/first'), request('/wait'), request('/younger'))
+        self.assertEqual(await self.callback('R', RESPONSE), (b'', b''))
+        self.assertIsNotNone(self.held['L'])
+        self.assertIsNotNone(self.held['R'])
+
+        # The triggering response lane is still intercepted. A killed request
+        # in the peer lane must nevertheless terminate the entire connection.
+        module = self.addon.addon.module
+        module.waiting.kill()
+        self.assertEqual(await self.callback('R', b''), (b'', b''))
+        self.assertEqual(self.held, {'L': None, 'R': None})
+        self.assertEqual(self.last_termination['reason'], 'Connection killed.')
+        self.assertEqual(module.requests, ['/first', '/wait'])
+        self.assertEqual(module.errors, [('/wait', 'Connection killed.')])
+        self.assertEqual(self.addon.active_flows, 0)
+
     async def test_same_direction_resume_keeps_arriving_pipeline_order(self):
         await self.start('''
 saved = None

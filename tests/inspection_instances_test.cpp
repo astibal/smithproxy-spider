@@ -3,6 +3,7 @@
 #include <cassert>
 #include <chrono>
 #include <filesystem>
+#include <iostream>
 #include <thread>
 #include <vector>
 #include <unistd.h>
@@ -300,6 +301,122 @@ return api.message.commit()
         assert(next.at("replacement") == spider::base64_encode(response));
         assert(!next.contains("replacement_reverse"));
         engine.automatic({{"action", "connection-stop"}, {"id", identity}}, json::array());
+    }
+
+    {
+        // Retiring an owner with both H1 lanes paused must discard its native
+        // checkpoints and addon flow objects before a fresh exchange begins.
+        const std::string source = R"PY(#!mitmproxy
+
+def request(flow):
+    print('request ' + flow.request.path)
+    if flow.request.path == '/wait':
+        flow.intercept()
+
+def response(flow):
+    print('response ' + flow.request.path)
+    if flow.request.path == '/first':
+        flow.intercept()
+)PY";
+        const std::string identity = "h1-paused-owner-lifecycle";
+        const std::string first = "GET /first HTTP/1.1\r\nHost: test\r\n\r\n";
+        const std::string waiting = "GET /wait HTTP/1.1\r\nHost: test\r\n\r\n";
+        const std::string fresh = "GET /fresh HTTP/1.1\r\nHost: test\r\n\r\n";
+        const std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+
+        auto content = [&](const std::string& direction,
+                           const std::vector<std::string>& messages) {
+            std::string wire;
+            auto annotations = json::array();
+
+            for (const auto& message : messages) {
+                const auto offset = wire.size();
+                const auto line_end = offset + message.find("\r\n") + 2;
+                const auto head_end = offset + message.find("\r\n\r\n") + 4;
+                annotations.push_back({offset, line_end, "http1.start_line"});
+                annotations.push_back({line_end, head_end, "http1.headers"});
+                wire += message;
+            }
+
+            return engine.automatic({{"action", "connection-content"}, {"id", identity},
+                {"details", {{"info", {
+                    {"side", direction}, {"content", spider::base64_encode(wire)},
+                    {"content_annotations", annotations},
+                    {"webhook_control", {{"content-reverse", true}}}
+                }}}}}, json::array());
+        };
+
+        for (const std::string retirement : {"connection-stop", "redeploy", "disable"}) {
+            const auto deployment = deploy("flow", source);
+            const auto started = engine.automatic(
+                {{"action", "connection-start"}, {"id", identity}}, json::array());
+            assert(started.at("ok") == true);
+
+            const auto requests = content("L", {first, waiting});
+            assert(requests.at("ok") == true);
+            assert(requests.at("replacement") == spider::base64_encode(first));
+            assert(!requests.contains("replacement_reverse"));
+
+            const auto paused_response = content("R", {response});
+            assert(paused_response.at("ok") == true);
+            assert(paused_response.value("need_more", false));
+            assert(!paused_response.contains("replacement_reverse"));
+            assert(engine.status()["chain"][0]["instances"] == 1);
+
+            if (retirement == "connection-stop") {
+                engine.automatic(
+                    {{"action", "connection-stop"}, {"id", identity}}, json::array());
+            } else if (retirement == "redeploy") {
+                configure({{"operation", "deploy"}, {"id", deployment},
+                    {"name", "replacement"}, {"script", source},
+                    {"scope", "all"}, {"instancing", "flow"}});
+            } else {
+                configure({{"operation", "enable"}, {"id", deployment}, {"enabled", false}});
+                configure({{"operation", "enable"}, {"id", deployment}, {"enabled", true}});
+            }
+            assert(engine.status()["chain"][0]["instances"] == 0);
+
+            // A replacement addon cannot join a connection whose setup it
+            // never observed. Reject late content without publishing old holds;
+            // the host's existing fail-open policy remains a separate boundary.
+            if (retirement != "connection-stop") {
+                const auto late = content("L", {fresh});
+                assert(late.at("ok") == false);
+                assert(late.at("replacement").is_null());
+                assert(!late.contains("replacement_reverse"));
+                assert(late.at("error").get<std::string>().find(
+                    "Content arrived without addon connection setup") != std::string::npos);
+
+                // A failed addon generation is not replayed. Prepare a new
+                // generation and reconnect before checking normal publication.
+                configure({{"operation", "deploy"}, {"id", deployment},
+                    {"name", "fresh generation"}, {"script", source},
+                    {"scope", "all"}, {"instancing", "flow"}});
+                engine.automatic(
+                    {{"action", "connection-stop"}, {"id", identity}}, json::array());
+            }
+
+            const auto reopened = engine.automatic(
+                {{"action", "connection-start"}, {"id", identity}}, json::array());
+            assert(reopened.at("ok") == true);
+
+            const auto next_request = content("L", {fresh});
+            if (!next_request.value("ok", false)) {
+                std::cerr << retirement << ": " << next_request.dump(2) << '\n';
+            }
+            assert(next_request.at("ok") == true);
+            assert(next_request.at("replacement") == spider::base64_encode(fresh));
+            assert(!next_request.contains("replacement_reverse"));
+            assert(next_request.at("logs") == json::array({"request /fresh"}));
+
+            const auto next_response = content("R", {response});
+            assert(next_response.at("ok") == true);
+            assert(next_response.at("replacement") == spider::base64_encode(response));
+            assert(!next_response.contains("replacement_reverse"));
+            assert(next_response.at("logs") == json::array({"response /fresh"}));
+            engine.automatic(
+                {{"action", "connection-stop"}, {"id", identity}}, json::array());
+        }
     }
 
     std::filesystem::remove_all(root);

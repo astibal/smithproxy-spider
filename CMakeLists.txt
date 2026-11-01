@@ -338,6 +338,24 @@ if(BUILD_TESTING)
             PROPERTIES TIMEOUT 45 LABELS "experimental;protocol"
         )
     endif()
+    set(SPIDER_E2E_SMITHPROXY_SOURCE "" CACHE PATH "Smithproxy source for optional real proxy E2E")
+    set(SPIDER_E2E_SMITHPROXY_BINARY "" CACHE FILEPATH "Built Smithproxy with webhook control/sequence support")
+    option(SPIDER_TEST_H1_E2E "Run H1 suspension against real Smithproxy and Spider" OFF)
+    if(SPIDER_TEST_H1_E2E)
+        if(NOT SPIDER_TEST_ADDON_COMPAT OR NOT SPIDER_E2E_SMITHPROXY_SOURCE OR NOT SPIDER_E2E_SMITHPROXY_BINARY)
+            message(FATAL_ERROR "H1 E2E requires addon tests and explicit Smithproxy source/binary paths")
+        endif()
+        foreach(scenario peer both kill)
+            add_test(NAME inspection_h1_suspension_e2e_${scenario}
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/h1_suspension_e2e.py
+                    --smithproxy-source ${SPIDER_E2E_SMITHPROXY_SOURCE}
+                    --smithproxy ${SPIDER_E2E_SMITHPROXY_BINARY}
+                    --spider $<TARGET_FILE:smithproxy-spider> --scenario ${scenario})
+            set_tests_properties(inspection_h1_suspension_e2e_${scenario}
+                PROPERTIES TIMEOUT 90 LABELS "integration" RUN_SERIAL TRUE)
+        endforeach()
+    endif()
+
     if(SPIDER_TEST_TRANSLATE_POC)
         execute_process(COMMAND ${Python3_EXECUTABLE} -c "import hpack"
                         RESULT_VARIABLE HPACK_IMPORT_RESULT)
@@ -379,8 +397,6 @@ if(BUILD_TESTING)
         add_test(NAME inspection_translate_push_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_push_test.py)
         set_tests_properties(inspection_translate_push_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
-        set(SPIDER_E2E_SMITHPROXY_SOURCE "" CACHE PATH "Smithproxy source for optional real translate E2E")
-        set(SPIDER_E2E_SMITHPROXY_BINARY "" CACHE FILEPATH "Built Smithproxy with webhook control/sequence support")
         if(SPIDER_E2E_SMITHPROXY_SOURCE AND SPIDER_E2E_SMITHPROXY_BINARY)
             if(SPIDER_TEST_FLOW_CONTROL_POC)
                 foreach(safety easy expert)
