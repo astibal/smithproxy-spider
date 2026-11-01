@@ -521,6 +521,14 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_setup_test.py)
     add_test(NAME inspection_storage_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_storage_test.py)
+    add_executable(native_lifecycle_host_tests tests/native_lifecycle_host_test.cpp)
+    target_link_libraries(native_lifecycle_host_tests PRIVATE spider_core)
+    target_compile_options(native_lifecycle_host_tests PRIVATE -UNDEBUG)
+    add_test(NAME native_lifecycle_host_tests COMMAND native_lifecycle_host_tests)
+    set_tests_properties(native_lifecycle_host_tests PROPERTIES TIMEOUT 30)
+    add_test(NAME native_lifecycle_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_lifecycle_test.py)
+    set_tests_properties(native_lifecycle_tests PROPERTIES TIMEOUT 45)
     add_test(NAME inspection_sandbox_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_sandbox_test.py)
     set_tests_properties(inspection_sandbox_tests PROPERTIES TIMEOUT 45)

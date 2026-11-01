@@ -31,29 +31,30 @@ json failed(const std::string& message, const char* kind = "worker") {
 class Worker {
 public:
     ~Worker() { stop(); }
+    bool generation() const { return generation_; }
     json retire() {
         json report = nullptr;
-        if (addon_ && cpu_guard_ && fd_ >= 0) {
+        if (generation_ && cpu_guard_ && fd_ >= 0) {
             try {
                 const auto grace = std::chrono::milliseconds(500);
                 const auto deadline = Clock::now() + grace;
                 report = exchange({{"_shutdown", true}}, deadline, true);
                 if (!report.value("_shutdown", false) || !report.contains("ok") ||
                     !report["ok"].is_boolean() || !report.contains("logs") || !report["logs"].is_array()) {
-                    throw std::runtime_error("Invalid addon shutdown report");
+                    throw std::runtime_error("Invalid worker shutdown report");
                 }
                 std::size_t log_bytes = 0;
                 for (const auto& line : report["logs"]) {
-                    if (!line.is_string()) throw std::runtime_error("Invalid addon shutdown log entry");
+                    if (!line.is_string()) throw std::runtime_error("Invalid worker shutdown log entry");
                     log_bytes += line.get_ref<const std::string&>().size();
                 }
                 if (log_bytes > 256 * 1024) {
-                    throw std::runtime_error("Addon shutdown logs exceed 256 KiB");
+                    throw std::runtime_error("Worker shutdown logs exceed 256 KiB");
                 }
                 report.erase("_shutdown");
                 const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
                 if (!cpu_guard_->wait_for_exit(remaining)) {
-                    throw std::runtime_error("Addon did not exit within its cleanup budget");
+                    throw std::runtime_error("Worker did not exit within its cleanup budget");
                 }
             } catch (const std::exception& error) {
                 report = failed(error.what(), "shutdown");
@@ -67,7 +68,7 @@ public:
         cpu_guard_.reset();
     }
     std::string start(const std::string& source, const std::string& storage,
-                      const std::string& script_api, const json& addon_options,
+                      const std::string& script_api, const json& addon_options, bool network_enabled,
                       Clock::time_point deadline) {
         int sockets[2];
         if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) != 0)
@@ -118,7 +119,8 @@ public:
         close(sockets[1]);
         fd_ = sockets[0];
         fcntl(fd_, F_SETFL, fcntl(fd_, F_GETFL) | O_NONBLOCK);
-        json initialization = {{"script", source}, {"storage_directory", storage}};
+        json initialization = {{"script", source}, {"storage_directory", storage},
+                               {"network_enabled", network_enabled}};
         if (script_api != "spider") {
             initialization["script_api"] = script_api;
         }
@@ -132,7 +134,7 @@ public:
         if (effective_api != "spider" && effective_api != "mitmproxy") {
             throw std::runtime_error("Worker returned an unknown script API");
         }
-        addon_ = effective_api == "mitmproxy";
+        generation_ = effective_api == "mitmproxy" || ready.value("native_lifecycle", false);
         return effective_api;
     }
     json exchange(const json& request, Clock::time_point deadline, bool finishing = false) {
@@ -200,7 +202,7 @@ private:
     }
     int fd_{-1};
     std::unique_ptr<InspectionCpuGuard> cpu_guard_;
-    bool addon_{};
+    bool generation_{};
 };
 }
 
@@ -216,6 +218,7 @@ struct InspectionPool::Impl {
     std::string source, storage, script_api;
     json addon_options = json::array();
     Lifetime lifetime{Lifetime::Rotating};
+    bool network_enabled{false};
     bool generation_lost{};
     bool warmed{};
     bool retired{};
@@ -240,12 +243,13 @@ struct InspectionPool::Impl {
     }
 };
 InspectionPool::InspectionPool(std::string source, std::string storage, Lifetime lifetime,
-                               std::string script_api, json addon_options)
+                               std::string script_api, json addon_options, bool network_enabled)
     : impl_(std::make_unique<Impl>()) {
     impl_->source = std::move(source); impl_->storage = std::move(storage);
     impl_->lifetime = lifetime;
     impl_->script_api = std::move(script_api);
     impl_->addon_options = std::move(addon_options);
+    impl_->network_enabled = network_enabled;
 }
 InspectionPool::~InspectionPool() {
     retire();
@@ -265,19 +269,18 @@ void InspectionPool::warm() {
         auto worker = std::make_unique<Worker>();
         const auto effective_api = worker->start(
             impl_->source, impl_->storage, impl_->script_api,
-            impl_->addon_options, deadline);
+            impl_->addon_options, impl_->network_enabled, deadline);
         impl_->script_api = effective_api;
         slot.worker = std::move(worker);
         ++impl_->starts;
-        if (effective_api == "mitmproxy") {
-            // Let the worker resolve the directive once. A shebang can override
-            // the requested API, but must never accidentally create a second
-            // addon generation or a maintenance replacement with empty state.
+        if (slot.worker->generation()) {
+            // Resolve lifecycle ownership at startup. Neither native hooks nor
+            // addons may create a second worker with independent Python state.
             impl_->lifetime = Lifetime::Generation;
             break;
         }
     }
-    // Stateful addons belong to one process for their entire generation. A
+    // Stateful scripts belong to one process for their entire generation. A
     // maintenance replacement would discard Python state while looking healthy.
     if (impl_->lifetime == Lifetime::Generation) {
         return;
@@ -304,7 +307,7 @@ void InspectionPool::warm() {
                 replacement = std::make_unique<Worker>();
                 replacement->start(
                     state->source, state->storage, state->script_api,
-                    state->addon_options, Clock::now() + std::chrono::seconds(3));
+                    state->addon_options, state->network_enabled, Clock::now() + std::chrono::seconds(3));
                 ++state->starts; ++state->restarts;
             } catch (const std::exception&) { replacement.reset(); }
             lock.lock();
@@ -471,7 +474,7 @@ json InspectionPool::status() const {
     }
     const bool generation = impl_->lifetime == Lifetime::Generation;
     return {{"capacity", generation ? 1 : 2}, {"lifetime", generation ? "generation" : "rotating"},
-            {"script_api", impl_->script_api},
+            {"script_api", impl_->script_api}, {"network_enabled", impl_->network_enabled},
             {"shutdown", impl_->shutdown_report},
             {"state_lost", impl_->generation_lost},
             {"idle", idle}, {"busy", busy}, {"starting", starting}, {"starts", impl_->starts.load()},

@@ -196,6 +196,13 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             const auto error_limit = request.value("error_limit", 3);
             const auto max_instances = request.value("max_instances", 128);
             const auto idle_seconds = request.value("idle_seconds", 1800);
+
+            if (request.contains("network_enabled") && !request["network_enabled"].is_boolean()) {
+                throw std::invalid_argument("network_enabled must be a boolean");
+            }
+
+            const bool network_enabled = request.value("network_enabled",
+                item != next.end() && item->value("network_enabled", false));
             auto addon_options = item == next.end()
                 ? nlohmann::json::array()
                 : item->value("addon_options", nlohmann::json::array());
@@ -239,6 +246,7 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             (*item)["script_api"] = script_api;
             (*item)["script_api_source"] = validation.value("script_api_source", "selection");
             (*item)["addon_options"] = std::move(addon_options);
+            (*item)["network_enabled"] = network_enabled;
             (*item)["timeout_ms"] = timeout; (*item)["error_limit"] = error_limit;
             (*item)["max_instances"] = max_instances; (*item)["idle_seconds"] = idle_seconds;
             (*item)["suspended"] = false; (*item)["suspension_reason"] = "";
@@ -300,7 +308,8 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
                     (*target)["script"].get<std::string>(), storage_root_.string(),
                     InspectionPool::Lifetime::Rotating,
                     target->value("script_api", "spider"),
-                    target->value("addon_options", nlohmann::json::array()));
+                    target->value("addon_options", nlohmann::json::array()),
+                    target->value("network_enabled", false));
                 prepared->pool->warm();
                 prepared->addon = prepared->pool->status().value("script_api", "spider") == "mitmproxy";
             }
@@ -374,7 +383,7 @@ nlohmann::json Inspection::status() const {
             {"runs", runs_}, {"errors", errors_}, {"running", running_.load()}, {"recent", recent_},
             {"chain", chain}, {"notifications", notifications_},
             {"sandbox", {{"required", true}, {"policy", "landlock-seccomp-v1"},
-                         {"network", false}, {"processes", false}, {"filesystem", "runtime-readonly + shared-storage"}}},
+                         {"network", false}, {"network_configurable", true}, {"processes", false}, {"filesystem", "runtime-readonly + shared-storage"}}},
             {"storage", {{"directory", storage_root_.string()}, {"quota_bytes", 16 * 1024 * 1024}}},
             {"collection", collection.status()}};
 }
@@ -553,7 +562,7 @@ nlohmann::json Inspection::run_addon_preview(nlohmann::json request) {
     }
     auto pool = std::make_shared<InspectionPool>(
         source, storage_root_.string(), InspectionPool::Lifetime::Generation,
-        selected_api, std::move(addon_options));
+        selected_api, std::move(addon_options), request.value("network_enabled", false));
     nlohmann::json result;
     nlohmann::json lifecycle_logs = nlohmann::json::array();
     auto collect_logs = [&](const nlohmann::json& report) {
@@ -791,7 +800,8 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
                 item["script"].get<std::string>(), storage_root_.string(),
                 InspectionPool::Lifetime::Rotating,
                 item.value("script_api", "spider"),
-                item.value("addon_options", nlohmann::json::array()));
+                item.value("addon_options", nlohmann::json::array()),
+                item.value("network_enabled", false));
             try { created->pool->warm(); }
             catch (const std::exception& error) { return failure(error.what()); }
             created->addon = created->pool->status().value("script_api", "spider") == "mitmproxy";

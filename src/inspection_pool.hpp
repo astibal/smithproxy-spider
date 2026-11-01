@@ -15,7 +15,8 @@ public:
     InspectionPool(std::string source, std::string storage,
                    Lifetime lifetime = Lifetime::Rotating,
                    std::string script_api = "spider",
-                   nlohmann::json addon_options = nlohmann::json::array());
+                   nlohmann::json addon_options = nlohmann::json::array(),
+                   bool network_enabled = false);
     ~InspectionPool();
     void warm();
     void retire();

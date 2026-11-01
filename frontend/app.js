@@ -4494,6 +4494,7 @@ async function executeScript(record) {
       script: byId('script-editor').value,
       script_api: byId('script-api')?.value || 'spider',
       addon_options: addonOptions,
+      network_enabled: byId('chain-network')?.checked === true,
       event: {...event, details: {...event.details, info: {...event.details?.info, content: encodeBase64(bytes)}}},
       enrichments: (record?.enrichments || []).map(item => ({
         metadata: item.metadata || {}, content: encodeBase64(item.payload || new Uint8Array()),

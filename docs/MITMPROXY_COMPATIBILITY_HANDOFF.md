@@ -1,5 +1,16 @@
 # Spider mitmproxy compatibility development handoff
 
+Latest follow-up, 2026-11-01: native scripts now support optional
+`init(api, state)` / `exit(api, state)` around `main(api, state)`, with an opaque
+state object retained by one deployment generation. Network access is an explicit
+`network_enabled` deployment grant, off by default, including in editor previews.
+See [the lifecycle contract](../README.md#native-script-lifecycle) and
+[the RADIUS regression](../tests/native_lifecycle_test.py): a real `pyrad` client
+is created once in `init`, reused against an isolated UDP peer, and blocked by
+the default sandbox. This does not implement the Smithproxy authentication
+webhook or delegate its AAA decision to scripts. The checkpoint below records
+the earlier H1 milestone and its continuing project constraints.
+
 Checkpoint: 2026-11-01, implementation commit
 `777633b9a6da4fb8dfc5a211f0c3bf50beff92a1` on `mitmproxy-api`.
 That commit is pushed to `origin/mitmproxy-api`. This document is a subsequent

@@ -1,4 +1,4 @@
-"""Kernel-enforced worker policy. Install before compiling any submitted script.
+"""Kernel-enforced worker policy. Install before executing any submitted script.
 
 This is containment, not a Python object/import blacklist. Even ctypes calls are
 subject to Landlock and seccomp. Unsupported hosts fail closed.
@@ -16,11 +16,14 @@ class SandboxUnavailable(RuntimeError):
     pass
 
 
-def install_script_sandbox(storage_directory=None, *, event_loop_fd=None,
+def install_script_sandbox(storage_directory=None, *, network_enabled=False, event_loop_fd=None,
                            additional_event_loop_fds=(), wakeup_read_fds=(),
                            wakeup_write_fds=()):
-    # Only a trusted loop created before administrator code runs can opt in.
-    # This does not allow creating epoll descriptors, sockets or connections.
+    if type(network_enabled) is not bool:
+        raise SandboxUnavailable('network_enabled must be a boolean')
+
+    # Without the network grant, only trusted loops prepared by the runtime
+    # can poll. These descriptor exceptions do not permit socket creation.
     event_loop_fds = (() if event_loop_fd is None else (event_loop_fd,))
     event_loop_fds += tuple(additional_event_loop_fds)
     for descriptor in event_loop_fds:
@@ -80,7 +83,12 @@ def install_script_sandbox(storage_directory=None, *, event_loop_fd=None,
     read_only = (1 << 2) | (1 << 3)  # READ_FILE, READ_DIR
     storage_access = read_only | sum(1 << bit for bit in (1, 4, 5, 7, 8, 13, 14))
     paths = {os.path.realpath(sysconfig.get_path(key)): read_only
-             for key in ('stdlib', 'platstdlib')}
+             for key in ('stdlib', 'platstdlib', 'purelib', 'platlib')}
+    if network_enabled:
+        for path in ('/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/gai.conf',
+                     '/etc/services', '/etc/ssl/certs'):
+            if os.path.exists(path):
+                paths[os.path.realpath(path)] = read_only if os.path.isdir(path) else (1 << 2)
 
     if storage_directory:
         storage = os.path.realpath(storage_directory)
@@ -131,8 +139,8 @@ def install_script_sandbox(storage_directory=None, *, event_loop_fd=None,
         raise SandboxUnavailable('Cannot create seccomp filter')
 
     try:
-        # File access is further restricted by Landlock. No external sockets,
-        # processes, signals to other processes, ptrace, mount, io_uring or
+        # File access is further restricted by Landlock. No processes,
+        # signals to other processes, ptrace, mount, io_uring or
         # kernel APIs. A tightly filtered clone rule below permits threads only.
         allowed = '''read write readv writev pread64 pwrite64 close close_range
             lseek fstat newfstatat stat lstat statx access faccessat faccessat2
@@ -150,6 +158,35 @@ def install_script_sandbox(storage_directory=None, *, event_loop_fd=None,
             number = seccomp.seccomp_syscall_resolve_name(name.encode())
             if number >= 0 and seccomp.seccomp_rule_add(policy, 0x7fff0000, number, 0) != 0:
                 raise SandboxUnavailable('Cannot allow syscall: ' + name)
+
+        if network_enabled:
+            # Administrator-granted network access includes local endpoints.
+            # Raw sockets and process creation remain outside this capability.
+            import socket
+            number = seccomp.seccomp_syscall_resolve_name(b'socket')
+            for family in (socket.AF_INET, socket.AF_INET6, socket.AF_UNIX):
+                for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
+                    arguments = (Argument * 2)(Argument(0, 4, family, 0),
+                                               Argument(1, 7, 15, kind))
+                    if seccomp.seccomp_rule_add_array(policy, 0x7fff0000, number, 2, arguments) != 0:
+                        raise SandboxUnavailable('Cannot allow network sockets')
+
+            # CPython uses FIONBIO for socket timeouts/nonblocking mode. Other
+            # device ioctls remain denied, including terminal and network setup.
+            import termios
+            number = seccomp.seccomp_syscall_resolve_name(b'ioctl')
+            argument = Argument(1, 4, termios.FIONBIO, 0)
+            if seccomp.seccomp_rule_add_array(policy, 0x7fff0000, number, 1,
+                                              ctypes.byref(argument)) != 0:
+                raise SandboxUnavailable('Cannot allow socket timeout mode')
+
+            network_calls = ('connect bind getsockname getpeername getsockopt setsockopt '
+                             'recvfrom sendto recvmsg sendmsg shutdown poll ppoll select pselect6 '
+                             'epoll_create epoll_create1 epoll_wait epoll_pwait epoll_pwait2 epoll_ctl').split()
+            for name in network_calls:
+                number = seccomp.seccomp_syscall_resolve_name(name.encode())
+                if number >= 0 and seccomp.seccomp_rule_add(policy, 0x7fff0000, number, 0) != 0:
+                    raise SandboxUnavailable('Cannot allow network syscall: ' + name)
 
         # glibc first attempts clone3 and falls back to clone only for ENOSYS.
         # The fallback accepts exactly pthread's shared-process thread shape;
@@ -179,7 +216,7 @@ def install_script_sandbox(storage_directory=None, *, event_loop_fd=None,
             if seccomp.seccomp_rule_add_array(policy, 0x7fff0000, number, 1, ctypes.byref(argument)) != 0:
                 raise SandboxUnavailable('Cannot allow safe fcntl command')
 
-        if event_loop_fds:
+        if event_loop_fds and not network_enabled:
             # Permit polling and maintaining only the prepared epoll instances.
             # New descriptors and socket operations remain denied. Monitoring a
             # descriptor grants no read/write rights beyond the existing policy.
@@ -198,7 +235,7 @@ def install_script_sandbox(storage_directory=None, *, event_loop_fd=None,
             number = seccomp.seccomp_syscall_resolve_name(name.encode())
             if descriptors and number < 0:
                 raise SandboxUnavailable('Cannot resolve event loop wakeup syscall: ' + name)
-            for descriptor in descriptors:
+            for descriptor in (() if network_enabled else descriptors):
                 argument = Argument(0, 4, descriptor, 0)
                 if seccomp.seccomp_rule_add_array(policy, 0x7fff0000, number, 1,
                                                   ctypes.byref(argument)) != 0:

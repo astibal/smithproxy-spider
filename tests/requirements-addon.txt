@@ -4,3 +4,5 @@
 h2>=4.3,<5
 # The newer independent peer requires this version; production also supports 4.0.
 hpack>=4.1,<5
+# Real RADIUS client for the native lifecycle/network integration test.
+pyrad==2.4

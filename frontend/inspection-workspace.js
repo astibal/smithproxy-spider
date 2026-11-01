@@ -65,7 +65,7 @@
   sidebar.innerHTML = '<h3>Script library · this browser</h3><div id="library-list"></div>' +
     '<button id="library-new">+ New script</button><hr>' +
     '<h3>Backend chain ↓</h3><p id="chain-connection">Not connected</p>' +
-    '<small id="chain-sandbox" hidden title="Scripts require Linux Landlock and seccomp. No network or subprocesses; files are limited to read-only Python runtime and shared storage. If isolation cannot be activated, execution is refused.">Kernel sandbox required · no network / subprocesses</small>' +
+    '<small id="chain-sandbox" hidden title="Scripts require Linux Landlock and seccomp. Network is disabled by default and enabled per deployment; no subprocesses; files are limited to read-only Python runtime and shared storage. If isolation cannot be activated, execution is refused.">Kernel sandbox required · network opt-in / no subprocesses</small>' +
     '<div id="chain-list"></div><button id="chain-apply-order" hidden>Apply order</button>' +
     '<p id="chain-message" role="status"></p><hr><h3>Collection · backend</h3><p id="collection-status"></p>';
   const layout = byId('inspection-layout');
@@ -86,6 +86,7 @@
     '<label>Instance <select id="chain-instancing"><option value="message">Per message</option><option value="flow">Per flow · both directions</option><option value="endpoint">Per endpoint</option></select></label>' +
     '<label>Endpoint key <select id="chain-endpoint" disabled><option value="destination">Destination protocol / IP / port</option><option value="source">Source IP · all ports</option></select></label>' +
     '<details id="chain-runtime-settings"><summary>Runtime limits · timeout, suspension, state retention</summary><div class="chain-runtime-fields">' +
+    '<label><input id="chain-network" type="checkbox"> Allow outgoing network connections</label>' +
     '<label>Time budget (ms) <input id="chain-timeout" type="number" min="50" max="3000" value="1000"></label>' +
     '<label>Errors before suspend <input id="chain-error-limit" type="number" min="1" max="100" value="3"></label>' +
     '<label>Max instances <input id="chain-max-instances" type="number" min="1" max="1024" value="128"></label>' +
@@ -225,6 +226,7 @@
       script_api: selected.script_api || 'spider',
       scope: byId('chain-scope').value, filter: byId('chain-filter').value,
       instancing: byId('chain-instancing').value, endpoint: byId('chain-endpoint').value,
+      network_enabled: byId('chain-network').checked,
       addon_options: addonDraftSelected() ? addonOptionSpecs() : [],
       timeout_ms: Number(byId('chain-timeout').value), error_limit: Number(byId('chain-error-limit').value),
       max_instances: Number(byId('chain-max-instances').value), idle_seconds: Number(byId('chain-idle').value)});
@@ -232,6 +234,7 @@
   byId('chain-target').onchange = () => {
     const target = state?.chain?.find(item => item.id === byId('chain-target').value);
     if (target) { byId('chain-scope').value = target.scope; byId('chain-filter').value = target.filter; }
+    byId('chain-network').checked = target?.network_enabled === true;
     byId('chain-instancing').value = target?.instancing || 'message';
     byId('chain-endpoint').value = target?.endpoint || 'destination';
     byId('chain-timeout').value = target?.timeout_ms || 1000;
@@ -269,6 +272,7 @@
       stats.textContent = `${item.enabled ? 'Enabled' : 'Disabled'} · ${item.runs} runs · ${item.errors} errors\n` +
         `API: ${item.script_api || 'spider'}${item.script_api_source === 'shebang' ? ' (shebang)' : ''}\n` +
         `Traffic: ${item.scope} ${item.filter || ''}\nLast run: ${item.last_run_ms ? new Date(item.last_run_ms).toLocaleString() : 'never'}`;
+      stats.textContent += `\nNetwork: ${item.network_enabled ? 'enabled' : 'disabled'}`;
       if (item.addon_options?.length) {
         stats.textContent += `\nAddon options: ${item.addon_options.length} override${item.addon_options.length === 1 ? '' : 's'}`;
       }

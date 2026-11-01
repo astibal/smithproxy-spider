@@ -60,6 +60,7 @@ class Api:
         self.http1 = views.http1
         self.http2 = views.http2
         self.state = request.get('instance_state', {})
+        self.network_enabled = network_enabled
         self.storage = SharedStorage(request.get('storage_directory'))
         identity = request.get('instance', {})
         self.instance = InstanceContext(identity.get('mode', 'message'), identity.get('key', ''),
@@ -319,18 +320,98 @@ def protocol_checkpoint(api, current, response, known_publication):
     return owner.checkpoint()
 
 
+class LifecycleApi:
+    """Deployment context with no connection, message or publish capability."""
+
+    def __init__(self, phase):
+        self.phase = phase
+        self.storage = SharedStorage(request.get('storage_directory'))
+        self.network_enabled = network_enabled
+
+    def print(self, *values, **options):
+        print(*values, **options)
+
+
+def compile_native(source):
+    """Detect module-style hooks without executing administrator code."""
+    import ast
+
+    normalized = source.removeprefix('\ufeff')
+    wrapped = 'def __spider_script(api):\n' + textwrap.indent(normalized or 'pass', '    ')
+    try:
+        tree = ast.parse(normalized or 'pass', '<inspection>')
+    except SyntaxError:
+        # Legacy snippets may start indented: they are function bodies, not
+        # modules. Let the original wrapper validate their syntax.
+        return compile(wrapped, '<inspection>', 'exec'), False
+    entries = [node for node in tree.body
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and node.name in ('init', 'main', 'exit')]
+    lifecycle = any(node.name == 'main' for node in entries)
+
+    # Snippets retain their historical top-level return convention. Only a
+    # top-level main function opts into deployment-scoped Python objects.
+    if not lifecycle:
+        return compile(wrapped, '<inspection>', 'exec'), False
+
+    names = set()
+    for node in entries:
+        args = node.args
+        if (node.name in names or isinstance(node, ast.AsyncFunctionDef)
+                or node.decorator_list or args.posonlyargs or args.kwonlyargs
+                or args.vararg or args.kwarg or args.defaults
+                or [argument.arg for argument in args.args] != ['api', 'state']):
+            raise ValueError('Lifecycle hooks require def ' + node.name + '(api, state)')
+
+        names.add(node.name)
+
+    return compile(tree, '<inspection>', 'exec'), True
+
+
+native_namespace = {}
+native_state = None
+native_initialized = False
+native_lifecycle = False
+native_output = Output()
+network_enabled = request.get('network_enabled', False)
+
+
+def close_native():
+    global native_initialized, native_state
+    output = Output()
+    response = {'ok': True}
+
+    # Mark cleanup before invoking user code, so even a failing exit runs once.
+    try:
+        if native_initialized:
+            native_initialized = False
+            callback = native_namespace.get('exit')
+            if callback is not None:
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    callback(LifecycleApi('exit'), native_state)
+    except BaseException:
+        response = script_error()
+    finally:
+        native_state = None
+        native_namespace.clear()
+        sys.modules.pop('_spider_deployment', None)
+    response['logs'] = output.text.splitlines()
+    return response
+
+
 def invoke_script(current, compiled):
     output = Output()
+    output.write(native_output.text)
+    native_output.text = ''
     addon_worker.drain_startup_output(output)
     response = {'ok': False, 'replacement': None,
                 'script_api': selected_api, 'script_api_source': selection_source}
     namespace = {'CommitException': CommitException, 'Header': Header, 'PartType': PartType, 'Mode': Mode, 'Safety': Safety}
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-            # Native scripts keep callback-local globals. Addons instead use
-            # the generation created at startup; neither convention shares
-            # Python state with another deployment's worker.
-            if selected_api == 'spider':
+            # Legacy snippets keep callback-local globals. Lifecycle scripts
+            # and addons retain one namespace per deployment generation.
+            if selected_api == 'spider' and not native_lifecycle:
                 exec(compiled, namespace)
             stopping = (selected_api == 'mitmproxy' and
                         current.get('event', {}).get('action') == 'connection-stop')
@@ -345,7 +426,10 @@ def invoke_script(current, compiled):
                 report_addon_failures(failures)
             elif api is not None:
                 if selected_api == 'spider':
-                    result = namespace['__spider_script'](api)
+                    if native_lifecycle:
+                        result = native_namespace['main'](api, native_state)
+                    else:
+                        result = namespace['__spider_script'](api)
                 elif api.phase == 'setup':
                     # Endpoint observations are not yet part of the worker
                     # envelope. Leave them unknown rather than infer TLS or
@@ -501,12 +585,17 @@ def invoke_script(current, compiled):
 
 try:
     source = request['script']
+    if type(network_enabled) is not bool:
+        raise ValueError('network_enabled must be a boolean')
     first_line = source.removeprefix('\ufeff').split('\n', 1)[0].rstrip('\r')
     executing_addon = (not request.get('validate_only') and
                        (first_line == '#!mitmproxy' or request.get('script_api') == 'mitmproxy'))
-    if cpu_supervised and not executing_addon:
-        # Native scripts retain the existing cumulative kernel limit. Only
-        # supervised addon generations use renewable parent-owned CPU budgets.
+    native_compiled = None
+    if not executing_addon and first_line != '#!mitmproxy' and request.get('script_api', 'spider') == 'spider':
+        native_compiled, native_lifecycle = compile_native(source)
+    if cpu_supervised and not executing_addon and not native_lifecycle:
+        # Legacy snippets retain the cumulative kernel limit. Stateful
+        # generations use renewable parent-owned CPU budgets.
         resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
     if executing_addon:
         if not persistent_worker:
@@ -547,9 +636,9 @@ try:
         logging.getLogger().setLevel(logging.INFO)
     try:
         if addon_worker.loop is None:
-            install_script_sandbox(request.get('storage_directory'))
+            install_script_sandbox(request.get('storage_directory'), network_enabled=network_enabled)
         else:
-            install_script_sandbox(request.get('storage_directory'),
+            install_script_sandbox(request.get('storage_directory'), network_enabled=network_enabled,
                                    event_loop_fd=addon_selector.fileno(),
                                    additional_event_loop_fds=(
                                        addon_concurrent_selector.fileno(),
@@ -569,7 +658,7 @@ try:
         configure_concurrent_runner(addon_worker.concurrent_runner)
     selected_api = 'spider'
     selection_source = 'selection'
-    if 'script_api' in request or first_line == '#!mitmproxy':
+    if native_compiled is None:
         # Keep the legacy path lightweight. Addon compilation is inert: even
         # module-level imports and expressions must not run during validation.
         from addon_loader import compile_script
@@ -577,8 +666,24 @@ try:
         selected_api = selection.api
         selection_source = selection.source
     else:
-        source = 'def __spider_script(api):\n' + textwrap.indent(source or 'pass', '    ')
-        compiled = compile(source, '<inspection>', 'exec')
+        compiled = native_compiled
+    if selected_api == 'spider':
+        compiled = native_compiled
+        if native_lifecycle and not request.get('validate_only'):
+            # Register a real module so dataclasses and imported helpers can
+            # resolve class annotations through their defining module.
+            import types
+            module = types.ModuleType('_spider_deployment')
+            sys.modules[module.__name__] = module
+            native_namespace = module.__dict__
+            native_namespace.update(CommitException=CommitException, Header=Header,
+                                    PartType=PartType, Mode=Mode, Safety=Safety)
+            with contextlib.redirect_stdout(native_output), contextlib.redirect_stderr(native_output):
+                exec(compiled, native_namespace)
+                initializer = native_namespace.get('init')
+                if initializer is not None:
+                    native_state = initializer(LifecycleApi('init'), None)
+                native_initialized = True
     if selected_api == 'mitmproxy' and not request.get('validate_only'):
         with (
             contextlib.redirect_stdout(addon_worker.startup_output),
@@ -615,7 +720,7 @@ except BaseException:
         except BaseException:
             addon_worker.startup_output.write('Addon startup cleanup aborted:\n')
             addon_worker.startup_output.write(traceback.format_exc(limit=8)[-12000:])
-    response['logs'] = addon_worker.startup_output.text.splitlines()
+    response['logs'] = (native_output.text + addon_worker.startup_output.text).splitlines()
     json.dump(response, sys.stdout)
     sys.stdout.write('\n')
     sys.stdout.flush()
@@ -626,20 +731,22 @@ def serve_persistent():
     storage_directory = request.get('storage_directory')
     started = time.monotonic()
     ready = {'ready': True}
+    if native_lifecycle:
+        ready['native_lifecycle'] = True
     if selected_api == 'mitmproxy':
         ready['script_api'] = selected_api
     sys.stdout.write(json.dumps(ready) + '\n')
     sys.stdout.flush()
     calls = 0
-    while addon_worker.adapter is not None or calls < 4096:
+    while native_lifecycle or addon_worker.adapter is not None or calls < 4096:
         line = sys.stdin.readline(64 * 1024 * 1024 + 1)
         if not line:
             break
         if len(line) > 64 * 1024 * 1024 or not line.endswith('\n'):
             break
         current = json.loads(line)
-        if current.get('_shutdown') is True and addon_worker.adapter is not None:
-            response = addon_worker.close(report=True)
+        if current.get('_shutdown') is True and (native_lifecycle or addon_worker.adapter is not None):
+            response = close_native() if native_lifecycle else addon_worker.close(report=True)
             response['_shutdown'] = True
             json.dump(response, sys.stdout)
             sys.stdout.write('\n')
@@ -657,14 +764,18 @@ def serve_persistent():
         cpu_seconds = usage.ru_utime + usage.ru_stime
         age_seconds = time.monotonic() - started
         rotate = calls >= 255 or cpu_seconds >= 0.5 or age_seconds >= 300
-        # A structured script error is a valid IPC response. Native callbacks
+        # A structured script error is a valid IPC response. Legacy snippets
         # execute in a fresh namespace and can safely report that error without
         # destroying healthy pool capacity. Transport failure, malformed IPC
         # and hard resource exhaustion are handled by the parent and still
         # retire the process. Addon generations are different: an adapter-level
         # failure can leave unrollbackable Python state and must invalidate the
-        # generation instead of silently continuing.
+        # generation instead of silently continuing. Native lifecycle state
+        # has the same ownership and failure semantics.
         recycle = (calls == 4095 or cpu_seconds >= 1.5 or age_seconds >= 600)
+        if native_lifecycle:
+            rotate = False
+            recycle = not response['ok']
         if addon_worker.adapter is not None:
             rotate = False
             # A content view is an auxiliary renderer. Reference behavior
@@ -689,6 +800,13 @@ try:
     if persistent_worker:
         serve_persistent()
     else:
-        json.dump(invoke_script(request, compiled), sys.stdout)
+        response = invoke_script(request, compiled)
+        cleanup = close_native()
+        response['logs'].extend(cleanup['logs'])
+        if not cleanup['ok']:
+            response['ok'] = False
+            response['error'] = cleanup['error']
+        json.dump(response, sys.stdout)
 finally:
+    close_native()
     addon_worker.close()

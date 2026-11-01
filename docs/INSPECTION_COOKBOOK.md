@@ -705,4 +705,29 @@ this facility.
 - Removed/duplicated hold boundaries, oversized checkpoints, `return None` after
   restored hold, or hold without `return message.commit()` are errors.
 - Storage may report contention/infrastructure failure as `StorageBusy`;
-  the sandbox blocks networking and unauthorized files. These are not payload validation errors.
+  the sandbox blocks networking unless explicitly enabled, and blocks unauthorized files. These are not payload validation errors.
+
+
+## Deployment lifecycle and network clients
+
+A native script with a top-level `def main(api, state)` keeps one Python module
+and one opaque state object for the lifetime of its deployment generation.
+Optional `def init(api, state)` receives `None` and returns that object; optional
+`def exit(api, state)` cleans it up on orderly retirement. All hooks use the same
+two arguments. Import a client library and create its client in `init`, reuse it
+in `main`, and close it in `exit`. The result of `main` still controls the current
+payload; it does not replace the persistent object. `api.state` remains separate
+JSON instance state. Other deployments cannot access this Python object.
+
+`api.network_enabled` reports the startup network grant in every hook and in
+legacy snippets. Networking is disabled by default; explicitly enable **Allow
+outgoing network connections** in deployment settings to contact RADIUS, local
+APIs or internet endpoints. This option also applies to isolated editor previews.
+A request cannot enable it after worker startup. Runtime CPU, memory, process
+and filesystem restrictions still apply. Install dependencies in the backend's
+Python environment before enabling the deployment.
+
+See the [lifecycle contract](../README.md#native-script-lifecycle) for failure,
+cleanup and preview behavior, and the [RADIUS regression](../tests/native_lifecycle_test.py)
+for a real `pyrad` client used against an isolated UDP peer, including disabled
+network and rejected-password cases.

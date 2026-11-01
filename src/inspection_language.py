@@ -27,7 +27,7 @@ def language_prelude():
         '    session_label: str', '    event: dict[str, Any]', '    info: dict[str, Any]',
         '    annotations: list[Any]', '    enrichments: list[Any]',
         '    l7_state: str', '    l7_bytes: bytes', '    l7_ranges: list[tuple[int, int]]',
-        '    l7_encodings: list[str]',
+        '    l7_encodings: list[str]', '    network_enabled: bool',
         '    def print(self, *values: Any) -> None:',
         '        """Append values to script output."""', '        ...',
         '    def hexdump(self, limit: int = 256, width: int = 16) -> str:',

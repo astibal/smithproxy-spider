@@ -362,16 +362,16 @@ Returning `None` preserves content; returning text or bytes proposes replacement
 
 Backend scripting requires `SPIDER_TOKEN` and Python 3 (located at build time).
 Scripts require Linux x86_64/aarch64, Landlock ABI >= 3 (Linux 6.2+) and
-`libseccomp.so.2`. A mandatory kernel sandbox is installed before validation or
+`libseccomp.so.2`. A mandatory kernel sandbox is installed before submitted code
 execution; unavailable protection returns `sandbox_unavailable`, never an
-unsandboxed fallback. Enabled deployments use two prewarmed sandboxed Python
+unsandboxed fallback. Legacy snippet deployments use two prewarmed sandboxed Python
 workers, exclusively owned by that deployment version. Validation, ad-hoc
 "Run on selected" and editor help still use fresh processes. Workers have a
 sanitized environment, 256 MiB address-space limit, 2 lifetime CPU seconds, and per-call
 wall-clock budgets of at most 3 seconds,
 50,000 captured output characters and a 1 MiB replacement limit. At most four
 workers execute concurrently; overload and execution errors leave live content
-unchanged. The server retains counters and the latest 20 outputs. Script globals,
+unchanged. The server retains counters and the latest 20 outputs. For legacy snippets, globals,
 API objects and captured output are fresh per invocation; imported module/native
 caches may survive inside a worker. Never use module mutation as flow state;
 use the explicit state/storage APIs below instead.
@@ -408,12 +408,18 @@ startup stalls from ordinary execution latency; maximum wait includes warmup.
 `rotations` counts planned retirement starts, `forced_recycles` counts failures
 or hard limits, and `queued` reports current pool waiters.
 
-The sandbox permits read-only Python standard-library files and read/write access
+The sandbox permits read-only Python runtime and installed package files and read/write access
 only to the dedicated shared storage directory. Network sockets (including Unix
-sockets), subprocesses/threads, exec, signals to other processes, ptrace, mounts,
-device ioctls and unlisted syscalls are denied. Native calls through `ctypes` are
+sockets) are denied by default. A deployment can explicitly enable outgoing network
+access with `network_enabled: true` (the **Allow outgoing network connections**
+checkbox). This includes local and private endpoints, with no destination allowlist.
+The same checkbox controls an isolated **Run on selected** preview. Subprocesses,
+exec, signals to other processes, ptrace, mounts,
+device ioctls (except socket nonblocking mode with the network grant) and
+unlisted syscalls are denied. Native calls through `ctypes` are
 subject to the same policy. No home/configuration files or `/proc` contents are
-readable; file metadata is not hidden. Imports requiring external shared libraries
+readable by default; network-enabled workers can read resolver and CA certificate
+configuration. File metadata is not hidden. Threads within the worker are permitted. Imports requiring external shared libraries
 or host configuration may fail. Existing file descriptors are restricted to the
 worker's request/response and stderr by the launcher.
 
@@ -423,6 +429,58 @@ return arbitrary traffic replacements. Use a dedicated unprivileged service user
 and a dedicated storage directory (never home, a repository or system directory).
 The static Jedi language service does not execute submitted scripts; it retains
 its separate bounded process and is not covered by the script syscall policy.
+
+### Native script lifecycle
+
+Native scripts may define `init(api, state)`, `main(api, state)` and
+`exit(api, state)`. A top-level `main` opts into this convention; `init` and
+`exit` are optional. Existing snippets continue to work. Hooks are synchronous,
+undecorated functions with exactly these two parameters.
+
+```python
+def init(api, state):
+    # Called once per deployment generation; the initial state is None.
+    return {"calls": 0}
+
+
+def main(api, state):
+    state["calls"] += 1
+    api.print("Call", state["calls"])
+    return api.bytes
+
+
+def exit(api, state):
+    api.print("Finished", state["calls"])
+```
+
+The return from `init` becomes the opaque Python `state` passed unchanged to
+`main` and `exit`. It may contain imported clients, sockets or other non-JSON
+objects. `main` keeps the existing content return semantics; its return does
+not replace `state`. This deployment-wide object is separate from the existing
+JSON `api.state`, whose scope is selected by `instancing`. Deployments do not
+share Python objects; use `api.storage` for explicit cross-script persistence.
+
+Lifecycle scripts use one serialized worker per generation, with per-callback
+CPU and wall-clock supervision. They never rotate silently. Startup failure
+leaves the old deployment active; a failed callback, timeout or process loss
+invalidates the generation and requires redeployment/resume. Disable, removal,
+redeploy and orderly shutdown attempt `exit` once with a 500 ms cleanup budget.
+Hard termination cannot guarantee cleanup. An isolated preview executes its own
+`init` / `main` / `exit`, without borrowing the live deployment's state.
+
+`init` and `exit` receive only `api.phase`, `api.storage`, `api.network_enabled`
+and `api.print`; they have no connection or payload. `main` receives the usual
+API, including connection setup callbacks. Validation compiles without running
+module statements or hooks. Imports and initialization execute inside the same
+sandbox as `main`. Network permissions are fixed at worker startup and changing
+them replaces the generation. Dependencies such as `pyrad` must be installed in
+the backend Python environment; scripts cannot launch pip or a subprocess.
+
+The [native lifecycle test](tests/native_lifecycle_test.py) demonstrates a real
+`pyrad` client initialized once, reused for RADIUS Access-Accept/Access-Reject,
+and blocked with the network grant disabled. Its UDP peer is isolated and uses
+only test credentials; no system RADIUS service is installed. This capability
+does not yet add the proxy authentication webhook or change Smithproxy's AAA decision.
 
 ### Script instances, storage and runtime protection
 
