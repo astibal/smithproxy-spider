@@ -4,6 +4,7 @@ import pathlib
 import runpy
 import sys
 
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]).resolve().parent))
 module = runpy.run_path(sys.argv[1])
 schema = module['api_schema']()
 for entry in schema['types'].values():

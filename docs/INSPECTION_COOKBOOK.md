@@ -657,6 +657,42 @@ chooses incremental processing before releasing headers. Regression tests stream
 2 MiB input to 4 MiB output in both directions through independent hyper-h2 peers,
 checking that no body reservation or whole-body hold is created.
 
+## Local protocol observations
+
+For a live **flow** deployment, opt in during setup:
+
+<!-- example: protocol-state fixture=setup expect=protocol-state -->
+```python
+if api.phase == 'setup':
+    api.connection.track_protocols()
+    return
+
+for message in api.http1.state or ():
+    api.print(message.side, message.sequence, message.content_complete,
+              message.suspended, message.published)
+
+for stream in api.http2.state or ():
+    api.print(stream.stream_id, stream.request, stream.response, stream.reset)
+```
+
+These are immutable **callback-entry** snapshots, not a Smithproxy parser dump.
+They consume existing native Parts and keep reception separate from retention
+and publication. Complete input can still be suspended. `published` means local
+commit into output processing, not drained queues or peer delivery; it is `None`
+when raw replacement or synthetic output makes input publication uncertain.
+
+`None` at the view level means tracking is unavailable. Empty tuples mean tracking
+is enabled but there are no retained observations. Tracking adds neither a parser
+nor rewrite permission. Native hold/reassembly still needs its normal permissions.
+History is bounded and completed records retire; H1 sequence numbers are per-side
+message identifiers, not request/response exchange identifiers.
+
+The host owns the checkpoint per deployment and connection, independently of
+worker reuse. A failed callback disables tracking and logs the continuity loss;
+reconnect to start again. User JSON at `api.state` and callback `api.phase` are
+unchanged. TCP/UDP socket states and header-hook compatibility are not added by
+this facility.
+
 ## Other important boundaries
 
 - H1 Parts do not yet split pipelined messages into separate typed messages. Without suitable

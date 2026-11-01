@@ -4,8 +4,23 @@ import runpy
 
 _packer = runpy.run_path(str(Path(__file__).resolve().parents[1] /
                              'tools/pack-inspection-worker.py'))
-packed = _packer['pack']
-packed_arguments = _packer['pack_arguments']
+
+
+def _native_modules(modules):
+    # Production bundles this module through the worker manifest. Native-only
+    # subprocess tests need it too, without loading the compatibility runtime.
+    result = dict(modules or {})
+    source = Path(__file__).resolve().parents[1] / 'src/inspection_protocol_state.py'
+    result.setdefault('inspection_protocol_state', source.read_text())
+    return result
+
+
+def packed(source, modules=None):
+    return _packer['pack'](source, _native_modules(modules))
+
+
+def packed_arguments(source, modules=None):
+    return _packer['pack_arguments'](source, _native_modules(modules))
 
 
 def addon_modules(root):

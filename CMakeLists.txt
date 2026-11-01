@@ -357,6 +357,12 @@ if(BUILD_TESTING)
         add_test(NAME inspection_suspend_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_suspend_test.py)
         set_tests_properties(inspection_suspend_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_protocol_state_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_protocol_state_test.py)
+        set_tests_properties(inspection_protocol_state_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_protocol_worker_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_protocol_worker_test.py)
+        set_tests_properties(inspection_protocol_worker_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
         add_test(NAME inspection_translate_settings_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_settings_test.py)
         set_tests_properties(inspection_translate_settings_tests PROPERTIES TIMEOUT 45 LABELS "experimental")

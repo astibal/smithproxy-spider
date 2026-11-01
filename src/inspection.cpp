@@ -493,6 +493,7 @@ nlohmann::json Inspection::content_view(const nlohmann::json& request) {
 }
 
 nlohmann::json Inspection::run(nlohmann::json request) {
+    request.erase("protocol_state"); // Preview must not import another flow's history.
     request.erase("translate_state");
     request.erase("peer_translate_state");
     request.erase("translate_control");
@@ -528,6 +529,7 @@ nlohmann::json Inspection::run(nlohmann::json request) {
     result.erase("peer_translate_state");
     result.erase("translate_control");
     result.erase("h1_response_state");
+    result.erase("protocol_state");
     return result;
 }
 
@@ -648,6 +650,7 @@ nlohmann::json Inspection::record_result(const nlohmann::json& request, nlohmann
     summary.erase("peer_translate_state");
     summary.erase("translate_control");
     summary.erase("h1_response_state");
+    summary.erase("protocol_state");
     summary.erase("hold_credit_reservation");
     recent_.push_back(std::move(summary));
     if (recent_.size() > 20) recent_.erase(recent_.begin());
@@ -670,9 +673,10 @@ void Inspection::record_shutdown(const std::string& id, const std::shared_ptr<In
 }
 std::size_t Inspection::state_charge(const nlohmann::json& state, const nlohmann::json& holds,
                                      const nlohmann::json& translations,
-                                     const nlohmann::json& h1_responses, bool reserved) {
+                                     const nlohmann::json& h1_responses, bool reserved,
+                                     const nlohmann::json& protocols) {
     auto bytes = state.dump().size() + holds.dump().size() + translations.dump().size() +
-        h1_responses.dump().size();
+        h1_responses.dump().size() + protocols.dump().size();
     if (!reserved) return bytes;
     // Directional serialized capacity is promised before early credit escapes.
     // Keep the shared full control slot for arbitrarily resized queued output.
@@ -825,6 +829,8 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         ? nlohmann::json::object() : runtime->states.at(key).translations;
     auto h1_responses = key.empty() || !runtime->states.contains(key)
         ? nlohmann::json(nullptr) : runtime->states.at(key).h1_responses;
+    auto protocols = key.empty() || !runtime->states.contains(key)
+        ? nlohmann::json(nullptr) : runtime->states.at(key).protocols;
     if (translate_active && translations.empty()) return failure("Translate state expired or was lost");
     const bool previously_reserved = !key.empty() && runtime->states.contains(key) &&
         runtime->states.at(key).hold_credit_reserved;
@@ -849,6 +855,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         {"peer_translate_state", translations.value(side == "L" ? "R" : "L", nlohmann::json(nullptr))},
         {"translate_control", translations.value("settings", nlohmann::json(nullptr))},
         {"h1_response_state", h1_responses},
+        {"protocol_state", protocols},
         {"instance", {{"mode", mode}, {"key", key}, {"deployment_id", id}, {"version", item["version"]}}}}, runtime->pool);
     --runtime->active;
     if (!serial.owns_lock()) serial.lock();
@@ -883,6 +890,27 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
 
         if (h1_responses_changed) h1_responses = next_h1_responses;
 
+        // The worker stages observations alongside its callback result. Keep
+        // their owner and budget checks inside the same publication decision.
+        const bool protocols_changed = result.contains("protocol_state");
+        if (protocols_changed) protocols = result.at("protocol_state");
+
+        bool invalid_protocols = false;
+        if (protocols_changed) {
+            invalid_protocols = mode != "flow" || !protocols.is_object() ||
+                protocols.dump().size() > 512 * 1024;
+
+            if (!invalid_protocols) {
+                invalid_protocols = protocols.size() != 4 ||
+                    !protocols.contains("version") || !protocols.at("version").is_number_integer() ||
+                    protocols.at("version") != 1 ||
+                    !protocols.contains("session_id") || !protocols.at("session_id").is_string() ||
+                    protocols.at("session_id") != event.value("id", "") ||
+                    !protocols.contains("http1") || !protocols.at("http1").is_object() ||
+                    !protocols.contains("http2") || !protocols.at("http2").is_object();
+            }
+        }
+
         if (!translated.is_null()) {
             translations[side] = translated;
             if (peer_translated_changed) {
@@ -892,7 +920,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         }
 
         const bool reserved = result.value("hold_credit_reservation", previously_reserved);
-        const auto bytes = state_charge(next, holds, translations, h1_responses, reserved);
+        const auto bytes = state_charge(next, holds, translations, h1_responses, reserved, protocols);
         const auto previous_bytes = runtime->states.contains(key) ? runtime->states.at(key).bytes : 0;
         const bool invalid_state = !next.is_object() || state_size > 65536;
         const bool invalid_translation = !translated.is_null() && (
@@ -917,7 +945,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
 
         if (invalid_state || invalid_translation || invalid_peer_translation ||
                 invalid_hold || invalid_peer_hold || invalid_reservation ||
-                invalid_h1_responses || deployment_full) {
+                invalid_h1_responses || invalid_protocols || deployment_full) {
             result = failure("Instance state / hold exceeds allowed mode or 64 KiB state / 1 MiB hold / 4 MiB deployment quota");
         } else if (!key.empty()) {
             std::scoped_lock lock(mutex_);
@@ -929,19 +957,28 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
             else if (!runtime->retired && !closed)
                 runtime->states[key] = Instance{
                     next, std::chrono::steady_clock::now(), bytes, holds,
-                    translations, h1_responses, reserved};
+                    translations, h1_responses, reserved, protocols};
         }
     }
     if (!result.value("ok", false) && runtime->states.contains(key)) {
         auto& instance = runtime->states.at(key);
+
+        // Failed callbacks may fail open. Their input can escape observation,
+        // so retaining an apparently continuous protocol history is unsafe.
+        if (!instance.protocols.is_null()) {
+            instance.protocols = nullptr;
+            result["logs"].push_back("Protocol tracking disabled after callback failure; reconnect to restart it");
+        }
+
         if (instance.holds.erase(side)) {
             // Current policy remains fail-open. Do not replay stale held bytes
             // after the failing callback has already been passed through.
             result["hold"] = {{"state", "abandoned"}, {"reason", "script failure; fail-open"}};
-            instance.bytes = state_charge(
-                instance.state, instance.holds, instance.translations,
-                instance.h1_responses, instance.hold_credit_reserved);
         }
+
+        instance.bytes = state_charge(
+            instance.state, instance.holds, instance.translations,
+            instance.h1_responses, instance.hold_credit_reserved, instance.protocols);
     }
     result.erase("instance_state");
     result.erase("held_parts"); // Never publish checkpoint bytes into GUI/events.
@@ -950,6 +987,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     result.erase("peer_translate_state");
     result.erase("translate_control");
     result.erase("h1_response_state");
+    result.erase("protocol_state");
     result.erase("hold_credit_reservation");
     // Also discard a previous state if a stop arrived while the worker was executing.
     {
@@ -1179,6 +1217,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
     auto result = run_request({{"script", script}, {"event", event}, {"enrichments", enrichments}}, legacy_pool);
     result.erase("instance_state");
     result.erase("held_parts");
+    result.erase("protocol_state");
     return result;
 }
 }

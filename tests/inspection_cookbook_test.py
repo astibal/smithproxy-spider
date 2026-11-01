@@ -135,6 +135,7 @@ class CookbookTests(unittest.TestCase):
         members = {
             node.attr for node in ast.walk(api_class)
             if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)
+            and not node.attr.startswith('_')
             and isinstance(node.value, ast.Name) and node.value.id == 'self'
         }
         members.update(node.name for node in api_class.body
@@ -166,6 +167,8 @@ class CookbookTests(unittest.TestCase):
                     event['details']['info']['webhook_control'] = {'content-reverse': True}
                 if expected == 'hold-resume':
                     options = {'hold_allowed': True, 'instance': {'mode': 'flow'}}
+                if expected == 'protocol-state':
+                    options = {'instance': {'mode': 'flow'}}
                 result = run(script, event, **options)
 
                 if expected in ('CommitException', 'TypeError'):
@@ -175,6 +178,14 @@ class CookbookTests(unittest.TestCase):
                     continue
 
                 self.assertTrue(result['ok'], result)
+                if expected == 'protocol-state':
+                    self.assertIn('protocol_state', result)
+                    content = run(script, fixture('h1'),
+                                  protocol_state=result['protocol_state'], **options)
+                    self.assertTrue(content['ok'], content)
+                    self.assertEqual(content['logs'], ['L 1 True False False'])
+                    continue
+
                 if expected == 'setup':
                     self.assertTrue(result['rewrite_requested'])
                     self.assertIsNone(result['replacement'])

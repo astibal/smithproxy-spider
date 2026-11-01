@@ -172,5 +172,61 @@ int main() {
     assert(restarted.run({{"script", storage}, {"event", event}})["logs"][0] == "5");
     const auto restarted_status = restarted.status();
     for (const auto& summary : restarted_status.at("recent")) assert(!summary.contains("instance_state"));
+
+    // Protocol observations belong to the flow instance, not its worker. A
+    // callback failure breaks continuity; reconnect is required to restart it.
+    deploy("flow", R"PY(
+if api.phase == 'setup':
+    api.connection.track_protocols()
+    return
+
+if api.info.get('fail'):
+    raise ValueError('tracking rollback')
+
+if api.http1.state is None:
+    api.print('unavailable')
+else:
+    api.print([message.sequence for message in api.http1.state])
+)PY");
+    json tracked = {{"action", "connection-content"}, {"id", "tracked-connection"},
+        {"details", {{"info", {{"side", "L"}, {"content", "R0VUIC8gSFRUUC8xLjENCg0K"},
+            {"content_annotations", json::array({
+                json::array({0, 16, "http1.start_line"}),
+                json::array({16, 18, "http1.headers"})})}}}}}};
+    const json tracked_setup = {{"action", "connection-start"}, {"id", tracked.at("id")}};
+    const auto tracking_started = engine.automatic(tracked_setup, json::array());
+    assert(tracking_started.at("ok") == true);
+    assert(!tracking_started.contains("protocol_state"));
+
+    const auto observed_once = engine.automatic(tracked, json::array());
+    assert(observed_once.at("ok") == true && observed_once.at("logs")[0] == "[1]");
+    assert(!observed_once.contains("protocol_state"));
+    const auto observed_twice = engine.automatic(tracked, json::array());
+    assert(observed_twice.at("ok") == true && observed_twice.at("logs")[0] == "[2]");
+
+    // A second connection starts with its own sequence, and cannot inherit the
+    // first connection's checkpoint even when both use the same worker pool.
+    auto other = tracked;
+    other["id"] = "other-tracked-connection";
+    engine.automatic({{"action", "connection-start"}, {"id", other.at("id")}}, json::array());
+    assert(engine.automatic(other, json::array()).at("logs")[0] == "[1]");
+
+    tracked["details"]["info"]["fail"] = true;
+    const auto tracking_failed = engine.automatic(tracked, json::array());
+    assert(tracking_failed.at("ok") == false);
+    assert(tracking_failed.at("logs").dump().find("tracking disabled") != std::string::npos);
+    tracked["details"]["info"].erase("fail");
+    assert(engine.automatic(tracked, json::array()).at("logs")[0] == "unavailable");
+    assert(engine.automatic(other, json::array()).at("logs")[0] == "[2]");
+
+    engine.automatic({{"action", "connection-stop"}, {"id", tracked.at("id")}}, json::array());
+    engine.automatic(tracked_setup, json::array());
+    assert(engine.automatic(tracked, json::array()).at("logs")[0] == "[1]");
+
+    const auto tracking_status = engine.status();
+    for (const auto& summary : tracking_status.at("recent")) {
+        assert(!summary.contains("protocol_state"));
+    }
+
     std::filesystem::remove_all(root);
 }

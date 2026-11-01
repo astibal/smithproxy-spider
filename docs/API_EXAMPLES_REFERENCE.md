@@ -257,6 +257,41 @@ Expert: Allow H1 integrity/range/signature inconsistency and representable overs
 return api.message.commit()
 ```
 
+### Message.suspend
+
+Stage a directional H2 stream suspension until resume. Complete logical Parts are retained before output encoding. Return translate() to commit. Deadlines are enforced at the next callback; no idle wakeup is scheduled. New stream openings preserve H2 ordering.
+
+Availability: Live H2 flow with native hold and content-reverse support.
+
+Access: stage directional stream suspension; type/result: `int`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+stream = api.message.suspend(part)
+return api.message.translate()
+```
+
+### Message.resume
+
+Resume the suspended directions of this stream and return editable retained Parts. Any later callback on the same connection may trigger resume. Translate publishes each draft through its original directional context, using reverse output when necessary. This is not an asynchronous transport operation.
+
+Availability: Live H2 flow with native hold and content-reverse support.
+
+Access: stage stream resume across directions; type/result: `tuple[RewritePart, ...]`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+# Resume a stream saved by an earlier callback on this connection.
+parts = api.message.resume(1)
+return api.message.translate()
+```
+
 ### Message.translate
 
 Explicitly translate every callback of a pinned H2 flow. With content-reverse capability from activation, DATA resizing uses bounded directional queues and independent flow-control windows; legacy peers allow same-length DATA only. Hold incomplete Parts explicitly. No silent background runs.
@@ -479,6 +514,24 @@ for header in api.http1.headers:
     api.print(header.name, header.value)
 ```
 
+### Http1.state
+
+Immutable Spider-local message records at callback entry. None when tracking is disabled; an empty tuple means tracking is enabled with no retained observations. Enable during setup with api.connection.track_protocols(). Sequences are directional message identities, not paired exchanges. Publication describes local processing, never socket delivery; None means a raw replacement made publication unknown.
+
+Availability: Tracked flow deployments only. Completed published records retire on a later callback.
+
+Access: read-only snapshot; type/result: `tuple[H1MessageState, ...] | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if api.http1.state is not None:
+    for message in api.http1.state:
+        api.print(message.side, message.sequence, message.content_complete)
+```
+
 ## Header
 
 One decoded HTTP header; order and duplicate names are preserved.
@@ -574,6 +627,24 @@ for block in api.http2.header_blocks:
     for header in block.headers:
         if header.name in (":method", ":path", ":status"):
             api.print(block.stream_id, header.name, header.value)
+```
+
+### Http2.state
+
+Immutable Spider-local stream records at callback entry, with separate request and response progress. None when tracking is disabled. These are locally observed Parts, not an RFC socket or stream-state dump. Script mutations do not change this snapshot. Publication is local, and may be unknown after raw replacement.
+
+Availability: Tracked flow deployments only. Missing observations are not inferred; complete native Parts are required.
+
+Access: read-only snapshot; type/result: `tuple[H2StreamState, ...] | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if api.http2.state is not None:
+    for stream in api.http2.state:
+        api.print(stream.stream_id, stream.request.suspended)
 ```
 
 ### Http2.Header
@@ -2078,6 +2149,25 @@ api.connection.http2.enforce_header_table_limit(0)
 return api.message.translate()
 ```
 
+### Connection.track_protocols
+
+Enable bounded Spider-local H1/H2 state snapshots for this flow. Call during setup; read api.http1.state and api.http2.state in later callbacks. Does not change transport mode, reserve rewrite or add a parser. State is stored by the host with the connection, not in Python globals.
+
+Availability: Live flow setup only.
+
+Access: stage protocol tracking; type/result: `None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if api.phase == 'setup':
+    api.connection.track_protocols()
+    return
+api.print(api.http2.state)
+```
+
 ### Connection.request_rewrite
 
 Reserve rewrite capability before the first payload. Does not modify bytes or activate Translate. Repeated calls are harmless.
@@ -2297,4 +2387,275 @@ Expert: This member has the same behavior in both modes. It does not select or p
 api.connection.set_mode(Mode.Translate)
 api.connection.http2.enforce_header_table_limit(0)
 return api.message.translate()
+```
+
+## H1MessageState
+
+One local directional message, identified by order rather than stream ID.
+
+The sequence does not pair requests with responses: informational responses
+are messages too. Neither direction's sequence is a transport identifier.
+
+
+### H1MessageState.sequence
+
+Directional message sequence, not an exchange ID.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `int`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for message in api.http1.state or ():
+    api.print(message.sequence)
+```
+
+### H1MessageState.side
+
+L for client input; R for server input.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `str`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for message in api.http1.state or ():
+    api.print(message.side)
+```
+
+### H1MessageState.headers_complete
+
+Native Parts supplied complete headers.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for message in api.http1.state or ():
+    api.print(message.headers_complete)
+```
+
+### H1MessageState.content_complete
+
+Complete received content; None means unknown.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool | None`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for message in api.http1.state or ():
+    api.print(message.content_complete)
+```
+
+### H1MessageState.informational
+
+An informational response, separate from the final response.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for message in api.http1.state or ():
+    api.print(message.informational)
+```
+
+### H1MessageState.suspended
+
+Spider retains this message locally, independently of input completeness.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for message in api.http1.state or ():
+    api.print(message.suspended)
+```
+
+### H1MessageState.published
+
+Complete local publication, not peer delivery. None after an untracked raw replacement.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool | None`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for message in api.http1.state or ():
+    api.print(message.published)
+```
+
+## H2MessageState
+
+Local progress of one direction; None means content is not yet known.
+
+### H2MessageState.headers_complete
+
+Complete initial headers were observed in this direction.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for stream in api.http2.state or ():
+    api.print(stream.request.headers_complete)
+```
+
+### H2MessageState.content_complete
+
+END_STREAM was observed; None before message input is known.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool | None`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for stream in api.http2.state or ():
+    api.print(stream.request.content_complete)
+```
+
+### H2MessageState.suspended
+
+Spider retains this direction locally.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for stream in api.http2.state or ():
+    api.print(stream.request.suspended)
+```
+
+### H2MessageState.published
+
+Complete local publication, not peer delivery. None for untracked output.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool | None`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for stream in api.http2.state or ():
+    api.print(stream.request.published)
+```
+
+## H2StreamState
+
+Request and response progress, not an RFC stream-state enumeration.
+
+### H2StreamState.stream_id
+
+Native HTTP/2 stream identifier within this connection.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `int`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for stream in api.http2.state or ():
+    api.print(stream.stream_id)
+```
+
+### H2StreamState.request
+
+Client-side reception and local processing.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `H2MessageState`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for stream in api.http2.state or ():
+    api.print(stream.request)
+```
+
+### H2StreamState.response
+
+Server-side reception and local processing.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `H2MessageState`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for stream in api.http2.state or ():
+    api.print(stream.response)
+```
+
+### H2StreamState.reset
+
+A native stream reset was observed; not inferred from GOAWAY.
+
+Availability: Flow callbacks after track_protocols() during setup.
+
+Access: read-only snapshot; type/result: `bool`.
+
+Easy: Read-only observation; does not select or change commit safety.
+
+Expert: Read-only observation; does not select or change commit safety.
+
+```python
+for stream in api.http2.state or ():
+    api.print(stream.reset)
 ```

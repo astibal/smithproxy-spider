@@ -267,13 +267,16 @@ class Http2Tests(unittest.TestCase):
                         scope = {'Mode': Mode, 'body': body_message.bodies()[0]}
                         source = 'def example(api, part, entry, PartType):\n' + indent(field['example'], '    ')
                         exec(compile(source, '<api-example>', 'exec'), scope)
-                        if name == 'Connection' and field['name'] == 'request_rewrite':
+                        if name == 'Connection' and field['name'] in ('request_rewrite', 'track_protocols'):
                             from inspection_api import Connection
                             api.phase = 'setup'
                             api.message = None
-                            api.connection = Connection(phase='setup')
+                            api.connection = Connection(phase='setup', instance_mode='flow')
                             scope['example'](api, part, part.headers.entries[0], PartType)
-                            self.assertTrue(api.connection._rewrite_requested)
+                            if field['name'] == 'request_rewrite':
+                                self.assertTrue(api.connection._rewrite_requested)
+                            else:
+                                self.assertTrue(api.connection._protocol_tracking_requested)
                         elif name == 'Message' and field['name'] in ('suspend', 'resume'):
                             # These operations need a live Translate checkpoint.
                             # Their successful examples run against H2 peers and

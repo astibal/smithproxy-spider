@@ -1063,7 +1063,18 @@ class Connection:
         self._instance_mode = instance_mode
         self._phase = phase
         self._rewrite_requested = False
+        self._protocol_tracking_requested = False
         self.http2 = ConnectionHttp2(self)
+
+    @api_method('', 'None',
+                'Enable bounded Spider-local H1/H2 state snapshots for this flow. Call during setup; read api.http1.state and api.http2.state in later callbacks. Does not change transport mode, reserve rewrite or add a parser. State is stored by the host with the connection, not in Python globals.',
+                "if api.phase == 'setup':\n    api.connection.track_protocols()\n    return\napi.print(api.http2.state)",
+                availability='Live flow setup only.', access='stage protocol tracking')
+    def track_protocols(self):
+        if self._phase != 'setup' or self._instance_mode != 'flow':
+            raise CommitException('Protocol tracking must be enabled during flow setup')
+
+        self._protocol_tracking_requested = True
 
     @api_method('', 'None',
                 'Reserve rewrite capability before the first payload. Does not modify bytes or activate Translate. Repeated calls are harmless.',

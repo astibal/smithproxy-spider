@@ -2,6 +2,18 @@
 
 ## Scripting
 
+- **Protocol state API:** opt-in H1/H2 snapshots now use bounded, host-owned
+  connection checkpoints and native hold provenance. Next, consume these views
+  in header-hook interception and audit observations for remaining protocols;
+  do not invent transport states. See `PROTOCOL_STATE_API_PROPOSAL.md` for the
+  implemented boundary and broader design.
+
+- **Opaque coverage diagnostics (after the state API):** discuss receive-byte
+  accounting for recognized Parts, Opaque ranges and pending reassembly. Count
+  original bytes once, not nested views, replacements or resumed data. Preserve
+  bounded offset/length/reason diagnostics without logging payloads by default.
+  This is a separate deferred task, not part of state integration.
+
 - **Flow suspension coverage:** completed H2 request/response interception now
   uses retained logical Parts in native Translate. Resume or kill is published
   on a subsequent callback of the owning connection, from either direction;

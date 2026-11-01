@@ -36,10 +36,12 @@ private:
         nlohmann::json translations = nlohmann::json::object(); // L/R HPACK tables
         nlohmann::json h1_responses = nullptr; // ordered origin/local response slots
         bool hold_credit_reserved = false; // backend-owned until this instance ends
+        nlohmann::json protocols = nullptr; // opt-in Spider-local protocol observations
     };
     static std::size_t state_charge(const nlohmann::json& state, const nlohmann::json& holds,
                                    const nlohmann::json& translations,
-                                   const nlohmann::json& h1_responses, bool reserved);
+                                   const nlohmann::json& h1_responses, bool reserved,
+                                   const nlohmann::json& protocols);
     struct Runtime {
         std::shared_ptr<InspectionPool> pool;
         std::timed_mutex serial;

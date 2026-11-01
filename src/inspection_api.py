@@ -1,7 +1,8 @@
 """Typed inspection views. Field metadata generates the browser reference and completion."""
 from __future__ import annotations
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass, replace
 from typing import Any
+from inspection_protocol_state import H1MessageState, H2MessageState, H2StreamState, ProtocolStateOwner
 import re
 import base64
 import hashlib
@@ -22,8 +23,8 @@ _SAME_SAFETY = 'This member has the same behavior in both modes. It does not sel
 
 
 def documented(description, example, availability='Always available for a content callback.', *, access='read-only snapshot',
-               easy=_SAME_SAFETY, expert=_SAME_SAFETY):
-    return field(metadata={'description': description, 'example': example,
+               easy=_SAME_SAFETY, expert=_SAME_SAFETY, default=MISSING):
+    return field(default=default, metadata={'description': description, 'example': example,
                            'availability': availability, 'access': access, 'easy': easy, 'expert': expert})
 
 
@@ -210,8 +211,12 @@ class Message:
                 raise CommitException('Staged reset stream failures require message.translate()')
             h1_response = getattr(self, '_h1_response', None)
             if h1_response is not None:
-                return h1_response.commit(update_content_length, safety=safety)
-            return commit_message(self, update_content_length, safety=safety)
+                result = h1_response.commit(update_content_length, safety=safety)
+            else:
+                result = commit_message(self, update_content_length, safety=safety)
+
+            object.__setattr__(self, '_commit_result', result)
+            return result
         except CommitException:
             raise
         except (ValueError, TypeError, AttributeError, OverflowError) as error:
@@ -745,6 +750,11 @@ class Http1:
     target: str | None = documented('Request target as decoded by Spider; may contain escaped non-printable bytes.', 'if api.http1.target is not None:\n    api.print(api.http1.method, api.http1.target)  # e.g. GET /search?q=spider', 'None for responses or unavailable heads.')
     status: int | None = documented('HTTP response status code.', 'if api.http1.status is not None and api.http1.status >= 400:\n    api.print("HTTP error", api.http1.status)', 'None for requests or unavailable heads.')
     headers: tuple[Header, ...] = documented('Ordered headers including duplicates. Empty means no fields or unavailable; check available.', 'for header in api.http1.headers:\n    api.print(header.name, header.value)')
+    state: tuple[H1MessageState, ...] | None = documented(
+        'Immutable Spider-local message records at callback entry. None when tracking is disabled; an empty tuple means tracking is enabled with no retained observations. Enable during setup with api.connection.track_protocols(). Sequences are directional message identities, not paired exchanges. Publication describes local processing, never socket delivery; None means a raw replacement made publication unknown.',
+        'if api.http1.state is not None:\n    for message in api.http1.state:\n        api.print(message.side, message.sequence, message.content_complete)',
+        availability='Tracked flow deployments only. Completed published records retire on a later callback.',
+        default=None)
 
 
 @dataclass(frozen=True)
@@ -776,6 +786,11 @@ class Http2:
     available: bool = documented('HTTP/2 annotation or complete HPACK enrichment was observed. Does not guarantee decoded headers or complete frames.', 'if api.http2.available and not api.http2.header_blocks:\n    api.print("H2 observed, but no complete decoded header block in this callback")')
     frames: tuple[H2Frame, ...] = documented('Frames with a complete annotated header in this callback, in wire order. Continuation fragments without a header are not guessed.', 'for frame in api.http2.frames:\n    api.print(frame.stream_id, frame.type, frame.complete)')
     header_blocks: tuple[H2HeaderBlock, ...] = documented('All complete HPACK enrichments emitted for this callback, in backend order.', 'for block in api.http2.header_blocks:\n    for header in block.headers:\n        if header.name in (":method", ":path", ":status"):\n            api.print(block.stream_id, header.name, header.value)')
+    state: tuple[H2StreamState, ...] | None = documented(
+        'Immutable Spider-local stream records at callback entry, with separate request and response progress. None when tracking is disabled. These are locally observed Parts, not an RFC socket or stream-state dump. Script mutations do not change this snapshot. Publication is local, and may be unknown after raw replacement.',
+        'if api.http2.state is not None:\n    for stream in api.http2.state:\n        api.print(stream.stream_id, stream.request.suspended)',
+        availability='Tracked flow deployments only. Missing observations are not inferred; complete native Parts are required.',
+        default=None)
 
 
     @api_method('name: bytes, value: bytes, indexing: str = "without"', 'HpackField', 'Create a literal HPACK field. Indexing may affect future peer state, which REWRITE does not repair.', 'part.headers.entries.append(api.http2.Header(b"x-test", b"yes"))', access='create private draft')
@@ -881,7 +896,8 @@ def api_schema():
     types = [InspectionViews, Message, ContentMetadata, Http1, Header, Http2, H2Frame, H2HeaderBlock,
              InstanceContext, SharedStorage, StorageNamespace, MessageSnapshot, Http1Draft, CommitException,
              RewritePart, H1ChunkedBody, H2Body, PartContent, H2Headers, HpackField,
-             PartList, HeldCommit, Connection, ConnectionHttp2]
+             PartList, HeldCommit, Connection, ConnectionHttp2,
+             H1MessageState, H2MessageState, H2StreamState]
     return {'version': '0.6', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),

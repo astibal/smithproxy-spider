@@ -66,6 +66,23 @@ class Api:
                                         identity.get('deployment_id', ''), identity.get('version', 0))
         self.connection = Connection(self.message, request.get('translate_active', False),
                                      self.instance.mode, self.phase)
+        self._protocol_owner = None
+        protocol_checkpoint = request.get('protocol_state')
+
+        # Observe native Parts after reassembly and Translate enrichment, but
+        # before the script can edit drafts. No state lives in worker globals.
+        if protocol_checkpoint is not None:
+            if self.instance.mode != 'flow':
+                raise CommitException('Protocol tracking requires a flow deployment')
+
+            owner = ProtocolStateOwner(self.session_id, protocol_checkpoint)
+            if self.phase == 'content':
+                owner.observe(self.side, self.message.parts)
+
+            self._protocol_owner = owner
+            self.http1 = replace(self.http1, state=owner.h1.snapshot())
+            self.http2 = replace(self.http2, state=owner.h2.snapshot())
+
         starts, ends = info.get('L7_payload_start', []), info.get('L7_payload_end', [])
         self.l7_state = 'unavailable'
         self.l7_ranges = []
@@ -253,6 +270,55 @@ def invoke_content_view(current):
     return response
 
 
+def protocol_checkpoint(api, current, response, known_publication):
+    """Prepare the state checkpoint only after the callback result is valid."""
+    owner = api._protocol_owner
+
+    if api.phase == 'setup' and api.connection._protocol_tracking_requested:
+        owner = ProtocolStateOwner(api.session_id)
+
+    if owner is None:
+        return None
+
+    if api.phase == 'setup':
+        return owner.checkpoint()
+
+    # Native hold checkpoints are the authority for retained Parts. Include
+    # the opposite lane even when this callback did not change that hold.
+    peer = 'R' if api.side == 'L' else 'L'
+    checkpoints = {
+        api.side: response.get('held_parts'),
+        peer: response.get('peer_held_parts', current.get('peer_held_parts')),
+    }
+    held = {}
+
+    for side, checkpoint in checkpoints.items():
+        if checkpoint is not None:
+            held[side], _ = _restore(checkpoint)
+
+    # Logical suspension is separate from the ordinary suffix hold. Its
+    # buffers also retain younger stream openings blocked behind an older one.
+    control = response.get('translate_control') or {}
+    suspension = control.get('suspension') or {}
+    paused = set()
+
+    for side in ('L', 'R'):
+        direction = suspension.get(side, {})
+
+        for stream in direction.get('paused', {}):
+            paused.add((side, int(stream)))
+
+        buffers = direction.get('buffers')
+        if buffers is not None:
+            store = _PartHoldBuffers.from_checkpoint(buffers)
+
+            for stream in store.stream_ids:
+                paused.add((side, stream))
+
+    owner.finish(held, paused, known_publication=known_publication)
+    return owner.checkpoint()
+
+
 def invoke_script(current, compiled):
     output = Output()
     addon_worker.drain_startup_output(output)
@@ -334,6 +400,31 @@ def invoke_script(current, compiled):
                 if h1_response.reverse_output:
                     response['replacement_reverse'] = base64.b64encode(
                         h1_response.reverse_output).decode()
+            # Capture the identity before HeldCommit is reduced to its prefix
+            # and byte-like results are normalized. Arbitrary replacements do
+            # not prove publication of the input's logical message identities.
+            known_publication = result is None
+            if api is not None and api.message is not None:
+                native_results = [getattr(api.message, '_commit_result', None)]
+                if translation is not None:
+                    native_results.append(translation.result)
+                if h1_response is not None:
+                    native_results.append(h1_response.result)
+
+                known_publication = known_publication or any(
+                    value is not None and result is value for value in native_results)
+
+                # Synthesized responses and termination deliberately suppress
+                # input messages. A successful native commit is not evidence
+                # that those input identities were published unchanged.
+                if h1_response is not None and (h1_response.local_responses or h1_response.termination):
+                    known_publication = False
+
+                if translation is not None and (
+                        translation.local_responses or translation.terminations or
+                        translation.reset_failures or translation.informational_suppressions):
+                    known_publication = False
+
             held = None
             if isinstance(result, HeldCommit):
                 if not current.get('hold_allowed') or api.instance.mode != 'flow' or api.side not in ('L', 'R'):
@@ -387,6 +478,11 @@ def invoke_script(current, compiled):
             if api is not None and api.phase == 'setup':
                 response['rewrite_requested'] = api.connection._rewrite_requested
             response['held_parts'] = held
+            if api is not None:
+                tracked = protocol_checkpoint(api, current, response, known_publication)
+                if tracked is not None:
+                    response['protocol_state'] = tracked
+
             if response.get('replacement_reverse'):
                 # An empty forward replacement plus reverse output is not need-more.
                 response['need_more'] = False

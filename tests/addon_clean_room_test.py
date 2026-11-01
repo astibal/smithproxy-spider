@@ -84,7 +84,10 @@ class CleanRoomBoundaryTests(unittest.TestCase):
             with self.subTest(module=entry):
                 self.assertEqual(path.suffix, ".py")
                 self.assertEqual(path.name, entry)
-                self.assertRegex(module_name, r"^addon_[A-Za-z0-9_]+$")
+                # The native observation table is bundled beside the facade,
+                # but it remains Spider-owned and has no reference imports.
+                if module_name != 'inspection_protocol_state':
+                    self.assertRegex(module_name, r"^addon_[A-Za-z0-9_]+$")
                 self.assertTrue((ROOT / "src" / entry).is_file())
 
 
