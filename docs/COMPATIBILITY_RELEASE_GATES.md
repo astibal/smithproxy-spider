@@ -20,12 +20,12 @@ drop-in replacement while any required gate below remains open.
 
 | Requirement | State | Evidence |
 | --- | --- | --- |
-| Reference corpus is executable | Pass | All 144 checked JSON corpora are named by registered direct tests; `addon_corpus_inventory_test.py` enforces this and prevents runtime leakage. |
+| Reference corpus is executable | Pass | Every checked JSON corpus is named by a registered direct test; `addon_corpus_inventory_test.py` enforces this and prevents runtime leakage. |
 | HTTP/1 mutation and control | Pass for implemented operations | Native integration covers headers, bodies, trailers, local responses, pipelining and callback-local `flow.kill()`. |
 | HTTP/2 mutation and control | Pass for implemented operations | Native integration covers fragmented headers and bodies, multiplexing, HPACK checkpoints, credit accounting, local responses, informational responses, reset, GOAWAY and `flow.kill()`. |
 | Persistent addon state | Pass | One worker owns a deployment generation; multiple connections share script state. Cross-protocol flow capacity and deterministic retirement are tested. |
 | Public model and helper surface | Pass for audited surface | Exact class and service inventories, module exports, hooks, helpers, options, commands, filters, I/O and official examples are corpus-tested. |
-| Clean full regression | Pass at the recorded checkpoint | The final Rhino tree completed 712 direct Python tests and all 107 CTests on 2026-10-31. This checkpoint must be repeated after later functional changes. |
+| Clean full regression | Pass at the recorded checkpoint | The H1 suspension snapshot completed all 112 configured CTests on Rhino on 2026-11-01, plus 18 focused H1/corpus/clean-room tests. The local-response reference probe reproduced its recorded output exactly on a second run. Optional experimental CMake gates were not enabled in this snapshot. Repeat the applicable gates after functional changes. |
 
 ## Open native operations
 
@@ -34,7 +34,7 @@ objective's approval rules prohibit implementing them implicitly.
 
 | Capability | Current boundary | Required decision |
 | --- | --- | --- |
-| Long-lived `flow.intercept()` / `resume()` | Completed H2 request/response hooks retain logical Parts across callbacks; publication uses the next callback of the owning connection in either direction. Header hooks, generated-response interception, H1/raw suspension and idle wakeup remain open. | Complete the scoped mapping and behavioral comparison; see the current contract in `FLOW_SUSPENSION_API_PROPOSAL.md`. Idle wakeup and its transport are deferred. |
+| Long-lived `flow.intercept()` / `resume()` | H1/H2 header, complete-message and generated-response hooks retain native Parts across callbacks; publication uses a callback of the owning connection in either direction. H1 holds the ordered pipeline suffix. Raw suspension and idle wakeup remain open. | Keep the documented local-response kill deviation explicit; see `FLOW_SUSPENSION_API_PROPOSAL.md`. Idle wakeup and its transport are deferred. |
 | Header-hook streaming | Reference behavior and executable H1/H2 corpora exist; complete-message hooks work | Approve the phased native operation in `STREAMING_API_PROPOSAL.md`. |
 | Request destination changes | Reference reroute corpus and contract exist; incompatible mutation fails closed | Approve `DESTINATION_ROUTING_API_PROPOSAL.md` and the Smithproxy routing boundary. |
 | Host shutdown and live replay | Detached `load_flow()` is supported; proxy-owned actions are absent rather than simulated | Choose and approve a scope in `HOST_CONTROL_PROPOSAL.md`. |

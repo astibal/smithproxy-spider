@@ -8,6 +8,7 @@ import random
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
 from inspection_api import (
@@ -64,10 +65,427 @@ def h1_flow(side, *items, state=None, reverse=True):
     return result
 
 
+class H1SuspensionTests(unittest.TestCase):
+    request = b'GET /first HTTP/1.1\r\nHost: example.test\r\n\r\n'
+    later = b'GET /later HTTP/1.1\r\nHost: example.test\r\n\r\n'
+    response = b'HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nbody'
+
+    def callback(self, side, *items, state=None, held=None, peer=None,
+                 allow_hold=True, reverse=True):
+        data = b''.join(items)
+        annotations = []
+        offset = 0
+        for item in items:
+            if b'\r\n\r\n' in item:
+                line_end = item.index(b'\r\n') + 2
+                head_end = item.index(b'\r\n\r\n') + 4
+                annotations.extend((
+                    [offset, offset + line_end, 'http1.start_line'],
+                    [offset + line_end, offset + head_end, 'http1.headers'],
+                ))
+            offset += len(item)
+
+        info = {'content_annotations': annotations}
+        if held is not None:
+            message = resume(held, data, info)
+        else:
+            message = Message(data, len(data), info)
+
+        _prepare_h1_responses(message, {
+            'instance': {'mode': 'flow'},
+            'hold_allowed': allow_hold,
+            'held_parts': held,
+            'peer_held_parts': peer,
+            'h1_response_state': state,
+            'event': {'details': {'info': {
+                'side': side,
+                'webhook_control': {
+                    'content-reverse': reverse,
+                    'connection-close': True,
+                },
+            }}},
+        })
+        return message
+
+    def pause(self, side='L', state=None, wire=None):
+        message = self.callback(side, wire or self.request, state=state)
+        self.assertEqual(message.suspend(message.parts[0]), 0)
+        held = message.commit()
+        self.assertEqual(held.prefix, b'')
+        return held.checkpoint, message._h1_response.checkpoint
+
+    def test_pause_survives_fresh_callbacks_and_keeps_younger_requests(self):
+        held, state = self.pause()
+        next_message = self.callback('L', self.later, held=held, state=state)
+
+        still_held = next_message.commit()
+
+        self.assertEqual(still_held.prefix, b'')
+        self.assertEqual(next_message._h1_response.checkpoint, state)
+
+        released = self.callback('L', held=still_held.checkpoint, state=state)
+        parts = released.resume(0, side='L')
+        parts[0].http1.target = '/edited'
+
+        self.assertEqual(released.commit(), self.request.replace(b'/first', b'/edited') + self.later)
+        self.assertEqual(released._h1_response.checkpoint, {
+            'version': 1, 'slots': ['origin', 'origin'],
+        })
+
+    def test_peer_resume_uses_reverse_output_and_native_edits(self):
+        held, state = self.pause()
+        callback = self.callback('R', state=state, peer=held)
+        detached = callback.suspended_parts(0, side='L')
+        detached[0].http1.target = '/discarded'
+        parts = callback.resume(0, side='L')
+        parts[0].http1.target = '/edited'
+
+        self.assertEqual(callback.commit(), b'')
+        self.assertEqual(callback._h1_response.reverse_output,
+                         self.request.replace(b'/first', b'/edited'))
+        self.assertEqual(callback._h1_response.checkpoint['slots'], ['origin'])
+        self.assertTrue(callback._h1_response.suspension.peer_hold_changed)
+        self.assertIsNone(callback._h1_response.suspension.peer_hold_result)
+
+    def test_peer_response_resume_follows_current_request_publication(self):
+        request = self.callback('L', self.request)
+        request.commit()
+        held, state = self.pause('R', request._h1_response.checkpoint, self.response)
+        callback = self.callback('L', self.later, peer=held, state=state)
+        parts = callback.resume(0, side='R')
+        parts[1].set_bytes(b'changed body')
+
+        self.assertEqual(callback.commit(), self.later)
+        self.assertEqual(peer_body(callback._h1_response.reverse_output), b'changed body')
+        self.assertEqual(callback._h1_response.checkpoint['slots'], ['origin'])
+
+    def test_resume_can_pause_younger_pipeline_message_atomically(self):
+        for side in ('L', 'R'):
+            with self.subTest(callback_side=side):
+                initial = self.callback('L', self.request, self.later)
+                initial.suspend(initial.parts[0])
+                held = initial.commit().checkpoint
+                state = initial._h1_response.checkpoint
+
+                if side == 'L':
+                    callback = self.callback(side, state=state, held=held)
+                else:
+                    callback = self.callback(side, state=state, peer=held)
+                parts = callback.resume(0, side='L')
+                callback.suspend(parts[2])
+                result = callback.commit()
+
+                if side == 'L':
+                    self.assertEqual(result.prefix, self.request)
+                    remaining = result.checkpoint
+                else:
+                    self.assertEqual(result, b'')
+                    self.assertEqual(callback._h1_response.reverse_output, self.request)
+                    remaining = callback._h1_response.suspension.peer_hold_result
+                self.assertEqual(callback._h1_response.checkpoint['slots'], ['origin'])
+
+                final = self.callback('L', held=remaining,
+                                      state=callback._h1_response.checkpoint)
+                final.resume(0, side='L')
+                self.assertEqual(final.commit(), self.later)
+                self.assertEqual(final._h1_response.checkpoint['slots'], ['origin', 'origin'])
+
+    def test_resumed_peer_request_can_generate_local_response(self):
+        held, state = self.pause()
+        callback = self.callback('R', state=state, peer=held)
+        parts = callback.resume(0, side='L')
+        callback.respond(201, body=b'local', request=parts[0])
+
+        self.assertEqual(peer_body(callback.commit()), b'local')
+        self.assertEqual(callback._h1_response.reverse_output, b'')
+        self.assertEqual(callback._h1_response.checkpoint['slots'], [])
+
+    def test_incomplete_peer_resume_preserves_reassembly_hold(self):
+        head = b'POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 4\r\n\r\n'
+        held, state = self.pause(wire=head + b'ab')
+        callback = self.callback('R', state=state, peer=held)
+        callback.resume(0, side='L')
+
+        self.assertEqual(callback.commit(), b'')
+        self.assertEqual(callback._h1_response.reverse_output, b'')
+        next_hold = callback._h1_response.suspension.peer_hold_result
+        self.assertIsNotNone(next_hold)
+        self.assertNotIn('paused', callback._h1_response.checkpoint)
+
+        completed = self.callback('L', b'cd', held=next_hold,
+                                  state=callback._h1_response.checkpoint)
+        self.assertEqual(completed.commit(), head + b'abcd')
+        self.assertEqual(completed._h1_response.checkpoint['slots'], ['origin'])
+
+    def test_peer_termination_discards_both_lanes(self):
+        held, state = self.pause()
+        callback = self.callback('R', state=state, peer=held)
+        parts = callback.resume(0, side='L')
+        callback.terminate(parts[0])
+
+        self.assertEqual(callback.commit(), b'')
+        self.assertEqual(callback._h1_response.reverse_output, b'')
+        self.assertEqual(callback._h1_response.checkpoint, {'version': 1, 'slots': []})
+        self.assertTrue(callback._h1_response.suspension.peer_hold_changed)
+        self.assertIsNone(callback._h1_response.suspension.peer_hold_result)
+
+    def test_capabilities_and_explicit_side_are_required(self):
+        for options in ({'allow_hold': False}, {'reverse': False}):
+            with self.subTest(options=options):
+                message = self.callback('L', self.request, **options)
+                with self.assertRaisesRegex(CommitException, 'support'):
+                    message.suspend(message.parts[0])
+
+        held, state = self.pause()
+        callback = self.callback('R', state=state, peer=held)
+        with self.assertRaisesRegex(CommitException, 'L/R side'):
+            callback.resume(0)
+        with self.assertRaisesRegex(CommitException, 'id zero'):
+            callback.resume(1, side='L')
+        self.assertIsNone(callback._h1_response.result)
+
+    def test_failed_peer_assembly_does_not_consume_host_checkpoint(self):
+        held, state = self.pause()
+        before = json.dumps([held, state], sort_keys=True)
+        callback = self.callback('R', state=state, peer=held)
+        parts = callback.resume(0, side='L')
+        parts[0].http1.set_header('Host', 'invalid\r\ninjected: header')
+
+        with self.assertRaises(CommitException):
+            callback.commit()
+
+        self.assertIsNone(callback._h1_response.result)
+        self.assertEqual(callback._h1_response.checkpoint, state)
+        self.assertEqual(callback._h1_response.reverse_output, b'')
+        self.assertFalse(callback._h1_response.suspension.peer_hold_changed)
+        self.assertEqual(json.dumps([held, state], sort_keys=True), before)
+
+        # Retry from the unchanged host-owned data, not the failed draft.
+        retry = self.callback('R', state=state, peer=held)
+        retry.resume(0, side='L')
+        retry.commit()
+        self.assertEqual(retry._h1_response.reverse_output, self.request)
+
+    def test_suspension_deadline_is_checked_on_callback_not_extended(self):
+        with patch('inspection_api._suspension_now_ms', return_value=1000):
+            held, state = self.pause()
+
+        with patch('inspection_api._suspension_now_ms', return_value=61000):
+            callback = self.callback('R', state=state, peer=held)
+            with self.assertRaisesRegex(CommitException, 'deadline expired'):
+                callback.resume(0, side='L')
+            self.assertIsNone(callback._h1_response.result)
+
+    def test_suspend_cannot_be_bypassed_by_changing_hold_boundary(self):
+        message = self.callback('L', self.request, self.later)
+        message.suspend(message.parts[0])
+        message.parts.hold_from(message.parts[2])
+
+        with self.assertRaisesRegex(CommitException, 'boundary was changed'):
+            message.commit()
+
+        self.assertIsNone(message._h1_response.result)
+        self.assertEqual(message._h1_response.reverse_output, b'')
+
+    def test_missing_checkpoint_and_duplicate_command_are_rejected(self):
+        held, state = self.pause()
+        with self.assertRaisesRegex(CommitException, 'lost its retained Parts'):
+            self.callback('R', state=state)
+
+        callback = self.callback('R', state=state, peer=held)
+        callback.resume(0, side='L')
+        with self.assertRaisesRegex(CommitException, 'out-of-order'):
+            callback.resume(0, side='L')
+
+    def test_suspended_response_keeps_queued_local_reply_behind_it(self):
+        requests = self.callback('L', self.request, self.later)
+        requests.respond(201, body=b'local', request=requests.parts[2])
+        requests.commit()
+        held, state = self.pause('R', requests._h1_response.checkpoint, self.response)
+
+        callback = self.callback('L', state=state, peer=held)
+        callback.resume(0, side='R')
+        self.assertEqual(callback.commit(), b'')
+        wire = callback._h1_response.reverse_output
+
+        self.assertTrue(wire.startswith(self.response))
+        self.assertEqual(wire.count(b'HTTP/1.1 201'), 1)
+        self.assertTrue(wire.endswith(b'local'))
+        self.assertEqual(callback._h1_response.checkpoint['slots'], [])
+
+    def test_fresh_workers_publish_peer_hold_and_checkpoint_together(self):
+        from inspection_cookbook_test import WORKER
+        from worker_bootstrap import packed_arguments
+
+        command = [sys.executable, '-I', '-c', *packed_arguments(WORKER)]
+
+        def invoke(script, side, items, *, state=None, held=None, peer=None):
+            annotations = []
+            offset = 0
+            for item in items:
+                line_end = item.index(b'\r\n') + 2
+                head_end = item.index(b'\r\n\r\n') + 4
+                annotations.extend((
+                    [offset, offset + line_end, 'http1.start_line'],
+                    [offset + line_end, offset + head_end, 'http1.headers'],
+                ))
+                offset += len(item)
+
+            request = {
+                'script': script,
+                'hold_allowed': True,
+                'held_parts': held,
+                'peer_held_parts': peer,
+                'h1_response_state': state,
+                'instance': {'mode': 'flow'},
+                'event': {'id': 'h1-native-suspension', 'details': {'info': {
+                    'side': side,
+                    'content': base64.b64encode(b''.join(items)).decode(),
+                    'content_annotations': annotations,
+                    'webhook_control': {'content-reverse': True},
+                }}},
+            }
+            process = subprocess.run(command, input=json.dumps(request),
+                                     capture_output=True, text=True, check=True, timeout=10)
+            result = json.loads(process.stdout)
+            self.assertTrue(result['ok'], result)
+            return result
+
+        # The first request has reached the origin. Its response supplies a
+        # real opposite-direction callback which releases the second request.
+        pause = 'api.message.suspend(api.message.parts[2])\nreturn api.message.commit()'
+        first = invoke(pause, 'L', [self.request, self.later])
+        self.assertEqual(base64.b64decode(first['replacement']), self.request)
+        release = ('parts = api.message.resume(0, side="L")\n'
+                   'parts[0].http1.target = "/edited"\n'
+                   'return api.message.commit()')
+        result = invoke(release, 'R', [self.response],
+                        state=first['h1_response_state'], peer=first['held_parts'])
+
+        self.assertEqual(base64.b64decode(result['replacement']), self.response)
+        self.assertEqual(base64.b64decode(result['replacement_reverse']),
+                         self.later.replace(b'/later', b'/edited'))
+        self.assertIsNone(result['peer_held_parts'])
+        self.assertEqual(result['h1_response_state'], {'version': 1, 'slots': ['origin']})
+
+        # Reverse the roles: a later client request releases a held response.
+        seed = invoke('return api.message.commit()', 'L', [self.request])
+        pause = 'api.message.suspend(api.message.parts[0])\nreturn api.message.commit()'
+        first = invoke(pause, 'R', [self.response], state=seed['h1_response_state'])
+        release = ('parts = api.message.resume(0, side="R")\n'
+                   'parts[1].set_bytes(b"edited response")\n'
+                   'return api.message.commit()')
+        result = invoke(release, 'L', [self.later],
+                        state=first['h1_response_state'], peer=first['held_parts'])
+
+        self.assertEqual(base64.b64decode(result['replacement']), self.later)
+        self.assertEqual(peer_body(base64.b64decode(result['replacement_reverse'])), b'edited response')
+        self.assertIsNone(result['peer_held_parts'])
+        self.assertEqual(result['h1_response_state'], {'version': 1, 'slots': ['origin']})
+
+
 class H1LocalResponseTests(unittest.TestCase):
     first = b'GET /first HTTP/1.1\r\nHost: example.test\r\n\r\n'
     second = b'GET /second HTTP/1.1\r\nHost: example.test\r\n\r\n'
     third = b'GET /third HTTP/1.1\r\nHost: example.test\r\n\r\n'
+
+    def test_held_requests_do_not_allocate_origin_slots(self):
+        requests = h1_flow('L', self.first, self.second, self.third)
+        requests.parts.hold_from(requests.parts[2])
+
+        held = requests.commit()
+
+        self.assertEqual(held.prefix, self.first)
+        self.assertEqual(requests._h1_response.checkpoint['slots'], ['origin'])
+        self.assertEqual(requests._h1_response.reverse_output, b'')
+
+        released = resume(held.checkpoint, b'')
+        _prepare_h1_responses(released, {
+            'instance': {'mode': 'flow'},
+            'h1_response_state': requests._h1_response.checkpoint,
+            'event': {'details': {'info': {
+                'side': 'L',
+                'webhook_control': {'content-reverse': True},
+            }}},
+        })
+
+        self.assertEqual(released.commit(), self.second + self.third)
+        self.assertEqual(
+            released._h1_response.checkpoint['slots'],
+            ['origin', 'origin', 'origin'],
+        )
+
+    def test_response_prefix_advances_only_published_slots(self):
+        requests = h1_flow('L', self.first, self.second, self.third)
+        requests.respond(201, body=b'local', request=requests.parts[4])
+        requests.commit()
+        state = requests._h1_response.checkpoint
+        first = b'HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\none'
+        second = b'HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\ntwo'
+        responses = h1_flow('R', first, second, state=state)
+        responses.parts.hold_from(responses.parts[2])
+
+        held = responses.commit()
+
+        self.assertEqual(held.prefix, first)
+        self.assertEqual(responses._h1_response.checkpoint['slots'], state['slots'][1:])
+        self.assertEqual(responses._h1_response.reverse_output, b'')
+
+    def test_local_response_before_hold_remains_publishable(self):
+        requests = h1_flow('L', self.first, self.second)
+        requests.respond(201, body=b'local', request=requests.parts[0])
+        requests.parts.hold_from(requests.parts[2])
+
+        held = requests.commit()
+
+        self.assertEqual(held.prefix, b'')
+        self.assertEqual(requests._h1_response.checkpoint['slots'], [])
+        self.assertEqual(peer_body(requests._h1_response.reverse_output), b'local')
+
+    def test_held_response_does_not_release_queued_local_response(self):
+        requests = h1_flow('L', self.first, self.second)
+        requests.respond(201, body=b'local', request=requests.parts[2])
+        requests.commit()
+        state = requests._h1_response.checkpoint
+        origin = b'HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\norigin'
+        response = h1_flow('R', origin, state=state)
+        response.parts.hold_from(response.parts[0])
+
+        held = response.commit()
+
+        self.assertEqual(held.prefix, b'')
+        self.assertEqual(response._h1_response.checkpoint, state)
+        self.assertEqual(response._h1_response.reverse_output, b'')
+
+        # Release the native checkpoint in a fresh callback. The local reply
+        # must be inserted once, after its preceding origin response.
+        released = resume(held.checkpoint, b'')
+        _prepare_h1_responses(released, {
+            'instance': {'mode': 'flow'},
+            'h1_response_state': response._h1_response.checkpoint,
+            'event': {'details': {'info': {
+                'side': 'R',
+                'webhook_control': {'content-reverse': True},
+            }}},
+        })
+        wire = released.commit()
+
+        self.assertTrue(wire.startswith(origin))
+        self.assertEqual(wire.count(b'HTTP/1.1 201'), 1)
+        self.assertTrue(wire.endswith(b'local'))
+        self.assertEqual(released._h1_response.checkpoint['slots'], [])
+
+    def test_local_response_cannot_bypass_held_request_suffix(self):
+        requests = h1_flow('L', self.first, self.second, self.third)
+        requests.respond(201, body=b'local', request=requests.parts[4])
+        requests.parts.hold_from(requests.parts[2])
+
+        with self.assertRaisesRegex(CommitException, 'held request'):
+            requests.commit()
+
+        self.assertIsNone(requests._h1_response.result)
+        self.assertIsNone(requests._h1_response.checkpoint)
+        self.assertEqual(requests._h1_response.reverse_output, b'')
 
     def test_immediate_and_queued_responses_keep_pipeline_order(self):
         requests = h1_flow('L', self.first, self.second, self.third)

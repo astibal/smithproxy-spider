@@ -259,9 +259,9 @@ return api.message.commit()
 
 ### Message.suspend
 
-Stage a directional H2 stream suspension until resume. Complete logical Parts are retained before output encoding. Return translate() to commit. Deadlines are enforced at the next callback; no idle wakeup is scheduled. New stream openings preserve H2 ordering.
+Suspend native Parts until a later callback resumes them. H2 retains a directional stream and returns its stream id; return translate(). H1 retains the selected header and its whole pipeline suffix, returns id zero, and uses commit(). H1 resume and suspended_parts require side="L" or side="R". Deadlines are enforced at the next callback; no idle wakeup is scheduled.
 
-Availability: Live H2 flow with native hold and content-reverse support.
+Availability: Live H1 or H2 flow with native hold and content-reverse support.
 
 Access: stage directional stream suspension; type/result: `int`.
 
@@ -276,9 +276,9 @@ return api.message.translate()
 
 ### Message.suspended_parts
 
-Inspect detached copies of previously suspended H2 Parts without resuming, publishing or changing flow-control credit. Edits to these copies are discarded. Only already retained Parts are included, not bytes arriving in the current callback. Request and response retain their original direction. Existing suspension deadlines still apply.
+Inspect detached copies of previously suspended Parts without resuming or publishing. Edits to these copies are discarded. Only previously retained Parts are included, not bytes arriving in this callback. H2 uses the stream id and omits side. H1 uses id zero and an explicit L/R side. Existing suspension deadlines still apply.
 
-Availability: Live H2 flow; a stream suspended by an earlier callback, before a suspension command in this callback.
+Availability: Live H1/H2 flow; Parts suspended by an earlier callback, before a suspension command in this callback.
 
 Access: read detached retained Parts; type/result: `tuple[RewritePart, ...]`.
 
@@ -294,9 +294,9 @@ return api.message.translate()
 
 ### Message.resume
 
-Resume the suspended directions of this stream and return editable retained Parts. Any later callback on the same connection may trigger resume. Translate publishes each draft through its original directional context, using reverse output when necessary. This is not an asynchronous transport operation.
+Resume retained Parts from a later callback of the same connection. H2 resumes the stream directions through translate(), omitting side. H1 uses id zero with an explicit L/R side and commit(); it releases the ordered lane prefix, retaining any incomplete suffix for reassembly. Returned Parts are editable and publish through their original direction, using reverse output when necessary. This is not an asynchronous transport operation.
 
-Availability: Live H2 flow with native hold and content-reverse support.
+Availability: Live H1 or H2 flow with native hold and content-reverse support.
 
 Access: stage stream resume across directions; type/result: `tuple[RewritePart, ...]`.
 

@@ -223,34 +223,47 @@ class Message:
             raise CommitException(str(error)) from error
 
     @api_method('part: RewritePart, *, timeout_ms: int = 60000', 'int',
-                'Stage a directional H2 stream suspension until resume. Complete logical Parts are retained before output encoding. Return translate() to commit. Deadlines are enforced at the next callback; no idle wakeup is scheduled. New stream openings preserve H2 ordering.',
+                'Suspend native Parts until a later callback resumes them. H2 retains a directional stream and returns its stream id; return translate(). H1 retains the selected header and its whole pipeline suffix, returns id zero, and uses commit(). H1 resume and suspended_parts require side="L" or side="R". Deadlines are enforced at the next callback; no idle wakeup is scheduled.',
                 'stream = api.message.suspend(part)\nreturn api.message.translate()',
-                availability='Live H2 flow with native hold and content-reverse support.',
+                availability='Live H1 or H2 flow with native hold and content-reverse support.',
                 access='stage directional stream suspension')
     def suspend(self, part, *, timeout_ms=60000):
         translation = getattr(self, '_translation', None)
+        h1 = getattr(self, '_h1_response', None)
+        if h1 is not None:
+            return h1.suspension.suspend(part, timeout_ms)
         if translation is None:
             raise CommitException('Stream suspension currently requires H2 Translate')
         return translation._suspension().suspend(part, timeout_ms)
 
-    @api_method('stream_id: int', 'tuple[RewritePart, ...]',
-                'Inspect detached copies of previously suspended H2 Parts without resuming, publishing or changing flow-control credit. Edits to these copies are discarded. Only already retained Parts are included, not bytes arriving in the current callback. Request and response retain their original direction. Existing suspension deadlines still apply.',
+    @api_method('stream_id: int, *, side: str | None = None', 'tuple[RewritePart, ...]',
+                'Inspect detached copies of previously suspended Parts without resuming or publishing. Edits to these copies are discarded. Only previously retained Parts are included, not bytes arriving in this callback. H2 uses the stream id and omits side. H1 uses id zero and an explicit L/R side. Existing suspension deadlines still apply.',
                 'parts = api.message.suspended_parts(1)\napi.print(len(parts))\nreturn api.message.translate()',
-                availability='Live H2 flow; a stream suspended by an earlier callback, before a suspension command in this callback.',
+                availability='Live H1/H2 flow; Parts suspended by an earlier callback, before a suspension command in this callback.',
                 access='read detached retained Parts')
-    def suspended_parts(self, stream_id):
+    def suspended_parts(self, stream_id, *, side=None):
         translation = getattr(self, '_translation', None)
+        h1 = getattr(self, '_h1_response', None)
+        if h1 is not None:
+            return h1.suspension.suspended_parts(stream_id, side)
+        if side is not None:
+            raise CommitException('An explicit suspension side is only supported for HTTP/1')
         if translation is None:
             raise CommitException('Suspended Parts inspection currently requires H2 Translate')
         return translation._suspension().suspended_parts(stream_id)
 
-    @api_method('stream_id: int', 'tuple[RewritePart, ...]',
-                'Resume the suspended directions of this stream and return editable retained Parts. Any later callback on the same connection may trigger resume. Translate publishes each draft through its original directional context, using reverse output when necessary. This is not an asynchronous transport operation.',
+    @api_method('stream_id: int, *, side: str | None = None', 'tuple[RewritePart, ...]',
+                'Resume retained Parts from a later callback of the same connection. H2 resumes the stream directions through translate(), omitting side. H1 uses id zero with an explicit L/R side and commit(); it releases the ordered lane prefix, retaining any incomplete suffix for reassembly. Returned Parts are editable and publish through their original direction, using reverse output when necessary. This is not an asynchronous transport operation.',
                 '# Resume a stream saved by an earlier callback on this connection.\nparts = api.message.resume(1)\nreturn api.message.translate()',
-                availability='Live H2 flow with native hold and content-reverse support.',
+                availability='Live H1 or H2 flow with native hold and content-reverse support.',
                 access='stage stream resume across directions')
-    def resume(self, stream_id):
+    def resume(self, stream_id, *, side=None):
         translation = getattr(self, '_translation', None)
+        h1 = getattr(self, '_h1_response', None)
+        if h1 is not None:
+            return h1.suspension.resume(stream_id, side)
+        if side is not None:
+            raise CommitException('An explicit suspension side is only supported for HTTP/1')
         if translation is None:
             raise CommitException('Stream resume currently requires H2 Translate')
         return translation._suspension().resume(stream_id)

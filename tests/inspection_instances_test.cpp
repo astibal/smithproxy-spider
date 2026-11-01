@@ -1,8 +1,10 @@
 #include "inspection.hpp"
+#include "binary_envelope.hpp"
 #include <cassert>
 #include <chrono>
 #include <filesystem>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 using nlohmann::json;
 
@@ -226,6 +228,78 @@ else:
     const auto tracking_status = engine.status();
     for (const auto& summary : tracking_status.at("recent")) {
         assert(!summary.contains("protocol_state"));
+    }
+
+    {
+        // Native H1 suspension must cross the actual host checkpoint boundary,
+        // not just succeed inside a Python worker. A response to the first
+        // request releases the paused second request in the opposite lane.
+        deploy("flow", R"PY(
+if api.phase == 'setup':
+    api.connection.request_rewrite()
+    return
+
+if api.side == 'L' and not api.state.get('paused_once'):
+    api.message.suspend(api.message.parts[2])
+    api.state['paused_once'] = True
+
+if api.side == 'R' and not api.state.get('released'):
+    parts = api.message.resume(0, side='L')
+    parts[0].http1.target = '/edited'
+    api.state['released'] = True
+
+return api.message.commit()
+)PY");
+        const std::string identity = "native-h1-suspension";
+        const auto started = engine.automatic(
+            {{"action", "connection-start"}, {"id", identity}}, json::array());
+        assert(started.at("ok") == true);
+
+        auto content = [&](const std::string& direction,
+                           const std::vector<std::string>& messages) {
+            std::string wire;
+            auto annotations = json::array();
+
+            for (const auto& message : messages) {
+                const auto offset = wire.size();
+                const auto line_end = offset + message.find("\r\n") + 2;
+                const auto head_end = offset + message.find("\r\n\r\n") + 4;
+                annotations.push_back({offset, line_end, "http1.start_line"});
+                annotations.push_back({line_end, head_end, "http1.headers"});
+                wire += message;
+            }
+
+            return engine.automatic({{"action", "connection-content"}, {"id", identity},
+                {"details", {{"info", {
+                    {"side", direction}, {"content", spider::base64_encode(wire)},
+                    {"content_annotations", annotations},
+                    {"webhook_control", {{"content-reverse", true}}}
+                }}}}}, json::array());
+        };
+
+        const std::string first = "GET /first HTTP/1.1\r\nHost: test\r\n\r\n";
+        const std::string second = "GET /second HTTP/1.1\r\nHost: test\r\n\r\n";
+        const std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+        const auto paused = content("L", {first, second});
+        assert(paused.at("ok") == true);
+        assert(paused.at("replacement") == spider::base64_encode(first));
+        assert(!paused.contains("replacement_reverse"));
+
+        const auto resumed = content("R", {response});
+        assert(resumed.at("ok") == true);
+        assert(resumed.at("replacement") == spider::base64_encode(response));
+        assert(resumed.at("replacement_reverse") == spider::base64_encode(
+            "GET /edited HTTP/1.1\r\nHost: test\r\n\r\n"));
+        assert(!resumed.contains("peer_held_parts"));
+        assert(!resumed.contains("h1_response_state"));
+
+        // The next response consumes the one remaining request slot. No held
+        // bytes or hook decisions may be replayed after successful publication.
+        const auto next = content("R", {response});
+        assert(next.at("ok") == true);
+        assert(next.at("replacement") == spider::base64_encode(response));
+        assert(!next.contains("replacement_reverse"));
+        engine.automatic({{"action", "connection-stop"}, {"id", identity}}, json::array());
     }
 
     std::filesystem::remove_all(root);

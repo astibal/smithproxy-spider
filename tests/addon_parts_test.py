@@ -1119,7 +1119,7 @@ def request(flow):
 
     async def test_h1_driver_rejects_unconnected_transport_decisions(self):
         cases = [
-            ('flow.intercept()', 'Flow interception and termination'),
+            ('flow.intercept()', 'Stream suspension currently requires'),
             ('flow.request.stream = True', 'Streaming callbacks', 'requestheaders'),
         ]
         wire = b'GET /guard HTTP/1.1\r\nHost: example.test\r\n\r\n'
@@ -1137,7 +1137,7 @@ def request(flow):
                 driver = H1AddonEvents(addon)
                 message = h1_message(wire)
                 try:
-                    with self.assertRaisesRegex(AddonMessageError, reason):
+                    with self.assertRaisesRegex((AddonMessageError, CommitException), reason):
                         await driver.rewrite('guard', 'L', message, None, None)
                     self.assertEqual(addon.state, 'failed')
                     self.assertEqual(message.commit(), wire)

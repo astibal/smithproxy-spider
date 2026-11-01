@@ -381,7 +381,7 @@ def invoke_script(current, compiled):
                     if result is not h1_response.result:
                         raise CommitException(
                             'HTTP/1 response ordering requires return api.message.commit()')
-                elif h1_response.local_responses:
+                elif h1_response.has_local_responses():
                     raise CommitException(
                         'A staged HTTP/1 local response requires return api.message.commit()')
                 elif h1_response.requires_publication():
@@ -393,6 +393,9 @@ def invoke_script(current, compiled):
                     h1_response.observe_passthrough()
 
                 response['h1_response_state'] = h1_response.checkpoint
+                suspension = h1_response.suspension
+                if suspension is not None and suspension.peer_hold_changed:
+                    response['peer_held_parts'] = suspension.peer_hold_result
                 if h1_response.termination is not None:
                     response['connection_close'] = {
                         'reason': h1_response.termination['reason'],
@@ -417,7 +420,7 @@ def invoke_script(current, compiled):
                 # Synthesized responses and termination deliberately suppress
                 # input messages. A successful native commit is not evidence
                 # that those input identities were published unchanged.
-                if h1_response is not None and (h1_response.local_responses or h1_response.termination):
+                if h1_response is not None and (h1_response.has_local_responses() or h1_response.termination):
                     known_publication = False
 
                 if translation is not None and (

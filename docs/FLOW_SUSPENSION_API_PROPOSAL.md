@@ -1,8 +1,8 @@
 # Flow suspension API proposal
 
 Status: the historical proposal below is superseded by the callback-driven
-Spider-only design. The native H2 implementation is under test, not yet a
-complete implementation of compatibility-layer interception.
+Spider-only design. H1/H2 callback-driven interception is implemented; idle
+wakeup and raw transport suspension remain outside the current contract.
 
 ## Current implementation boundary
 
@@ -41,7 +41,74 @@ termination still go through native APIs, including for reverse drafts.
 H2 header-hook interception also uses native receive snapshots and prefix holds
 while a body is incomplete; see `PROTOCOL_STATE_API_PROPOSAL.md`. No Smithproxy
 hold queues or third persistent HPACK context are required. Idle/asynchronous
-wakeup, HTTP/1 and raw TCP/UDP suspension remain outside this implementation.
+wakeup and raw TCP/UDP suspension remain outside this implementation. Native
+HTTP/1 lane suspension is implemented separately below, including its addon
+hook mapping.
+
+### Native HTTP/1 lane suspension
+
+HTTP/1 messages cannot independently overtake one another. Its suspension unit
+is an ordered directional lane, named by id `0` and an explicit `side="L"` or
+`side="R"`. Suspending a header retains that message and every later Part in
+the callback, including younger pipelined messages. A later callback on that
+lane keeps the pause unless the script explicitly resumes it.
+
+```python
+# In the callback that decides to pause this request:
+api.message.suspend(api.message.parts[0])
+return api.message.commit()
+```
+
+```python
+# In a later callback on the SAME connection, in either direction:
+parts = api.message.resume(0, side="L")
+parts[0].http1.set_header("X-Inspected", "yes")
+return api.message.commit()
+```
+
+`suspended_parts(0, side="L")` inspects detached copies of previously retained
+Parts without consuming the hold. Returned resume drafts remain editable; H1
+framing, content length and queued local responses use the existing native
+publisher. Resuming an incomplete message removes its logical pause but keeps
+the incomplete suffix in the ordinary reassembly hold. It does not publish an
+incomplete body or invent a completion event.
+
+A callback can resume a lane, edit its returned drafts, then suspend a younger
+header in that lane before committing. Only the older prefix is published.
+This also works for opposite-direction drafts, so pipelined interception does
+not require an adapter-owned byte queue. Other duplicate or out-of-order
+suspension commands in the same lane are rejected.
+
+The host owns the serialized Parts and the pause checkpoint. A fresh worker
+can resume them. In the opposite direction, publication returns reverse bytes
+and the updated peer hold atomically, without mixing peer Parts into the
+callback's input list. The host accepts such a peer-hold update only for an
+owned paused lane (or a validated connection close). Failed assembly leaves
+the host checkpoint unchanged. Connection termination discards both lanes.
+
+The response-order ledger advances only for the emitted prefix. Held requests
+do not allocate origin slots, and held responses do not consume them or release
+queued local responses. Existing hold and deployment byte quotas remain in
+force. Deadlines are checked on callbacks, not by an idle timer; no Smithproxy
+change or background publishing channel is introduced. Existing host fail-open
+policy remains a separate deferred concern, not a guarantee of connection close
+when a deadline or script failure occurs.
+
+The H1 addon driver pauses from header or complete-message hooks, and from
+either hook of a generated response. A resumed header pause still waits for
+body completion before delivering the complete-message hook. Delivered hooks
+are never replayed. A callback first processes its own lane, then any peer lane
+released by those hooks; a release initiated while processing that peer can
+wait until the next callback rather than recursively draining both lanes.
+Generated replies use the existing native local-response publisher and ledger.
+
+The H1 black-box probe `tests/probes/addon_local_intercept_h1_probe.py` records
+the same order-sensitive local-response kill behavior as H2: bare kill and
+kill-then-resume remain pending during a two-second observation window, while
+resume-then-kill closes the connection. Spider uses native connection close for
+all three cases, with the working resume-then-kill error-hook ordering. It does
+not reproduce a pending killed connection. The corpus records reference output
+unchanged, and tests explicitly distinguish this deviation from resume parity.
 
 ### Generated H2 responses
 

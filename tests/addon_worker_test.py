@@ -137,6 +137,66 @@ def raw_callback(identity, action, transport, wire=b'', *, side='L',
 
 
 class AddonWorkerTests(unittest.TestCase):
+    def test_h1_peer_resume_round_trips_host_checkpoints_in_packaged_worker(self):
+        source = '''#!mitmproxy
+saved = None
+def request(flow):
+    global saved
+    print('request', flow.request.path)
+    if flow.request.path == '/wait':
+        saved = flow
+        flow.intercept()
+def response(flow):
+    saved.request.headers['x-resumed'] = 'yes'
+    saved.resume()
+'''
+        first = b'GET /first HTTP/1.1\r\nHost: example.test\r\n\r\n'
+        later = b'GET /wait HTTP/1.1\r\nHost: example.test\r\n\r\n'
+        response = b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n'
+        process = subprocess.Popen(
+            worker_command('--persistent'), stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(self.exchange(process, {'script': source}),
+                             {'ready': True, 'script_api': 'mitmproxy'})
+            setup_request = callback('h1-pause', 'connection-start')
+            setup_request['_request_id'] = 1
+            setup = self.exchange(process, setup_request)
+            self.assertTrue(setup['ok'], setup)
+
+            pause_request = h1_pipeline_callback('h1-pause', [first, later])
+            pause_request['_request_id'] = 2
+            held = self.exchange(process, pause_request)
+            self.assertTrue(held['ok'], held)
+            self.assertEqual(base64.b64decode(held['replacement']), first)
+            self.assertEqual(held['logs'], ['request /first', 'request /wait'])
+
+            # Checkpoints belong to the host and must be returned explicitly.
+            # Only the addon flow identity remains in the persistent worker.
+            incoming = h1_callback('h1-pause', response, side='R')
+            incoming['_request_id'] = 3
+            incoming['h1_response_state'] = held['h1_response_state']
+            incoming['peer_held_parts'] = held['held_parts']
+            released = self.exchange(process, incoming)
+            self.assertTrue(released['ok'], released)
+            self.assertEqual(base64.b64decode(released['replacement']), response)
+            reverse = base64.b64decode(released['replacement_reverse'])
+            self.assertIn(b'GET /wait ', reverse)
+            self.assertIn(b'x-resumed: yes\r\n', reverse)
+            self.assertEqual(released['logs'], [])
+            self.assertIsNone(released['peer_held_parts'])
+            self.assertEqual(released['h1_response_state'], {'version': 1, 'slots': ['origin']})
+
+            process.stdin.close()
+            process.stdin = None
+            stdout, stderr = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, stderr[-6000:])
+            self.assertEqual(stdout, '')
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
+
     def test_packaged_worker_dispatches_explicit_raw_transport_lifecycle(self):
         source = '''#!mitmproxy
 def tcp_start(flow):

@@ -332,6 +332,176 @@ class _ChunkedGroup:
         return b'\r\n'.join([*head, b'', b'']), encoded
 
 
+class _H1Suspension:
+    """Pause an ordered H1 lane while the host owns its retained Parts.
+
+    H1 has no independently publishable streams: id zero names the selected
+    direction, and holding a message also holds its entire pipeline suffix.
+    Only a later callback of this connection can publish a resumed lane.
+    """
+
+    def __init__(self, transaction, request):
+        self.transaction = transaction
+        self.side = transaction.side
+        self.peer = 'R' if self.side == 'L' else 'L'
+        self.allowed = request.get('hold_allowed') is True and transaction.reverse_capable
+        self.saved = {
+            self.side: request.get('held_parts'),
+            self.peer: request.get('peer_held_parts'),
+        }
+        state = transaction.before or {}
+        self.paused = dict(state.get('paused', {}))
+        self.commands = {}
+        self.peer_transaction = None
+        self.peer_hold_changed = False
+        self.peer_hold_result = None
+        self.identities = tuple(id(part) for part in transaction.message.parts)
+        self.boundary = None
+        self.peer_boundary = None
+
+        # A callback is not permission to publish a previously paused lane.
+        # Reassembly has already restored the current lane before this point.
+        for side in self.paused:
+            if self.saved[side] is None:
+                raise CommitException('HTTP/1 suspension lost its retained Parts')
+
+        if self.side in self.paused:
+            if not transaction.message.parts:
+                raise CommitException('HTTP/1 suspension has no retained Parts')
+            transaction.message.parts.hold_from(transaction.message.parts[0])
+            self.boundary = transaction.message.parts[0]
+
+    def _check(self, stream, side, *, allow_resuspend=False):
+        if type(stream) is not int or stream != 0 or side not in ('L', 'R'):
+            raise CommitException('HTTP/1 suspension requires id zero and an L/R side')
+        if not self.allowed:
+            raise CommitException('HTTP/1 suspension requires hold and content-reverse support')
+        if self.transaction.result is not None:
+            raise CommitException('HTTP/1 suspension must precede publication')
+        if tuple(id(part) for part in self.transaction.message.parts) != self.identities:
+            raise CommitException('Cannot suspend or resume reordered HTTP/1 Parts')
+        resuspending = allow_resuspend and self.commands.get(side) == 'resume'
+        if side in self.commands and not resuspending:
+            raise CommitException('Duplicate or out-of-order HTTP/1 suspension command')
+        self.check_deadlines()
+
+    def check_deadlines(self):
+        if any(deadline <= _suspension_now_ms() for deadline in self.paused.values()):
+            raise CommitException('HTTP/1 suspension deadline expired')
+
+    def suspend(self, part, timeout_ms):
+        owner = self.transaction
+        if self.peer_transaction is not None:
+            if any(header is part for _, header, _ in self.peer_transaction._groups()):
+                owner = self.peer_transaction
+        side = owner.side
+
+        # A pipeline may release its older message and pause a younger one in
+        # the same atomic commit. Resumed peer drafts keep their original lane.
+        self._check(0, side, allow_resuspend=True)
+        if side in self.paused:
+            raise CommitException('HTTP/1 direction is already suspended')
+        if type(timeout_ms) is not int or not 1 <= timeout_ms <= 300000:
+            raise CommitException('Suspension timeout must be 1 to 300000 milliseconds')
+        message = owner.message
+        if not any(header is part for _, header, _ in owner._groups()):
+            raise CommitException('Suspend an owned HTTP/1 header Part')
+        if message.parts._held_from is not None and message.parts._held_from is not part:
+            raise CommitException('HTTP/1 suspension conflicts with an existing hold boundary')
+        if self.transaction.termination is not None:
+            raise CommitException('Cannot suspend a terminated HTTP/1 connection')
+
+        message.parts.hold_from(part)
+        if side == self.side:
+            self.boundary = part
+        else:
+            self.peer_boundary = part
+        self.paused[side] = _suspension_now_ms() + timeout_ms
+        self.commands[side] = 'suspend'
+        return 0
+
+    def suspended_parts(self, stream, side):
+        self._check(stream, side)
+        if side not in self.paused or self.saved[side] is None:
+            raise CommitException('HTTP/1 direction is not suspended by an earlier callback')
+        parts, _ = _restore(self.saved[side])
+        return tuple(parts)
+
+    def resume(self, stream, side):
+        self._check(stream, side)
+        if side not in self.paused:
+            raise CommitException('HTTP/1 direction is not suspended')
+
+        if side == self.side:
+            message = self.transaction.message
+        else:
+            # Detached native reassembly preserves original framing and body
+            # baselines. Never parse retained bytes through the producer again.
+            message = Message(b'', 0, {})
+            resume_message(message, self.saved[side], {}, ())
+            self.peer_transaction = _H1ResponseTransaction(
+                message, self.transaction.before, side,
+                self.transaction.reverse_capable,
+                self.transaction.connection_close_capable,
+            )
+
+        # Resuming an incomplete message removes the logical pause, not the
+        # ordinary reassembly hold. Only complete prefixes may reach the peer.
+        message.parts._held_from = None
+        for part in message.parts:
+            if isinstance(part, _H1Part) and part.is_header and not part.content.complete:
+                message.parts.hold_from(part)
+                break
+
+        del self.paused[side]
+        self.commands[side] = 'resume'
+        return tuple(message.parts)
+
+    def assemble(self, result, checkpoint, reverse, update_content_length, safety):
+        """Prepare both lanes before exposing either publication result."""
+        if self.transaction.termination is not None:
+            # H1 termination closes the connection, including a paused peer
+            # lane. Neither its bytes nor its pause may survive that close.
+            self.peer_hold_changed = self.saved[self.peer] is not None
+            self.peer_hold_result = None
+            return b'', self.transaction._dump([]), b''
+
+        self.check_deadlines()
+
+        if self.side in self.paused:
+            message = self.transaction.message
+            if (message.parts._held_from is not self.boundary or
+                    tuple(id(part) for part in message.parts) != self.identities):
+                raise CommitException('HTTP/1 suspension boundary was changed')
+
+        peer = self.peer_transaction
+        if peer is not None:
+            if self.peer in self.paused and peer.message.parts._held_from is not self.peer_boundary:
+                raise CommitException('HTTP/1 peer suspension boundary was changed')
+            peer.slots = peer._load(checkpoint)
+            peer.synchronized = True
+            peer_result, checkpoint, peer_reverse = peer._assemble(update_content_length, safety)
+
+            self.peer_hold_result = None
+            if isinstance(peer_result, HeldCommit):
+                self.peer_hold_result = peer_result.checkpoint
+                peer_result = peer_result.prefix
+
+            # Output from the resumed opposite lane is reverse output here.
+            # Its local responses travel in this callback's original lane.
+            reverse += peer_result
+            if peer_reverse:
+                if isinstance(result, HeldCommit):
+                    result = HeldCommit(result.prefix + peer_reverse, result.checkpoint, result.count)
+                else:
+                    result += peer_reverse
+            self.peer_hold_changed = True
+
+        if self.paused:
+            checkpoint = {**checkpoint, 'version': 2, 'paused': dict(self.paused)}
+        return result, checkpoint, reverse
+
+
 class _H1ResponseTransaction:
     """Order local responses with ordinary HTTP/1 pipeline responses.
 
@@ -370,6 +540,14 @@ class _H1ResponseTransaction:
         self.checkpoint = checkpoint
         self.reverse_output = b''
         self.changed = False
+        self.suspension = None
+
+    def has_local_responses(self):
+        """Include responses staged against a resumed opposite-lane request."""
+        if self.local_responses:
+            return True
+        peer = None if self.suspension is None else self.suspension.peer_transaction
+        return peer is not None and bool(peer.local_responses)
 
     @staticmethod
     def _termination_reason(reason):
@@ -391,7 +569,7 @@ class _H1ResponseTransaction:
                 'HTTP/1 termination requires connection-close capability')
         if self.termination is not None:
             raise CommitException('HTTP/1 termination was already staged')
-        if self.local_responses:
+        if self.has_local_responses():
             raise CommitException(
                 'HTTP/1 termination conflicts with a staged local response')
 
@@ -401,6 +579,9 @@ class _H1ResponseTransaction:
             if selected.group.draft.method is not None
             or selected.group.draft.status_code is not None
         ]
+        if self.suspension is not None and self.suspension.peer_transaction is not None:
+            candidates.extend(
+                selected for _, selected, _ in self.suspension.peer_transaction._groups())
         if not any(selected is header for selected in candidates):
             raise CommitException(
                 'The selected HTTP/1 header is not part of this callback')
@@ -414,10 +595,23 @@ class _H1ResponseTransaction:
     def _load(cls, checkpoint):
         if checkpoint is None:
             return []
-        if (not isinstance(checkpoint, dict) or checkpoint.get('version') != 1
-                or set(checkpoint) != {'version', 'slots'}
-                or not isinstance(checkpoint['slots'], list)):
+        if not isinstance(checkpoint, dict):
             raise CommitException('Unsupported HTTP/1 response-order checkpoint')
+
+        version = checkpoint.get('version')
+        fields = {'version', 'slots'}
+        if version == 2:
+            fields.add('paused')
+        if (type(version) is not int or version not in (1, 2) or
+                set(checkpoint) != fields or not isinstance(checkpoint['slots'], list)):
+            raise CommitException('Unsupported HTTP/1 response-order checkpoint')
+
+        if checkpoint['version'] == 2:
+            paused = checkpoint['paused']
+            if (not isinstance(paused, dict) or not paused or
+                    any(side not in ('L', 'R') or type(deadline) is not int or deadline < 0
+                        for side, deadline in paused.items())):
+                raise CommitException('Invalid HTTP/1 suspension checkpoint')
 
         import base64
         slots = []
@@ -561,6 +755,13 @@ class _H1ResponseTransaction:
         if self.termination is not None:
             raise CommitException(
                 'A local response conflicts with staged HTTP/1 termination')
+        # A request resumed from an R callback still belongs to the L lane.
+        # Its native transaction owns validation and response serialization.
+        if self.suspension is not None and self.suspension.peer_transaction is not None:
+            peer = self.suspension.peer_transaction
+            if request is not None and any(header is request for _, header, _ in peer._groups()):
+                peer.stage_local_response(request, status, headers, body, trailers, reason=reason)
+                return
         if not self.reverse_capable:
             raise CommitException('Local responses require content-reverse from activation')
         if self.side != 'L':
@@ -616,6 +817,18 @@ class _H1ResponseTransaction:
         cursor = 0
         reverse = bytearray()
         while cursor < len(self.message.parts):
+            # A hold retains the entire suffix, not merely its wire bytes.
+            # Do not allocate request slots or consume response slots until
+            # these Parts are actually published by a later transaction.
+            if self.message.parts[cursor] is boundary:
+                suffix = self.message.parts[cursor:]
+                if any(id(part) in self.local_responses for part in suffix):
+                    raise CommitException(
+                        'A local response cannot replace a held request')
+
+                output_parts.extend(suffix)
+                break
+
             group = groups.get(cursor)
             if group is None:
                 output_parts.append(self.message.parts[cursor])
@@ -702,6 +915,8 @@ class _H1ResponseTransaction:
         return slots
 
     def requires_publication(self):
+        if self.suspension is not None and (self.suspension.paused or self.suspension.commands):
+            return True
         if self.termination is not None:
             return True
         return self._advance_observed(allow_publication=False) is None
@@ -725,6 +940,9 @@ class _H1ResponseTransaction:
         if self.result is not None:
             raise CommitException('HTTP/1 response transaction was already committed')
         result, checkpoint, reverse = self._assemble(update_content_length, safety)
+        if self.suspension is not None:
+            result, checkpoint, reverse = self.suspension.assemble(
+                result, checkpoint, reverse, update_content_length, safety)
         self.result = result
         self.checkpoint = checkpoint
         self.reverse_output = reverse
@@ -737,7 +955,9 @@ def _prepare_h1_responses(message, request):
     instance = request.get('instance', {})
     if instance.get('mode') != 'flow':
         return
-    if not any(isinstance(part, _H1Part) and part.is_header for part in message.parts):
+    checkpoint = request.get('h1_response_state')
+    if (not checkpoint and
+            not any(isinstance(part, _H1Part) and part.is_header for part in message.parts)):
         return
 
     info = request.get('event', {}).get('details', {}).get('info', {})
@@ -751,3 +971,4 @@ def _prepare_h1_responses(message, request):
         close_capable,
     )
     object.__setattr__(message, '_h1_response', transaction)
+    transaction.suspension = _H1Suspension(transaction, request)

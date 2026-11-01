@@ -12,8 +12,12 @@ from addon_http_message import Request
 from addon_parts import (
     AddonMessageError,
     H1MessageBinding,
-    dispatch_local_response,
+    LocalResponseState,
+    advance_local_response,
+    publish_local_response,
+    check_message_decisions,
     dispatch_message,
+    _killed,
 )
 
 
@@ -33,8 +37,8 @@ class H1AddonEvents:
         self._failed = False
 
     @staticmethod
-    def _bindings(native_message):
-        parts = tuple(native_message.parts)
+    def _bindings(native_message, parts):
+        parts = tuple(parts)
         bindings = []
         cursor = 0
         while cursor < len(parts):
@@ -72,96 +76,166 @@ class H1AddonEvents:
                 'The H1 addon generation failed; redeploy before processing more traffic')
 
         try:
-            bindings = self._bindings(native_message)
-            active_key = (connection_id, side)
-            active = self._active.get(active_key)
-            active_used = False
-            response_offset = 0
-            failures = []
-            published = []
-            terminated = None
+            failures, published, terminated = await self._prepare_lane(
+                connection_id, side, native_message, client_conn, server_conn,
+                callback_side=side,
+            )
 
-            for index, binding in enumerate(bindings):
-                kind = 'request' if isinstance(binding.message, Request) else 'response'
-                if (kind == 'request') != (side == 'L'):
-                    raise AddonMessageError(
-                        'HTTP message direction does not match the connection side')
-
-                # mitmproxy does not expose interim responses through the
-                # regular response hooks. Native publication stays unchanged.
-                if kind == 'response' and self._informational(binding):
-                    continue
-
-                if active is not None and not active_used:
-                    exchange = active
-                    active_used = True
-                    if kind == 'response':
-                        response_offset = 1
-                elif kind == 'request':
-                    exchange = self._new_request(connection_id)
-                else:
-                    pending = self._pending[connection_id]
-                    if response_offset >= len(pending):
-                        raise AddonMessageError(
-                            'An HTTP/1 response has no observed addon request')
-                    exchange = pending[response_offset]
-                    response_offset += 1
-
-                flow = self.generation.get_flow(connection_id, exchange)
-                if flow is None:
-                    if kind != 'request':
-                        raise AddonMessageError(
-                            'An HTTP/1 response has no observed addon request')
-                    flow = self.generation.create_flow(
-                        connection_id, exchange, client_conn, server_conn)
-
-                key = (connection_id, side, exchange)
-                state, dispatched = await dispatch_message(
-                    self.generation, flow, kind, binding,
-                    self._messages.get(key),
-                    allow_termination=True)
-                self._messages[key] = state
-                failures.extend(dispatched)
-
-                if state.termination_hook is not None:
-                    native_message.terminate(
-                        binding.header,
-                        reason=Error.KILLED_MESSAGE,
+            # A hook on this lane may have released a flow in the other lane.
+            # Native resume owns the peer drafts and reverse publication; the
+            # addon driver never builds or stores a second wire buffer.
+            peer = 'R' if side == 'L' else 'L'
+            active = self._active.get((connection_id, peer))
+            state = self._messages.get((connection_id, peer, active))
+            if terminated is None and state is not None and state.suspended:
+                flow = self.generation.get_flow(connection_id, active)
+                if not flow.intercepted:
+                    later, keys, terminated = await self._prepare_lane(
+                        connection_id, peer, native_message, client_conn, server_conn,
+                        callback_side=side,
                     )
-                    terminated = (
-                        key,
-                        flow,
-                        state.termination_hook != 'response',
-                    )
-                    break
-
-                if not binding.complete:
-                    if index != len(bindings) - 1:
-                        raise AddonMessageError(
-                            'An incomplete HTTP/1 message must be the final typed group')
-                    self._active[active_key] = exchange
-                    native_message.parts.hold_from(binding.header)
-                    break
-
-                self._active.pop(active_key, None)
-                if kind == 'request' and flow.response is not None:
-                    failures.extend(await dispatch_local_response(
-                        self.generation, flow, binding))
-                    state.local_response = True
-                else:
-                    binding.apply()
-                published.append(key)
+                    failures.extend(later)
+                    published.extend(keys)
 
             result = native_message.commit()
-            for key in published:
-                self._published(key)
             if terminated is not None:
                 failures.extend(await self._finish_termination(terminated))
+                self.release_connection(connection_id)
+            else:
+                for key in published:
+                    self._published(key)
             return result, tuple(failures)
         except BaseException:
             self._failed = True
             self.generation.invalidate()
             raise
+
+    async def _prepare_lane(self, connection_id, side, native_message,
+                            client_conn, server_conn, *, callback_side):
+        """Advance one ordered lane, stopping at its first retained message."""
+        active_key = (connection_id, side)
+        active = self._active.get(active_key)
+        state = self._messages.get((connection_id, side, active))
+        parts = native_message.parts
+
+        if state is not None and state.suspended:
+            flow = self.generation.get_flow(connection_id, active)
+            if flow.intercepted:
+                return [], [], None
+            parts = native_message.resume(0, side=side)
+            state.suspended = False
+
+        bindings = self._bindings(native_message, parts)
+        active_used = False
+        response_offset = 0
+        failures = []
+        published = []
+        terminated = None
+
+        for index, binding in enumerate(bindings):
+            kind = 'request' if isinstance(binding.message, Request) else 'response'
+            if (kind == 'request') != (side == 'L'):
+                raise AddonMessageError(
+                    'HTTP message direction does not match the connection side')
+
+            # mitmproxy does not expose interim responses through the
+            # regular response hooks. Native publication stays unchanged.
+            if kind == 'response' and self._informational(binding):
+                continue
+
+            if active is not None and not active_used:
+                exchange = active
+                active_used = True
+                if kind == 'response':
+                    response_offset = 1
+            elif kind == 'request':
+                exchange = self._new_request(connection_id)
+            else:
+                pending = self._pending[connection_id]
+                if response_offset >= len(pending):
+                    raise AddonMessageError(
+                        'An HTTP/1 response has no observed addon request')
+                exchange = pending[response_offset]
+                response_offset += 1
+
+            flow = self.generation.get_flow(connection_id, exchange)
+            if flow is None:
+                if kind != 'request':
+                    raise AddonMessageError(
+                        'An HTTP/1 response has no observed addon request')
+                flow = self.generation.create_flow(
+                    connection_id, exchange, client_conn, server_conn)
+
+            key = (connection_id, side, exchange)
+            state = self._messages.get(key)
+            if state is not None and state.local_reply is not None:
+                # The request hooks already finished before its generated
+                # response was paused. Only that response may advance now.
+                binding.message = check_message_decisions(
+                    flow, kind, allow_termination=True,
+                    allow_late_stream=True, allow_interception=True)
+                dispatched = ()
+            else:
+                state, dispatched = await dispatch_message(
+                    self.generation, flow, kind, binding, state,
+                    allow_termination=True, allow_header_interception=True,
+                    allow_completed_interception=True)
+
+            self._messages[key] = state
+            failures.extend(dispatched)
+
+            local = kind == 'request' and (
+                flow.response is not None or state.local_reply is not None)
+            if local and binding.complete and not flow.intercepted:
+                if state.local_reply is None:
+                    state.local_reply = LocalResponseState()
+
+                failures.extend(await advance_local_response(
+                    self.generation, flow, state.local_reply))
+                if _killed(flow):
+                    state.termination_hook = (
+                        'response' if state.local_reply.complete else 'responseheaders')
+
+            if state.termination_hook is not None:
+                native_message.terminate(
+                    binding.header,
+                    reason=Error.KILLED_MESSAGE,
+                )
+                terminated = (
+                    key,
+                    flow,
+                    state.termination_hook != 'response',
+                )
+                break
+
+            if flow.intercepted:
+                native_message.suspend(binding.header)
+                state.suspended = True
+                self._active[active_key] = exchange
+                break
+
+            if not binding.complete:
+                if index != len(bindings) - 1:
+                    raise AddonMessageError(
+                        'An incomplete HTTP/1 message must be the final typed group')
+                self._active[active_key] = exchange
+                # Reverse resume already retained its incomplete suffix.
+                # Do not mix the peer boundary into current input Parts.
+                if side == callback_side:
+                    native_message.parts.hold_from(binding.header)
+                break
+
+            self._active.pop(active_key, None)
+
+            if local:
+                publish_local_response(flow, binding)
+                state.local_response = True
+            else:
+                binding.apply()
+
+            published.append(key)
+
+        return failures, published, terminated
 
     def _published(self, key):
         state = self._messages[key]

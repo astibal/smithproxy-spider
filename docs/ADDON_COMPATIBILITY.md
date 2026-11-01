@@ -994,8 +994,19 @@ original completed hook is not repeated. Native body/trailer replacement,
 local-response and termination validation also applies to reverse drafts.
 Tests cover independent H2 peers and the packaged persistent worker.
 
-Header-hook interception, H1/raw transport interception and idle asynchronous
-resume are not covered by that mapping. The following describes the additional
+Header-hook and generated-response interception now build on the same native
+H2 path. H1 interception uses native ordered-lane suspension: a paused message
+also retains younger pipeline messages, and a callback in either direction may
+resume the lane. Deferred hooks run once, native commit repairs framing, and
+local responses retain their original request anchor until publication.
+The H1 black-box corpus `mitmproxy_v12_h1_local_intercept.json` fixes local
+response hook order and edited output. Bare kill on a paused local response
+waits in the reference observation window; Spider instead applies its native
+connection-close operation, matching the working resume-then-kill hook order.
+This difference is explicit, not a claim of identical transport behavior.
+
+Raw transport interception and idle asynchronous
+resume are not covered by these mappings. The following describes the additional
 requirements for idle asynchronous resume, not a prerequisite for the supported
 callback-driven model. A separate host suspension token is not part of the
 current design: native stream identity and the owning connection scope holds.

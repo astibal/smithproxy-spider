@@ -39,7 +39,15 @@
   now settles in a callback from either direction, without waiting for body
   completion. Native Translate releases body reservations and sends the reset;
   retained source headers preserve HPACK history without reaching the peer.
-  Extend those boundaries, then scope H1 and raw transport suspension. Keep the remaining
+  Native H1 lane suspension now uses host-owned suffix holds, an explicit L/R
+  side with id zero, and atomic opposite-direction publication through commit().
+  Its response-order ledger advances only for emitted messages. H1 addon hooks
+  now use that primitive for header, complete-message and local-response pauses;
+  same-direction and peer resume preserve hook identity and pipeline order.
+  Local-response resume matches the new H1 reference corpus; kill deliberately
+  uses native close instead of reproducing the reference's pending connection.
+  Broader adversarial H1 transport coverage remains useful;
+  raw transport suspension remains deferred. Keep the remaining
   gaps explicit and compare new behavior against the reference. The current
   contract is in `FLOW_SUSPENSION_API_PROPOSAL.md`.
   Idle wakeup and a possible downstream signaling channel are deliberately

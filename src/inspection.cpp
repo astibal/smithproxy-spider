@@ -836,6 +836,17 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         runtime->states.at(key).hold_credit_reserved;
     const auto side = event.value("details", nlohmann::json::object())
         .value("info", nlohmann::json::object()).value("side", "");
+
+    // H1 may release the peer lane without an H2 Translate checkpoint. The
+    // authority comes from this connection's saved pause and retained bytes,
+    // not merely from a worker returning a peer-hold field.
+    const auto peer_side = side == "L" ? "R" : "L";
+    const bool h1_suspended = h1_responses.is_object() &&
+        h1_responses.value("version", 0) == 2 &&
+        h1_responses.contains("paused") && h1_responses.at("paused").is_object();
+    const bool h1_peer_owned = h1_suspended &&
+        h1_responses.at("paused").contains(peer_side) && holds.contains(peer_side);
+
     const auto budget = std::min(remaining, item.value("timeout_ms", 1000));
     const auto started = std::chrono::steady_clock::now();
     ++runtime->active;
@@ -933,7 +944,9 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         const bool invalid_hold = !held.is_null() && (
             !hold_allowed || mode != "flow" || !held.is_object() || held.dump().size() > 1024 * 1024);
         const bool invalid_peer_hold = peer_changed && (
-            !hold_allowed || mode != "flow" || translated.is_null() ||
+            !hold_allowed || mode != "flow" ||
+            (translated.is_null() && !(h1_responses_changed &&
+                (h1_peer_owned || result.contains("connection_close")))) ||
             (!peer_held.is_null() && (!peer_held.is_object() || peer_held.dump().size() > 1024 * 1024)));
         const bool invalid_reservation = reserved &&
             (!hold_allowed || mode != "flow" || translated.is_null() || !settings.is_object());
@@ -952,7 +965,9 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
             const bool closed = mode == "flow" && closed_flows_.contains(event.value("id", ""));
 
             // A replacement must never outlive the checkpoint it depends on.
-            if ((translate_active || !translated.is_null()) && (runtime->retired || closed))
+            const bool stateful_publication = translate_active || !translated.is_null() ||
+                h1_suspended || (next_h1_responses.is_object() && next_h1_responses.contains("paused"));
+            if (stateful_publication && (runtime->retired || closed))
                 result = failure("Translate owner retired or connection closed during callback");
             else if (!runtime->retired && !closed)
                 runtime->states[key] = Instance{

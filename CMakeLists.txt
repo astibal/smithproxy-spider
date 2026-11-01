@@ -273,6 +273,8 @@ if(BUILD_TESTING)
         add_test(NAME addon_h2_suspend_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_h2_suspend_test.py)
         set_tests_properties(addon_h2_suspend_tests PROPERTIES TIMEOUT 45)
+        add_test(NAME addon_h1_suspend_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_h1_suspend_test.py)
         add_test(NAME addon_raw_events_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_raw_events_test.py)
         add_test(NAME addon_command_tests
