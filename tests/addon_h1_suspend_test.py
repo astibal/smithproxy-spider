@@ -1,11 +1,13 @@
 """HTTP/1 addon pauses use native ordered lanes, including peer publication."""
 
-import unittest
+import copy
+import gzip
 import json
+import unittest
 from pathlib import Path
 
 from addon_parts_test import AddonGeneration, H1AddonEvents
-from inspection_api import HeldCommit
+from inspection_api import CommitException, HeldCommit
 import inspection_chunked_test as native_tests
 
 
@@ -224,6 +226,188 @@ def response(flow):
         self.assertEqual(self.addon.addon.module.events, [
             ('headers', '/first'), ('request', '/first'),
             ('headers', '/wait'), ('request', '/wait')])
+
+    async def test_header_resume_waits_for_final_trailer_before_editing_trailers(self):
+        await self.start('''
+events = []
+saved = None
+
+def requestheaders(flow):
+    global saved
+
+    events.append(('headers', flow.request.path))
+
+    if flow.request.path == '/wait':
+        saved = flow
+        flow.intercept()
+
+def request(flow):
+    events.append(('request', flow.request.path))
+
+    if flow.request.path == '/wait':
+        assert flow.request.content == b'old'
+        assert flow.request.trailers['x-end'] == 'original'
+
+        flow.request.trailers.set_all('x-end', ['changed', 'again'])
+
+def response(flow):
+    saved.resume()
+''')
+        await self.callback('L', request('/first'))
+        head = (b'POST /wait HTTP/1.1\r\nHost: example.test\r\n'
+                b'Transfer-Encoding: chunked\r\nTrailer: X-End\r\n\r\n')
+        partial = head + b'3\r\nold\r\n0\r\nX-End: original\r\n'
+
+        self.assertEqual(await self.callback('L', partial), (b'', b''))
+
+        # The zero chunk does not finish a message whose trailers are pending.
+        self.assertEqual(await self.callback('R', RESPONSE), (RESPONSE, b''))
+        self.assertIsNotNone(self.held['L'])
+        self.assertEqual(self.addon.addon.module.events, [
+            ('headers', '/first'), ('request', '/first'), ('headers', '/wait')])
+
+        forward, reverse = await self.callback('L', b'\r\n', request('/younger'))
+        self.assertFalse(reverse)
+        self.assertTrue(forward.endswith(request('/younger')))
+        published = forward[:-len(request('/younger'))]
+
+        # Decode framing with an independent HTTP peer. Only the request
+        # start line changes to let the response reader consume this body.
+        peer_wire = b'HTTP/1.1 200 OK\r\n' + published.split(b'\r\n', 1)[1]
+        self.assertEqual(native_tests.peer_body(peer_wire), b'old')
+        self.assertTrue(published.endswith(
+            b'0\r\nX-End: changed\r\nx-end: again\r\n\r\n'))
+        self.assertIsNone(self.held['L'])
+        self.assertEqual(self.addon.addon.module.events, [
+            ('headers', '/first'), ('request', '/first'), ('headers', '/wait'),
+            ('request', '/wait'), ('headers', '/younger'), ('request', '/younger')])
+
+    async def test_peer_resume_edits_gzip_chunked_response_after_removing_trailers(self):
+        await self.start('''
+saved = None
+events = []
+
+def response(flow):
+    global saved
+
+    events.append(flow.request.path)
+
+    if flow.request.path == '/first':
+        assert flow.response.content == b'original compressed body'
+
+        saved = flow
+        flow.intercept()
+
+def request(flow):
+    if flow.request.path == '/release':
+        saved.response.content = b'edited compressed body with a different length'
+        # Removing trailers avoids retaining metadata tied to the old body.
+        saved.response.trailers = None
+        saved.resume()
+''')
+        compressed = gzip.compress(b'original compressed body', mtime=0)
+        head = (b'HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n'
+                b'Transfer-Encoding: chunked\r\nTrailer: X-End\r\n\r\n')
+        chunk_size = format(len(compressed), 'x').encode('ascii')
+        chunk = chunk_size + b'\r\n' + compressed
+        wire = head + chunk + b'\r\n0\r\nX-End: original\r\n\r\n'
+        await self.callback('L', request('/first'), request('/second'))
+
+        # A younger response shares the held lane and must not overtake it.
+        self.assertEqual(await self.callback('R', wire, RESPONSE), (b'', b''))
+        self.assertEqual(self.addon.addon.module.events, ['/first'])
+
+        forward, reverse = await self.callback('L', request('/release'))
+        self.assertEqual(forward, request('/release'))
+        self.assertTrue(reverse.endswith(RESPONSE))
+        published = reverse[:-len(RESPONSE)]
+
+        encoded_body = native_tests.peer_body(published)
+        decoded_body = gzip.decompress(encoded_body)
+        self.assertEqual(decoded_body, b'edited compressed body with a different length')
+
+        headers = published.split(b'\r\n\r\n', 1)[0].lower()
+        self.assertIn(b'content-encoding: gzip', headers)
+        self.assertIn(b'transfer-encoding: chunked', headers)
+        self.assertNotIn(b'content-length:', headers)
+        self.assertNotIn(b'trailer:', headers)
+        self.assertTrue(published.endswith(b'0\r\n\r\n'))
+
+        self.assertEqual(self.addon.addon.module.events, ['/first', '/second'])
+        self.assertIsNone(self.held['R'])
+
+        await self.callback('R', RESPONSE)
+        self.assertEqual(self.addon.addon.module.events, ['/first', '/second', '/release'])
+        self.assertEqual(self.addon.active_flows, 0)
+
+    async def test_header_only_peer_edit_preserves_chunk_extensions_and_suffix(self):
+        await self.start('''
+saved = None
+events = []
+
+def request(flow):
+    global saved
+
+    events.append(flow.request.path)
+
+    if flow.request.path == '/wait':
+        saved = flow
+        flow.intercept()
+
+def response(flow):
+    if flow.request.path == '/first':
+        saved.request.headers['x-resumed'] = 'yes'
+        saved.resume()
+''')
+        head = (b'POST /wait HTTP/1.1\r\nHost: example.test\r\n'
+                b'Transfer-Encoding: chunked\r\nTrailer: X-End\r\n\r\n')
+        body = b'03;hello="world"\r\nold\r\n0\r\nX-End: original\r\n\r\n'
+        forward, reverse = await self.callback(
+            'L', request('/first'), head + body, request('/younger'))
+        self.assertEqual((forward, reverse), (request('/first'), b''))
+        self.assertEqual(self.addon.addon.module.events, ['/first', '/wait'])
+
+        forward, reverse = await self.callback('R', RESPONSE)
+        self.assertEqual(forward, RESPONSE)
+        published_head, published_body = reverse.split(b'\r\n\r\n', 1)
+        self.assertIn(b'x-resumed: yes\r\n', published_head + b'\r\n')
+        self.assertEqual(published_body, body + request('/younger'))
+
+        self.assertIsNone(self.held['L'])
+        self.assertEqual(self.addon.addon.module.events, ['/first', '/wait', '/younger'])
+
+        await self.callback('R', RESPONSE, RESPONSE)
+        self.assertEqual(self.addon.active_flows, 0)
+
+    async def test_body_edit_with_retained_trailers_preserves_checkpoints_on_rejection(self):
+        await self.start('''
+saved = None
+
+def response(flow):
+    global saved
+
+    saved = flow
+    flow.intercept()
+
+def request(flow):
+    if flow.request.path == '/release':
+        saved.response.content = b'changed'
+        saved.resume()
+''')
+        wire = (b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n'
+                b'Trailer: X-End\r\n\r\n3\r\nold\r\n0\r\nX-End: original\r\n\r\n')
+        await self.callback('L', request('/first'))
+        self.assertEqual(await self.callback('R', wire), (b'', b''))
+        original_held = copy.deepcopy(self.held)
+        original_state = copy.deepcopy(self.state)
+
+        # Native Easy safety cannot repair trailers that depend on the body.
+        # Rejection must leave the simulated host's owned checkpoints intact.
+        with self.assertRaisesRegex(CommitException, 'Body edits with trailers require Expert'):
+            await self.callback('L', request('/release'))
+
+        self.assertEqual(self.held, original_held)
+        self.assertEqual(self.state, original_state)
 
     async def test_same_direction_resume_keeps_arriving_pipeline_order(self):
         await self.start('''
