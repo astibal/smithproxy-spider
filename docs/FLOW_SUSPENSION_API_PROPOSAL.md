@@ -38,10 +38,48 @@ callback of the owning connection, in either direction, without repeating the
 completed message hooks. Body/trailer replacement, local responses and
 termination still go through native APIs, including for reverse drafts.
 
-Not implemented here: idle/asynchronous wakeup, HTTP/1 or raw TCP/UDP suspension,
-or interception in header hooks before the completed-message hook. These must
-not be advertised as supported by the completed H2 hook mapping. No Smithproxy
-hold queues or third persistent HPACK context are required.
+H2 header-hook interception also uses native receive snapshots and prefix holds
+while a body is incomplete; see `PROTOCOL_STATE_API_PROPOSAL.md`. No Smithproxy
+hold queues or third persistent HPACK context are required. Idle/asynchronous
+wakeup, HTTP/1 and raw TCP/UDP suspension remain outside this implementation.
+
+### Generated H2 responses
+
+An addon-created response can intercept in `responseheaders()` or `response()`.
+The public response keeps its body, unlike the initially empty body of an
+upstream response header hook. Spider tracks the two response-hook delivery
+steps independently from the request. The native suspension retains the
+unforwarded request anchor; resume runs only the remaining hooks, then calls
+the existing native `respond()` on the restored anchor. Both callback directions
+use the same path, including a second interception in the response hook.
+
+Response replacement, body edits and trailers are read from the current public
+response at publication. Intercepted local bodies are limited by the driver's
+retained-body limit; native output quotas, windows and HPACK rules still apply.
+A reset discards the pending response. Native publication failure invalidates
+the addon generation rather than replaying arbitrary hook side effects.
+
+### Deliberate difference: kill must wake an intercepted local response
+
+The isolated mitmproxy 12.3.1 black-box probe
+`tests/probes/addon_local_intercept_probe.py` observes this distinction at both
+local response hooks:
+
+- `resume()` sends the edited response;
+- `kill()` and `kill(); resume()` send neither response nor reset within the
+  five-second observation window, although subsequent streams still work;
+- `resume(); kill()` sends `RST_STREAM(INTERNAL_ERROR)`. It invokes `error()`
+  after a response-header interception, but not after `response()` was delivered.
+
+The order-sensitive result strongly suggests a lost wakeup in the reference;
+the probe does not claim to prove an infinite wait. Its results are preserved in
+`tests/corpus/addon_local_intercept_h2_v12.json`.
+
+By explicit design decision, Spider does not reproduce the pending-stream
+behavior. Killing an intercepted local response emits the native reset without
+publishing its body. Hook ordering follows the reference's working
+resume-then-kill case. This is a documented compatibility deviation, not a claim
+of identical output for the reference's bare-kill case.
 
 ## Historical proposal (not the current API contract)
 

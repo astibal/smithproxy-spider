@@ -1,0 +1,231 @@
+{
+  "hooks": [
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "request",
+      "path": "/headers/resume"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "responseheaders",
+      "path": "/headers/resume"
+    },
+    {
+      "body": "edited while held",
+      "error": null,
+      "hook": "released",
+      "path": "/headers/resume"
+    },
+    {
+      "body": "edited while held",
+      "error": null,
+      "hook": "response",
+      "path": "/headers/resume"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "request",
+      "path": "/headers/kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "responseheaders",
+      "path": "/headers/kill"
+    },
+    {
+      "body": "local original",
+      "error": "Connection killed.",
+      "hook": "released",
+      "path": "/headers/kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "request",
+      "path": "/response/resume"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "responseheaders",
+      "path": "/response/resume"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "response",
+      "path": "/response/resume"
+    },
+    {
+      "body": "edited while held",
+      "error": null,
+      "hook": "released",
+      "path": "/response/resume"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "request",
+      "path": "/response/kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "responseheaders",
+      "path": "/response/kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "response",
+      "path": "/response/kill"
+    },
+    {
+      "body": "local original",
+      "error": "Connection killed.",
+      "hook": "released",
+      "path": "/response/kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "request",
+      "path": "/headers/resume-kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "responseheaders",
+      "path": "/headers/resume-kill"
+    },
+    {
+      "body": "local original",
+      "error": "Connection killed.",
+      "hook": "released",
+      "path": "/headers/resume-kill"
+    },
+    {
+      "body": "local original",
+      "error": "Connection killed.",
+      "hook": "error",
+      "path": "/headers/resume-kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "request",
+      "path": "/response/resume-kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "responseheaders",
+      "path": "/response/resume-kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "response",
+      "path": "/response/resume-kill"
+    },
+    {
+      "body": "local original",
+      "error": "Connection killed.",
+      "hook": "released",
+      "path": "/response/resume-kill"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "request",
+      "path": "/headers/kill-resume"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "responseheaders",
+      "path": "/headers/kill-resume"
+    },
+    {
+      "body": "local original",
+      "error": "Connection killed.",
+      "hook": "released",
+      "path": "/headers/kill-resume"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "request",
+      "path": "/response/kill-resume"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "responseheaders",
+      "path": "/response/kill-resume"
+    },
+    {
+      "body": "local original",
+      "error": null,
+      "hook": "response",
+      "path": "/response/kill-resume"
+    },
+    {
+      "body": "local original",
+      "error": "Connection killed.",
+      "hook": "released",
+      "path": "/response/kill-resume"
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "responses": {
+    "/headers/kill": {
+      "body": "",
+      "ended": false,
+      "pending": true,
+      "reset": null
+    },
+    "/headers/kill-resume": {
+      "body": "",
+      "ended": false,
+      "pending": true,
+      "reset": null
+    },
+    "/headers/resume": {
+      "body": "edited while held",
+      "ended": true,
+      "reset": null
+    },
+    "/headers/resume-kill": {
+      "body": "",
+      "ended": false,
+      "reset": 2
+    },
+    "/response/kill": {
+      "body": "",
+      "ended": false,
+      "pending": true,
+      "reset": null
+    },
+    "/response/kill-resume": {
+      "body": "",
+      "ended": false,
+      "pending": true,
+      "reset": null
+    },
+    "/response/resume": {
+      "body": "edited while held",
+      "ended": true,
+      "reset": null
+    },
+    "/response/resume-kill": {
+      "body": "",
+      "ended": false,
+      "reset": 2
+    }
+  }
+}

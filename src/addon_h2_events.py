@@ -10,7 +10,8 @@ from html import escape
 from addon_flow import Error
 from addon_http_message import Request
 from addon_loader import REFERENCE_RELEASE
-from addon_parts import (AddonMessageError, H2MessageBinding, dispatch_local_response,
+from addon_parts import (AddonMessageError, H2MessageBinding, LocalResponseState,
+                         advance_local_response, publish_local_response,
                          dispatch_message, check_message_decisions, _killed)
 
 
@@ -83,7 +84,12 @@ class H2AddonEvents:
                 key[2], key[1], reason=Error.KILLED_MESSAGE, http2_error=2,
             )
             kind = 'request' if key[1] == 'L' else 'response'
-            state.termination_hook = kind if state.complete else kind + 'headers'
+            if state.local_reply is not None:
+                state.termination_hook = (
+                    'response' if state.local_reply.complete else 'responseheaders'
+                )
+            else:
+                state.termination_hook = kind if state.complete else kind + 'headers'
             published.append((key, 'terminated'))
             terminal.add(key[2])
 
@@ -120,7 +126,8 @@ class H2AddonEvents:
             parts = ()
             for direction in ('L', 'R'):
                 pending = self._messages.get((connection_id, direction, stream))
-                if pending is not None and not pending.complete:
+                if pending is not None and (not pending.complete or pending.local_reply is not None or
+                        (direction == 'L' and flow.response is not None)):
                     parts = native_message.suspended_parts(stream)
                     break
 
@@ -148,6 +155,12 @@ class H2AddonEvents:
                         allow_completed_interception=True,
                     )
                     failures.extend(dispatched)
+
+                local = kind == 'request' and (
+                    flow.response is not None or state.local_reply is not None
+                )
+                if local and not flow.intercepted:
+                    failures.extend(await self._advance_local_response(flow, state))
 
                 if flow.intercepted:
                     break
@@ -181,7 +194,7 @@ class H2AddonEvents:
                         state.termination_hook = kind if state.complete else kind + 'headers'
                     outcome = 'terminated'
                 elif kind == 'request' and flow.response is not None:
-                    failures.extend(await dispatch_local_response(self.generation, flow, binding))
+                    publish_local_response(flow, binding)
                     outcome = 'local'
                 else:
                     binding.apply()
@@ -190,6 +203,26 @@ class H2AddonEvents:
                 state.message = binding.message
                 published.append((key, outcome))
         return failures, published
+
+    async def _advance_local_response(self, flow, state):
+        """Advance response hooks while its unforwarded request owns the hold."""
+        if state.local_reply is None:
+            state.local_reply = LocalResponseState()
+        failures = ()
+        if not _killed(flow):
+            failures = await advance_local_response(self.generation, flow, state.local_reply)
+
+        # The reference's kill alone loses the suspended hook's wakeup. Match
+        # its resume-then-kill outcome instead: reset without publishing bytes,
+        # and deliver error only if response() has not already been delivered.
+        if _killed(flow):
+            state.termination_hook = (
+                'response' if state.local_reply.complete else 'responseheaders'
+            )
+            return failures
+        if flow.intercepted and len(flow.response.raw_content) > self.body_limit:
+            raise AddonMessageError('Intercepted local response exceeds retained body limit')
+        return failures
 
     @staticmethod
     def _can_intercept_headers(http2, side, binding):
@@ -450,13 +483,23 @@ class H2AddonEvents:
                         'Native informational response changed stream identity'
                     )
 
-            state, dispatched = await dispatch_message(
-                self.generation, flow, kind, binding, state,
-                allow_termination=True,
-                after_headers=handle_expect_continue,
-                allow_completed_interception=True,
-                allow_header_interception=self._can_intercept_headers(http2, side, binding),
-            )
+            if state is not None and state.local_reply is not None:
+                # A preceding incomplete stream can retain this request's
+                # anchor after its local response hooks have already started.
+                # Revisit the response lifecycle, never the request lifecycle.
+                binding.message = check_message_decisions(
+                    flow, kind, allow_termination=True, allow_late_stream=True,
+                    allow_interception=True,
+                )
+                dispatched = ()
+            else:
+                state, dispatched = await dispatch_message(
+                    self.generation, flow, kind, binding, state,
+                    allow_termination=True,
+                    after_headers=handle_expect_continue,
+                    allow_completed_interception=True,
+                    allow_header_interception=self._can_intercept_headers(http2, side, binding),
+                )
             self._messages[key] = state
             failures.extend(dispatched)
             if response_before_reset:
@@ -478,13 +521,21 @@ class H2AddonEvents:
             if not binding.complete:
                 hold_index = min(hold_index, index)
                 reservations.append((part, self._reservation_limit(binding)))
-            local = kind == 'request' and flow.response is not None
+            local = kind == 'request' and (
+                flow.response is not None or state.local_reply is not None
+            )
             if local:
                 if not binding.complete:
                     hold_index = min(hold_index, index)
                 else:
-                    failures.extend(await dispatch_local_response(
-                        self.generation, flow, binding))
+                    failures.extend(await self._advance_local_response(flow, state))
+                    if state.termination_hook is not None:
+                        native_message.terminate(part, reason=Error.KILLED_MESSAGE, http2_error=2)
+                        prepared.append((index, binding, state, 'terminated'))
+                        continue
+                    if flow.intercepted:
+                        prepared.append((index, binding, state, 'suspended'))
+                        continue
             prepared.append((index, binding, state, 'local' if local else 'normal'))
 
         if hold_index < len(parts):
@@ -514,6 +565,10 @@ class H2AddonEvents:
 
                 if outcome == 'normal':
                     binding.apply()
+                elif outcome == 'local':
+                    publish_local_response(
+                        self.generation.get_flow(connection_id, binding.stream_id), binding,
+                    )
                 published.append(((connection_id, side, binding.stream_id), outcome))
         return tuple(failures), tuple(published)
 
@@ -527,7 +582,7 @@ class H2AddonEvents:
         """
         flow = self.generation.get_flow(connection_id, binding.stream_id)
         failures = ()
-        if not flow.intercepted:
+        if not flow.intercepted and state.local_reply is None:
             # The earlier binding exposes the public header-only draft.
             # Recover the received body from Parts, not from that draft.
             binding = H2MessageBinding(
@@ -539,6 +594,13 @@ class H2AddonEvents:
                 allow_termination=True, allow_completed_interception=True,
             )
 
+        local = side == 'L' and (
+            flow.response is not None or state.local_reply is not None
+        )
+        if local and not flow.intercepted:
+            local_failures = await self._advance_local_response(flow, state)
+            failures = tuple(failures) + tuple(local_failures)
+
         if state.termination_hook is not None:
             native_message.terminate(binding.header, reason=Error.KILLED_MESSAGE, http2_error=2)
             return binding, 'terminated', failures
@@ -549,8 +611,7 @@ class H2AddonEvents:
             return binding, 'suspended', failures
 
         if side == 'L' and flow.response is not None:
-            local_failures = await dispatch_local_response(self.generation, flow, binding)
-            return binding, 'local', tuple(failures) + tuple(local_failures)
+            return binding, 'local', failures
 
         return binding, 'normal', failures
 

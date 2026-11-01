@@ -4,6 +4,8 @@ from dataclasses import replace
 import unittest
 import base64
 import subprocess
+import json
+from pathlib import Path
 
 import hpack
 import h2.events
@@ -218,11 +220,17 @@ def response(flow):
         await self.addon.start()
         self.driver = H2AddonEvents(self.addon)
         await self.request(1, '/wait')
-        with self.assertRaisesRegex(AddonMessageError, 'generated local responses'):
-            await self.request(3, '/release')
+        await self.request(3, '/release')
         self.assertEqual(self.peers.received['L'], [])
         self.assertEqual(self.peers.received['R'], [])
-        self.assertEqual(self.addon.state, 'failed')
+        self.assertEqual(self.addon.state, 'running')
+        self.assertTrue(self.addon.addon.module.saved.intercepted)
+
+        # Resume a second time: response() must not be replayed and intercept
+        # again. A real callback of the owning connection drives publication.
+        self.addon.addon.module.saved.resume()
+        await self.pump('L', frame(b'12345678', 6, 0, 0))
+        self.assertEqual(self.peers.received['L'], [b'private'])
 
 
 class PackagedSuspensionTests(unittest.TestCase):
@@ -232,7 +240,10 @@ class PackagedSuspensionTests(unittest.TestCase):
     def test_persistent_worker_retains_partial_header_interception(self):
         self.check_worker(HEADER_SCRIPT, fragmented=True)
 
-    def check_worker(self, script, *, fragmented):
+    def test_persistent_worker_resumes_generated_response(self):
+        self.check_worker(LOCAL_RESPONSE_SCRIPT, fragmented=False, local=True)
+
+    def check_worker(self, script, *, fragmented, local=False):
         import addon_worker_test as worker_tools
 
         process = subprocess.Popen(
@@ -259,13 +270,19 @@ class PackagedSuspensionTests(unittest.TestCase):
             reserved = False
             held = None
             output = b''
+            reverse_output = b''
             inputs = []
-            for stream, path in ((1, b'/wait'), (3, b'/release')):
+            first_path = b'/headers/resume' if local else b'/wait'
+            for stream, path in ((1, first_path), (3, b'/release')):
                 flags = 4 if fragmented and stream == 1 else 5
-                wire = frame(encoder.encode([
+                fields = [
                     (b':method', b'POST'), (b':scheme', b'https'),
                     (b':authority', b'example.test'), (b':path', path),
-                ]), 1, flags, stream)
+                ]
+                if local:
+                    peers.peers['L'].send_headers(stream, fields, end_stream=True)
+                    peers.peers['L'].data_to_send()
+                wire = frame(encoder.encode(fields), 1, flags, stream)
                 inputs.append((stream, wire))
                 if fragmented and stream == 1:
                     inputs.append((stream, frame(b'private', 0, 1, stream)))
@@ -281,22 +298,33 @@ class PackagedSuspensionTests(unittest.TestCase):
                 result = exchange(request)
                 self.assertTrue(result['ok'], result)
                 tables['L'] = result['translate_state']
+                if 'peer_translate_state' in result:
+                    tables['R'] = result['peer_translate_state']
                 control = result['translate_control']
                 reserved = result.get('hold_credit_reservation', False)
                 protocol_state = result['protocol_state']
                 held = result.get('held_parts')
                 current = base64.b64decode(result['replacement'] or '')
+                reverse_output += base64.b64decode(result.get('replacement_reverse') or '')
                 if stream == 1:
                     self.assertEqual(current, b'')
                     if held is None:
                         self.assertIn('suspension', control)
+                    if local:
+                        self.assertEqual(reverse_output, b'')
                 output += current
             events = peers.peers['R'].receive_data(output)
             self.assertEqual([event.stream_id for event in events
-                              if isinstance(event, h2.events.RequestReceived)], [1, 3])
+                              if isinstance(event, h2.events.RequestReceived)],
+                             [3] if local else [1, 3])
             expected = b'private' if fragmented else b'changed after intercept'
             self.assertEqual([event.data for event in events
-                              if isinstance(event, h2.events.DataReceived)], [expected])
+                              if isinstance(event, h2.events.DataReceived)], [] if local else [expected])
+            if local:
+                response_events = peers.peers['L'].receive_data(reverse_output)
+                self.assertEqual([event.data for event in response_events
+                                  if isinstance(event, h2.events.DataReceived)],
+                                 [b'edited while held'])
             self.assertNotIn('suspension', control)
         finally:
             if process.stdin is not None:
@@ -827,6 +855,278 @@ def request(flow):
             await self.request(1, '/wait')
 
         self.assertEqual(self.peers.ended['R'], [])
+        self.assertEqual(self.addon.state, 'failed')
+
+
+LOCAL_RESPONSE_SCRIPT = '''
+from mitmproxy import http
+saved = None
+events = []
+
+def report(hook, flow):
+    events.append({
+        'hook': hook, 'path': flow.request.path,
+        'body': flow.response.raw_content.decode('ascii'),
+        'error': None if flow.error is None else flow.error.msg,
+    })
+
+def release():
+    if saved.request.path.endswith('/kill'):
+        saved.kill()
+    else:
+        saved.response.content = b'edited while held'
+        saved.resume()
+    report('released', saved)
+
+def request(flow):
+    global saved
+    if flow.request.path == '/release':
+        release()
+    elif flow.request.path != '/trigger':
+        saved = flow
+        flow.response = http.Response.make(200, b'local original')
+        report('request', flow)
+
+def responseheaders(flow):
+    if flow.request.path == '/trigger':
+        return
+    report('responseheaders', flow)
+    if flow.request.path.startswith(('/headers/', '/both/')):
+        flow.intercept()
+
+def response(flow):
+    if flow.request.path == '/trigger':
+        release()
+        return
+    report('response', flow)
+    if flow.request.path.startswith(('/response/', '/both/')):
+        flow.intercept()
+
+def error(flow):
+    report('error', flow)
+'''
+
+
+class LocalResponseSuspensionTests(unittest.IsolatedAsyncioTestCase):
+    pump = AddonSuspensionTests.pump
+    request = AddonSuspensionTests.request
+    http2_view = AddonSuspensionTests.http2_view
+    asyncTearDown = AddonSuspensionTests.asyncTearDown
+
+    async def asyncSetUp(self):
+        self.addon = AddonGeneration(LOCAL_RESPONSE_SCRIPT, H2AddonEvents.HOOKS)
+        await self.addon.start()
+        self.driver = H2AddonEvents(self.addon)
+        self.peers = Peers()
+
+    async def check_reference_resume(self, stage, *, reverse=False):
+        reference = json.loads(Path(__file__).with_name('corpus').joinpath(
+            'addon_local_intercept_h2_v12.json').read_text())
+        path = '/' + stage + '/resume'
+        stream = 3 if reverse else 1
+        if reverse:
+            await self.request(1, '/trigger')
+        await self.request(stream, path)
+
+        self.assertEqual(self.peers.received['L'], [])
+        self.assertNotIn(stream, self.peers.ended['R'])
+        self.assertTrue(self.addon.addon.module.saved.intercepted)
+
+        if reverse:
+            server = self.peers.peers['R']
+            server.send_headers(1, [(':status', '204')], end_stream=True)
+            await self.pump('R', server.data_to_send())
+        else:
+            await self.request(3, '/release')
+
+        expected = reference['responses'][path]
+        self.assertEqual(b''.join(self.peers.received['L']).decode(), expected['body'])
+        self.assertEqual(self.peers.ended['L'].count(stream), 1)
+        self.assertIsNone(self.addon.get_flow('test', stream))
+        self.assertEqual(self.addon.addon.module.events,
+                         [event for event in reference['hooks'] if event['path'] == path])
+        self.assertFalse(self.peers.bridge.reserved)
+
+    async def test_header_resume_matches_reference(self):
+        await self.check_reference_resume('headers')
+
+    async def test_response_resume_matches_reference(self):
+        await self.check_reference_resume('response')
+
+    async def test_header_resume_from_opposite_callback_matches_reference(self):
+        await self.check_reference_resume('headers', reverse=True)
+
+    async def test_response_resume_from_opposite_callback_matches_reference(self):
+        await self.check_reference_resume('response', reverse=True)
+
+    async def check_local_kill(self, stage, *, reverse=False):
+        reference = json.loads(Path(__file__).with_name('corpus').joinpath(
+            'addon_local_intercept_h2_v12.json').read_text())
+        path = '/' + stage + '/kill'
+        reference_path = '/' + stage + '/resume-kill'
+        stream = 3 if reverse else 1
+        if reverse:
+            await self.request(1, '/trigger')
+        await self.request(stream, path)
+
+        if reverse:
+            server = self.peers.peers['R']
+            server.send_headers(1, [(':status', '204')], end_stream=True)
+            await self.pump('R', server.data_to_send())
+        else:
+            await self.request(3, '/release')
+
+        # Deliberate difference: kill alone must not inherit the reference's
+        # lost wakeup. Its resume-then-kill trace supplies the terminal contract.
+        self.assertTrue(reference['responses'][path]['pending'])
+        expected = reference['responses'][reference_path]
+        resets = [event for event in self.peers.events['L']
+                  if isinstance(event, h2.events.StreamReset) and event.stream_id == stream]
+        self.assertEqual([int(event.error_code) for event in resets], [expected['reset']])
+        self.assertEqual(self.peers.received['L'], [])
+        self.assertNotIn(stream, self.peers.ended['R'])
+        expected_hooks = [dict(event, path=path) for event in reference['hooks']
+                          if event['path'] == reference_path]
+        self.assertEqual(self.addon.addon.module.events, expected_hooks)
+        self.assertIsNone(self.addon.get_flow('test', stream))
+        self.assertFalse(self.peers.bridge.reserved)
+
+    async def test_kill_at_local_headers_resets_and_delivers_error_once(self):
+        await self.check_local_kill('headers')
+
+    async def test_kill_at_local_response_resets_without_error_hook(self):
+        await self.check_local_kill('response')
+
+    async def test_reverse_kill_at_local_headers(self):
+        await self.check_local_kill('headers', reverse=True)
+
+    async def test_reverse_kill_at_local_response(self):
+        await self.check_local_kill('response', reverse=True)
+
+    async def test_response_hook_can_intercept_after_header_resume(self):
+        await self.request(1, '/both/resume')
+        await self.request(3, '/release')
+
+        self.assertEqual(self.peers.received['L'], [])
+        self.assertTrue(self.addon.addon.module.saved.intercepted)
+        await self.request(5, '/release')
+
+        self.assertEqual(self.peers.received['L'], [b'edited while held'])
+        self.assertEqual([item['hook'] for item in self.addon.addon.module.events], [
+            'request', 'responseheaders', 'released', 'response', 'released',
+        ])
+        self.assertFalse(self.peers.bridge.reserved)
+
+    async def test_source_reset_discards_generated_response(self):
+        await self.request(1, '/headers/resume')
+        client = self.peers.peers['L']
+        client.reset_stream(1, error_code=8)
+        await self.pump('L', client.data_to_send())
+
+        self.assertEqual(self.peers.received['L'], [])
+        self.assertIsNone(self.addon.get_flow('test', 1))
+        self.assertEqual([item['hook'] for item in self.addon.addon.module.events], [
+            'request', 'responseheaders', 'error',
+        ])
+        self.assertFalse(self.peers.bridge.reserved)
+
+    async def test_held_response_replacement_and_trailers_use_native_output(self):
+        await self.request(1, '/response/resume')
+        flow = self.addon.addon.module.saved
+        replacement = type(flow.response).make(202, b'replaced', {'x-local': 'yes'})
+        replacement.trailers = type(replacement.headers)([(b'x-end', b'complete')])
+        flow.response = replacement
+        flow.resume()
+
+        await self.pump('R', frame(b'12345678', 6, 0, 0))
+
+        self.assertEqual(self.peers.received['L'], [b'replaced'])
+        replies = [event for event in self.peers.events['L']
+                   if isinstance(event, h2.events.ResponseReceived)]
+        trailers = [event for event in self.peers.events['L']
+                    if isinstance(event, h2.events.TrailersReceived)]
+        self.assertIn((b':status', b'202'), replies[0].headers)
+        self.assertEqual(trailers[0].headers, [(b'x-end', b'complete')])
+        self.assertEqual([item['hook'] for item in self.addon.addon.module.events], [
+            'request', 'responseheaders', 'response',
+        ])
+
+    async def test_resumed_local_body_exceeding_initial_window_drains(self):
+        await self.request(1, '/response/resume')
+        flow = self.addon.addon.module.saved
+        flow.response.content = b'x' * (128 * 1024)
+        flow.resume()
+
+        await self.pump('R', frame(b'12345678', 6, 0, 0))
+
+        self.assertEqual(b''.join(self.peers.received['L']), b'x' * (128 * 1024))
+        self.assertEqual(self.peers.ended['L'].count(1), 1)
+        self.assertFalse(self.peers.bridge.reserved)
+        self.assertNotIn(1, self.peers.ended['R'])
+
+    async def test_retained_local_body_is_bounded(self):
+        self.driver.body_limit = 4
+        with self.assertRaisesRegex(AddonMessageError, 'retained body limit'):
+            await self.request(1, '/headers/resume')
+        self.assertEqual(self.peers.received['L'], [])
+        self.assertEqual(self.addon.state, 'failed')
+
+    async def test_local_resume_behind_incomplete_prefix_does_not_replay_hooks(self):
+        await self.check_blocked_prefix(kill=False)
+
+    async def test_local_kill_behind_incomplete_prefix_keeps_response_hook_identity(self):
+        await self.check_blocked_prefix(kill=True)
+
+    async def check_blocked_prefix(self, *, kill):
+        client = self.peers.peers['L']
+        client.send_headers(1, [
+            (':method', 'POST'), (':scheme', 'https'),
+            (':authority', 'example.test'), (':path', '/trigger'),
+            ('content-length', '2'),
+        ])
+        await self.pump('L', client.data_to_send())
+        path = '/headers/kill' if kill else '/headers/resume'
+        await self.request(3, path)
+        await self.request(5, '/release')
+        self.assertEqual(self.peers.received['L'], [])
+
+        # The older prefix owns ordering. Completing it must publish or
+        # discard the local anchor without replaying either response hook.
+        client.send_data(1, b'ok', end_stream=True)
+        await self.pump('L', client.data_to_send())
+
+        expected_body = [] if kill else [b'edited while held']
+        expected_last_hook = 'error' if kill else 'response'
+        self.assertEqual(self.peers.received['L'], expected_body)
+        self.assertEqual([event['hook'] for event in self.addon.addon.module.events], [
+            'request', 'responseheaders', 'released', expected_last_hook,
+        ])
+        self.assertIsNone(self.addon.get_flow('test', 3))
+
+    async def test_local_native_publication_failure_invalidates_without_hook_replay(self):
+        await self.request(1, '/response/resume')
+        saved = self.addon.addon.module.saved
+        saved.response.status_code = 100
+        saved.resume()
+        before = list(self.addon.addon.module.events)
+
+        with self.assertRaises(CommitException):
+            await self.pump('R', frame(b'12345678', 6, 0, 0))
+
+        self.assertEqual(self.addon.addon.module.events, before)
+        self.assertEqual(self.peers.received['L'], [])
+        self.assertEqual(self.addon.state, 'failed')
+
+    async def test_removing_intercepted_local_response_cannot_forward_request(self):
+        await self.request(1, '/response/resume')
+        saved = self.addon.addon.module.saved
+        saved.response = None
+        saved.resume()
+
+        with self.assertRaisesRegex(AddonMessageError, 'retain the local HTTP Response'):
+            await self.pump('R', frame(b'12345678', 6, 0, 0))
+        self.assertEqual(self.peers.ended['R'], [])
+        self.assertEqual(self.peers.received['L'], [])
         self.assertEqual(self.addon.state, 'failed')
 
 

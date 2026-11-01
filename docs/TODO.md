@@ -32,7 +32,10 @@
   suspension after the complete body arrives. Resume delivers the deferred message hook,
   preserving the public header object. A deferred hook may intercept again;
   detached native Parts let it decide before any resume is staged. Generated
-  response interception remains rejected. Kill during prefix-held reception
+  H2 responses can also intercept at either response hook, retaining their
+  request anchor until native reverse publication. Hooks are delivered once;
+  the deliberate reference kill/wakeup difference is documented in the current
+  suspension contract. Kill during prefix-held reception
   now settles in a callback from either direction, without waiting for body
   completion. Native Translate releases body reservations and sends the reset;
   retained source headers preserve HPACK history without reaching the peer.

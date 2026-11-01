@@ -20,6 +20,13 @@ class AddonMessageError(ValueError):
 
 
 @dataclass
+class LocalResponseState:
+    """Hook delivery for a generated response, independent of its request."""
+    headers_delivered: bool = False
+    complete: bool = False
+
+
+@dataclass
 class MessageState:
     message: object
     complete: bool = False
@@ -28,6 +35,7 @@ class MessageState:
     termination_hook: str | None = None
     error_delivered: bool = False
     suspended: bool = False
+    local_reply: LocalResponseState | None = None
 
 
 def _killed(flow):
@@ -85,6 +93,55 @@ async def dispatch_local_response(generation, flow, binding):
     if not isinstance(response.raw_content, bytes):
         raise AddonMessageError('A local response requires a complete byte body')
 
+    publish_local_response(flow, binding)
+    return tuple(failures)
+
+
+async def advance_local_response(generation, flow, state):
+    """Run only the remaining generated-response hooks, without publication.
+
+    A local response already has its body at responseheaders. Retain that
+    public object across interception; do not reconstruct it from the request
+    Parts or replay a hook when another callback resumes the flow.
+    """
+    failures = []
+    response = flow.response
+    if not isinstance(response, Response):
+        raise AddonMessageError('Response hooks must retain the local HTTP Response')
+    if response.stream and not state.complete:
+        raise AddonMessageError('Streaming callbacks are not connected to this HTTP driver')
+
+    if not state.headers_delivered:
+        failures.extend(await generation.dispatch('responseheaders', flow))
+        state.headers_delivered = True
+
+    if not flow.intercepted and not _killed(flow) and not state.complete:
+        response = flow.response
+        if not isinstance(response, Response):
+            raise AddonMessageError('Response hooks must retain the local HTTP Response')
+        if response.stream:
+            raise AddonMessageError('Streaming callbacks are not connected to this HTTP driver')
+        failures.extend(await generation.dispatch('response', flow))
+        state.complete = True
+
+    response = flow.response
+    if not isinstance(response, Response):
+        raise AddonMessageError('Response hooks must retain the local HTTP Response')
+    if response.stream and not state.complete:
+        raise AddonMessageError('Streaming callbacks are not connected to this HTTP driver')
+    if not isinstance(response.raw_content, bytes):
+        raise AddonMessageError('A local response requires a complete byte body')
+    return tuple(failures)
+
+
+def publish_local_response(flow, binding):
+    """Serialize the current response through the native request anchor."""
+    response = flow.response
+    if not isinstance(response, Response):
+        raise AddonMessageError('Response hooks must retain the local HTTP Response')
+    if not isinstance(response.raw_content, bytes):
+        raise AddonMessageError('A local response requires a complete byte body')
+
     h1_transport = hasattr(binding, 'draft')
     normalize = (lambda name: name) if h1_transport else (lambda name: name.lower())
     headers = [(normalize(name), value) for name, value in response.headers.fields]
@@ -107,7 +164,6 @@ async def dispatch_local_response(generation, flow, binding):
         request=binding.header,
         **options,
     )
-    return tuple(failures)
 
 
 async def dispatch_message(
