@@ -1,0 +1,115 @@
+{
+  "hooks": [
+    {
+      "flow": 1,
+      "hook": "dns_request",
+      "message_id": 51966,
+      "order": 1,
+      "question": "first.example.com"
+    },
+    {
+      "flow": 2,
+      "hook": "dns_request",
+      "message_id": 51966,
+      "order": 2,
+      "question": "second.example.com"
+    },
+    {
+      "answer": "192.0.2.101",
+      "flow": 1,
+      "hook": "dns_response",
+      "message_id": 51966,
+      "question": "first.example.com"
+    },
+    {
+      "answer": "192.0.2.102",
+      "flow": 2,
+      "hook": "dns_response",
+      "message_id": 51966,
+      "question": "second.example.com"
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "responses": [
+    {
+      "answer": [
+        "first.example.com",
+        1,
+        1,
+        60,
+        "192.0.2.101"
+      ],
+      "counts": [
+        1,
+        1,
+        0,
+        0
+      ],
+      "id": 51966,
+      "query": false,
+      "question": [
+        "first.example.com",
+        1,
+        1
+      ],
+      "recursion_available": true,
+      "response_code": 0
+    },
+    {
+      "answer": [
+        "second.example.com",
+        1,
+        1,
+        60,
+        "192.0.2.102"
+      ],
+      "counts": [
+        1,
+        1,
+        0,
+        0
+      ],
+      "id": 51966,
+      "query": false,
+      "question": [
+        "second.example.com",
+        1,
+        1
+      ],
+      "recursion_available": true,
+      "response_code": 0
+    }
+  ],
+  "upstream": {
+    "queries": [
+      {
+        "question": [
+          "first.example.com",
+          1,
+          1
+        ]
+      },
+      {
+        "question": [
+          "first.example.com",
+          28,
+          1
+        ]
+      },
+      {
+        "question": [
+          "second.example.com",
+          1,
+          1
+        ]
+      },
+      {
+        "question": [
+          "second.example.com",
+          28,
+          1
+        ]
+      }
+    ]
+  }
+}

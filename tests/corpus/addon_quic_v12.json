@@ -1,0 +1,53 @@
+{
+  "data": {
+    "conn_identity": true,
+    "context_identity": true,
+    "is_dtls": false,
+    "settings": null,
+    "ssl_conn": null
+  },
+  "hooks": {
+    "client_arg_identity": true,
+    "client_blocking": true,
+    "client_equal_other": false,
+    "client_name": "quic_start_client",
+    "server_arg_identity": true,
+    "server_blocking": true,
+    "server_equal_other": false,
+    "server_name": "quic_start_server"
+  },
+  "reference": "mitmproxy 12.3.1",
+  "settings": {
+    "custom": {
+      "alpn_protocols": ["h3"],
+      "ca_file": "/ca/file",
+      "ca_path": "/ca/path",
+      "certificate": "leaf",
+      "certificate_chain": ["intermediate"],
+      "certificate_private_key": "private-key",
+      "cipher_suites": [4865],
+      "verify_mode": "required"
+    },
+    "defaults": {
+      "alpn_protocols": null,
+      "ca_file": null,
+      "ca_path": null,
+      "certificate": null,
+      "certificate_chain": [],
+      "certificate_private_key": null,
+      "cipher_suites": null,
+      "verify_mode": null
+    },
+    "equal_defaults": true,
+    "independent_certificate_chain": true
+  },
+  "surface": {
+    "client_hook_module": "mitmproxy.proxy.layers.quic._hooks",
+    "data_fields": ["conn", "context", "ssl_conn", "is_dtls", "settings"],
+    "data_is_tls_data": true,
+    "data_module": "mitmproxy.proxy.layers.quic._hooks",
+    "server_hook_module": "mitmproxy.proxy.layers.quic._hooks",
+    "settings_module": "mitmproxy.proxy.layers.quic._hooks",
+    "settings_fields": ["alpn_protocols", "certificate", "certificate_chain", "certificate_private_key", "cipher_suites", "ca_path", "ca_file", "verify_mode"]
+  }
+}

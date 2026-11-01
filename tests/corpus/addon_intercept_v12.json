@@ -9,52 +9,60 @@
       "hook": "requestheaders",
       "intercepted": false,
       "live": true,
-      "path": "/intercept"
+      "path": "/intercept",
+      "same_flow": true
     },
     {
       "error": null,
       "hook": "request",
       "intercepted": false,
       "live": true,
-      "path": "/intercept"
+      "path": "/intercept",
+      "same_flow": true
     },
     {
       "error": null,
       "hook": "after-intercept",
       "intercepted": true,
       "live": true,
-      "path": "/intercept"
+      "path": "/intercept",
+      "same_flow": true
     },
     {
       "error": null,
       "hook": "before-resume",
       "intercepted": true,
       "live": true,
-      "path": "/intercept"
+      "path": "/intercept",
+      "same_flow": true
     },
     {
       "error": null,
       "hook": "after-resume",
       "intercepted": false,
       "live": true,
-      "path": "/intercept"
+      "path": "/intercept",
+      "same_flow": true
     },
     {
       "error": null,
       "hook": "responseheaders",
       "intercepted": false,
       "live": true,
-      "path": "/intercept"
+      "path": "/intercept",
+      "same_flow": true
     },
     {
       "error": null,
       "hook": "response",
       "intercepted": false,
       "live": true,
-      "path": "/intercept"
+      "path": "/intercept",
+      "same_flow": true
     }
   ],
   "origin": {
+    "request_after_resume": true,
     "request_line": "GET /intercept HTTP/1.1",
     "request_seen": true
   },

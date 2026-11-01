@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 from addon_contentviews_contract import collect
 from addon_contentviews_helpers_contract import collect as collect_helpers
+from addon_contentviews_legacy_contract import collect as collect_legacy
 from addon_contentviews_signal_contract import collect as collect_signal
 from addon_contentviews import (
     describe_registered,
@@ -23,6 +24,13 @@ from addon_options import Options
 
 
 class ContentviewTests(unittest.TestCase):
+    def test_reference_legacy_bridge_contract(self):
+        corpus = json.loads(
+            (ROOT / "tests/corpus/addon_contentviews_legacy_v12.json").read_text()
+        )
+        module = compatibility_modules()["mitmproxy.contentviews"]
+        self.assertEqual(collect_legacy(module), corpus["observations"])
+
     def test_reference_public_helper_contract(self):
         corpus = json.loads(
             (ROOT / "tests/corpus/addon_contentviews_helpers_v12.json").read_text()
@@ -76,6 +84,21 @@ class ContentviewTests(unittest.TestCase):
         result = first.ContentviewResult("text", "none", None, "plain text")
         self.assertEqual(result.text, "text")
         self.assertEqual(result.description, "plain text")
+
+    def test_public_helper_reports_an_empty_custom_registry(self):
+        modules = compatibility_modules()
+        contentviews = modules["mitmproxy.contentviews"]
+        request = modules["mitmproxy.http"].Request.make(
+            "GET",
+            "https://example.test/",
+        )
+
+        result = contentviews.prettify_message(request, object())
+
+        self.assertEqual(result.text, "No content view is available.")
+        self.assertEqual(result.syntax_highlight, "error")
+        self.assertIsNone(result.view_name)
+        self.assertEqual(result.description, "")
 
     def test_registry_selection_ignores_broken_priorities(self):
         module = compatibility_modules()["mitmproxy.contentviews"]

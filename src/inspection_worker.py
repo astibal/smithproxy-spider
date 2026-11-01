@@ -293,7 +293,8 @@ def invoke_script(current, compiled):
             h1_response = getattr(api.message, '_h1_response', None) if api is not None else None
             requested = api is not None and api.connection._requested
             staged_translation = translation is not None and bool(
-                translation.message_edits or translation.local_responses)
+                translation.message_edits or translation.local_responses or
+                translation.suspension is not None)
             if requested or staged_translation or (translation is not None and translation.result is not None):
                 if translation is None or translation.result is None or result is not translation.result:
                     raise CommitException('Active translate requires return api.message.translate() on every callback')

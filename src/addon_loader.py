@@ -55,6 +55,7 @@ HOOK_ARGUMENTS = {
     "websocket_start": 1,
     "websocket_message": 1,
     "websocket_end": 1,
+    "socks5_auth": 1,
     "tls_clienthello": 1,
     "tls_start_client": 1,
     "tls_start_server": 1,

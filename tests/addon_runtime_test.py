@@ -885,6 +885,49 @@ def request(flow):
         self.assertNotEqual(replacement.id, first.id)
         await generation.close()
 
+    async def test_flow_capacity_is_shared_across_protocol_adapters(self):
+        generation = AddonGeneration("", set(), max_flows=3)
+
+        with self.assertRaisesRegex(AddonRuntimeError, "running generation"):
+            generation.create_transport_flow("tcp", "tcp", None, None)
+        with self.assertRaisesRegex(AddonRuntimeError, "running generation"):
+            generation.create_dns_flow("dns", 1, None, None)
+
+        await generation.start(None)
+        with self.assertRaisesRegex(ValueError, "tcp or udp"):
+            generation.create_transport_flow("invalid", "quic", None, None)
+
+        tcp = generation.create_transport_flow("tcp", "tcp", None, None)
+        udp = generation.create_transport_flow("udp", "udp", None, None)
+        dns = generation.create_dns_flow("dns", 7, None, None)
+        self.assertIsInstance(tcp, TCPFlow)
+        self.assertIsInstance(udp, UDPFlow)
+        self.assertIsInstance(dns, addon_dns.DNSFlow)
+        self.assertEqual(generation.active_flows, 3)
+
+        with self.assertRaisesRegex(AddonRuntimeError, "already"):
+            generation.create_transport_flow("tcp", "tcp", None, None)
+        with self.assertRaisesRegex(AddonRuntimeError, "already"):
+            generation.create_dns_flow("dns", 7, None, None)
+        with self.assertRaisesRegex(AddonRuntimeError, "limit"):
+            generation.create_transport_flow("overflow", "udp", None, None)
+        with self.assertRaisesRegex(AddonRuntimeError, "limit"):
+            generation.create_dns_flow("overflow", 1, None, None)
+
+        self.assertIs(generation.release_flow("tcp", 1), tcp)
+        replacement = generation.create_dns_flow("replacement", 1, None, None)
+        self.assertIsInstance(replacement, addon_dns.DNSFlow)
+        self.assertEqual(generation.active_flows, 3)
+
+        await generation.close()
+        self.assertEqual(generation.active_flows, 0)
+        for flow in (udp, dns, replacement):
+            self.assertFalse(flow.live)
+        with self.assertRaisesRegex(AddonRuntimeError, "running generation"):
+            generation.create_transport_flow("late", "tcp", None, None)
+        with self.assertRaisesRegex(AddonRuntimeError, "running generation"):
+            generation.create_dns_flow("late", 1, None, None)
+
     async def test_full_flow_capacity_is_reusable_without_losing_addon_state(self):
         generation = AddonGeneration('''
 count = 0

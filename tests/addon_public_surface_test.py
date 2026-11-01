@@ -14,6 +14,7 @@ from addon_loader import compatibility_imports
 from addon_manager import AddonManager
 from addon_commands import CommandManager
 from addon_options import Loader, OptManager
+from addon_hook_registry_contract import collect as collect_hook_registry
 
 
 CLASS_NAMES = (
@@ -116,7 +117,20 @@ class PublicSurfaceTests(unittest.TestCase):
                 modules["mitmproxy.coretypes.serializable"],
             )
             self.assertEqual(set(hooks.all_hooks), {
-                "add_log", "configure", "done", "running", "update"
+                "add_log", "client_connected", "client_disconnected",
+                "configure", "dns_error", "dns_request", "dns_response",
+                "done", "error", "http_connect", "http_connect_error",
+                "http_connect_upstream", "http_connected", "load",
+                "quic_start_client", "quic_start_server", "request",
+                "requestheaders", "response", "responseheaders", "running",
+                "server_connect", "server_connect_error", "server_connected",
+                "server_disconnected", "socks5_auth", "tcp_end", "tcp_error",
+                "tcp_message", "tcp_start", "tls_clienthello",
+                "tls_established_client", "tls_established_server",
+                "tls_failed_client", "tls_failed_server", "tls_start_client",
+                "tls_start_server", "udp_end", "udp_error", "udp_message",
+                "udp_start", "update", "websocket_end",
+                "websocket_message", "websocket_start",
             })
             self.assertEqual(options.CONF_DIR, "~/.mitmproxy")
             for name, expected in self.corpus["exceptions"].items():
@@ -124,7 +138,23 @@ class PublicSurfaceTests(unittest.TestCase):
                     value = getattr(exceptions, name)
                     actual_mro = [item.__name__ for item in value.__mro__]
                     self.assertEqual(actual_mro, expected["mro"])
-                    self.assertEqual(str(value("example")), expected["message"])
+                self.assertEqual(str(value("example")), expected["message"])
+
+    def test_eager_hook_registry_matches_supported_reference_values(self):
+        corpus = json.loads(
+            (ROOT / "tests/corpus/addon_hook_registry_v12.json").read_text()
+        )
+        modules = compatibility_modules()
+
+        with compatibility_imports(modules):
+            from mitmproxy import hooks
+
+            actual = collect_hook_registry(hooks)
+
+        expected = corpus["hooks"].copy()
+        self.assertEqual(expected.pop("next_layer"), "NextLayerHook")
+        self.assertNotIn("next_layer", actual)
+        self.assertEqual(actual, expected)
 
     def test_canonical_module_aliases_match_reference(self):
         corpus = json.loads(

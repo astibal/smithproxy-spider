@@ -1,0 +1,190 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "scenarios": [
+    {
+      "action": "pass",
+      "client_status": "HTTP/1.1 200 Connection established",
+      "exceptions": [],
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "phase": "after",
+          "port": "destination",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connected",
+          "host": "127.0.0.1",
+          "live": true,
+          "phase": "after",
+          "port": "destination",
+          "response_status": 200
+        },
+        {
+          "error": null,
+          "hook": "http_connect_upstream",
+          "host": "127.0.0.1",
+          "live": false,
+          "phase": "before",
+          "port": "destination",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connect_upstream",
+          "host": "127.0.0.1",
+          "live": false,
+          "phase": "after",
+          "port": "destination",
+          "response_status": null
+        }
+      ],
+      "tunnel_result": "closed",
+      "upstream_connected": true,
+      "upstream_request": "CONNECT 127.0.0.1:destination HTTP/1.1",
+      "upstream_status": 502
+    },
+    {
+      "action": "reroute",
+      "client_status": "HTTP/1.1 200 Connection established",
+      "exceptions": [],
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "phase": "after",
+          "port": "destination",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connected",
+          "host": "127.0.0.1",
+          "live": true,
+          "phase": "after",
+          "port": "destination",
+          "response_status": 200
+        },
+        {
+          "error": null,
+          "hook": "http_connect_upstream",
+          "host": "127.0.0.1",
+          "live": false,
+          "phase": "before",
+          "port": "destination",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connect_upstream",
+          "host": "rewritten.invalid",
+          "live": false,
+          "phase": "after",
+          "port": 9443,
+          "response_status": null
+        }
+      ],
+      "tunnel_result": "closed",
+      "upstream_connected": true,
+      "upstream_request": "CONNECT rewritten.invalid:9443 HTTP/1.1",
+      "upstream_status": 200
+    },
+    {
+      "action": "kill",
+      "client_status": "HTTP/1.1 200 Connection established",
+      "exceptions": [
+        {
+          "message": "Flow is not killable.",
+          "module": "mitmproxy.exceptions",
+          "type": "ControlException"
+        }
+      ],
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "phase": "after",
+          "port": "destination",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connected",
+          "host": "127.0.0.1",
+          "live": true,
+          "phase": "after",
+          "port": "destination",
+          "response_status": 200
+        },
+        {
+          "error": null,
+          "hook": "http_connect_upstream",
+          "host": "127.0.0.1",
+          "live": false,
+          "phase": "before",
+          "port": "destination",
+          "response_status": null
+        }
+      ],
+      "tunnel_result": "closed",
+      "upstream_connected": true,
+      "upstream_request": "CONNECT 127.0.0.1:destination HTTP/1.1",
+      "upstream_status": 200
+    },
+    {
+      "action": "local-response",
+      "client_status": "HTTP/1.1 200 Connection established",
+      "exceptions": [],
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "phase": "after",
+          "port": "destination",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connected",
+          "host": "127.0.0.1",
+          "live": true,
+          "phase": "after",
+          "port": "destination",
+          "response_status": 200
+        },
+        {
+          "error": null,
+          "hook": "http_connect_upstream",
+          "host": "127.0.0.1",
+          "live": false,
+          "phase": "before",
+          "port": "destination",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connect_upstream",
+          "host": "127.0.0.1",
+          "live": false,
+          "phase": "after",
+          "port": "destination",
+          "response_status": 418
+        }
+      ],
+      "tunnel_result": "closed",
+      "upstream_connected": true,
+      "upstream_request": "CONNECT 127.0.0.1:destination HTTP/1.1",
+      "upstream_status": 200
+    }
+  ]
+}

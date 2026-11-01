@@ -1,7 +1,16 @@
 addon_serializable.py
+addon_transport_envelope.py
 addon_tnetstring.py
 addon_io.py
 addon_script.py
+addon_socks5.py
+addon_socks5_events.py
+addon_proxy_context.py
+addon_tls.py
+addon_quic.py
+addon_server_hooks.py
+addon_http_hooks.py
+addon_protocol_hooks.py
 addon_contentviews.py
 addon_signals.py
 addon_typecheck.py
@@ -26,6 +35,7 @@ addon_multidict.py
 addon_http_message.py
 addon_flow.py
 addon_connection.py
+addon_connect_events.py
 addon_certs.py
 addon_websocket.py
 addon_dns.py
@@ -38,4 +48,6 @@ addon_parts.py
 addon_h1_events.py
 addon_h2_events.py
 addon_raw_events.py
+addon_dns_events.py
+addon_websocket_events.py
 addon_native.py

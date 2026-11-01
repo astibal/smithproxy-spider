@@ -1,0 +1,81 @@
+{
+  "context": {
+    "client_identity": true,
+    "fork_client_identity": true,
+    "layers_independent": true,
+    "options_identity": true,
+    "server_identity": true
+  },
+  "data_defaults": {
+    "client_hello_context_identity": true,
+    "client_hello_identity": true,
+    "establish_server_tls_first": false,
+    "ignore_connection": false,
+    "is_dtls": false,
+    "ssl_conn": null,
+    "tls_conn_identity": true,
+    "tls_context_identity": true
+  },
+  "data_mutated": {
+    "establish_server_tls_first": true,
+    "ignore_connection": true,
+    "is_dtls": true
+  },
+  "hello": {
+    "complete": {
+      "alpn_protocols": {"ok": true, "value": [{"bytes": "6832"}, {"bytes": "687474702f312e31"}]},
+      "cipher_suites": {"ok": true, "value": [4865, 49199]},
+      "constructor": {"ok": true},
+      "extensions": {"ok": true, "value": [[0, "000f00000c6578616d706c652e74657374"], [16, "000c02683208687474702f312e31"], [4660, "0102"]]},
+      "raw_bytes": {"ok": true, "value": {"bytes": "160303005e0100005a0303000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0000041301c02f0100002d00000011000f00000c6578616d706c652e746573740010000e000c02683208687474702f312e31123400020102"}},
+      "repr": "ClientHello(sni: example.test, alpn_protocols: [b'h2', b'http/1.1'])",
+      "sni": {"ok": true, "value": "example.test"}
+    },
+    "dtls": {
+      "alpn_protocols": {"ok": true, "value": []},
+      "cipher_suites": {"ok": true, "value": [49199]},
+      "constructor": {"ok": true},
+      "extensions": {"ok": true, "value": []},
+      "raw_bytes": {"message": "", "ok": false, "type": "NotImplementedError"},
+      "repr": "ClientHello(sni: None, alpn_protocols: [])",
+      "sni": {"ok": true, "value": null}
+    },
+    "truncated": {
+      "constructor": {"message": "requested 28 bytes, but only 1 bytes available", "ok": false, "type": "EndOfStreamError"}
+    },
+    "without_alpn": {
+      "alpn_protocols": {"ok": true, "value": []},
+      "cipher_suites": {"ok": true, "value": [4865, 49199]},
+      "constructor": {"ok": true},
+      "extensions": {"ok": true, "value": [[0, "000f00000c6578616d706c652e74657374"], [4660, "0102"]]},
+      "raw_bytes": {"ok": true, "value": {"bytes": "160303004c010000480303000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0000041301c02f0100001b00000011000f00000c6578616d706c652e74657374123400020102"}},
+      "repr": "ClientHello(sni: example.test, alpn_protocols: [])",
+      "sni": {"ok": true, "value": "example.test"}
+    },
+    "without_extensions_length": {
+      "alpn_protocols": {"ok": true, "value": []},
+      "cipher_suites": {"ok": true, "value": [4865, 49199]},
+      "constructor": {"ok": true},
+      "extensions": {"ok": true, "value": []},
+      "raw_bytes": {"ok": true, "value": {"bytes": "160303002f0100002b0303000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0000041301c02f0100"}},
+      "repr": "ClientHello(sni: None, alpn_protocols: [])",
+      "sni": {"ok": true, "value": null}
+    },
+    "without_sni": {
+      "alpn_protocols": {"ok": true, "value": [{"bytes": "6832"}, {"bytes": "687474702f312e31"}]},
+      "cipher_suites": {"ok": true, "value": [4865, 49199]},
+      "constructor": {"ok": true},
+      "extensions": {"ok": true, "value": [[16, "000c02683208687474702f312e31"], [4660, "0102"]]},
+      "raw_bytes": {"ok": true, "value": {"bytes": "1603030049010000450303000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0000041301c02f010000180010000e000c02683208687474702f312e31123400020102"}},
+      "repr": "ClientHello(sni: None, alpn_protocols: [b'h2', b'http/1.1'])",
+      "sni": {"ok": true, "value": null}
+    }
+  },
+  "reference": "mitmproxy 12.3.1",
+  "surface": {
+    "client_hello": ["alpn_protocols", "cipher_suites", "extensions", "raw_bytes", "sni"],
+    "client_hello_data_fields": ["context", "client_hello", "ignore_connection", "establish_server_tls_first"],
+    "context": ["fork"],
+    "tls_data_fields": ["conn", "context", "ssl_conn", "is_dtls"]
+  }
+}

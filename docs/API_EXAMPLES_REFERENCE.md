@@ -276,21 +276,22 @@ if api.instance.mode == "flow":
 
 ### Message.terminate
 
-Stage termination of the H2 message identified by its initial HEADERS Part. The returned Translate result suppresses that message and emits one protocol-owned RST_STREAM atomically. The reason is bounded diagnostic metadata; http2_error is the HTTP/2 error code sent on the wire.
+Stage protocol-owned termination of the message identified by its initial header Part. HTTP/1 commit suppresses the callback and requests callback-local connection close. HTTP/2 Translate suppresses the selected message and emits one RST_STREAM atomically. The reason is bounded diagnostic metadata; http2_error applies only to HTTP/2.
 
-Availability: Live translated H2 flow with content-reverse from activation. The Part must be callback-local complete initial request headers or final response headers, and the stream must not have been published, cancelled or retired.
+Availability: Live HTTP/1 flow with negotiated connection-close, or live translated H2 flow with content-reverse from activation. The Part must be a callback-local initial request or response header which has not been published or retired.
 
-Access: stage one protocol-owned stream termination; type/result: `None`.
+Access: stage one protocol-owned message termination; type/result: `None`.
 
-Easy: The initial headers and all callback-local content for the message are suppressed. Late DATA is discarded and credited without another reset. Other multiplexed streams and both HPACK histories remain usable.
+Easy: HTTP/1 closes only the callback connection and emits no message bytes. HTTP/2 resets only the selected stream. Other connections, persistent addon state, sibling H2 streams and compression histories remain independent.
 
-Expert: The same validation, atomicity and flow-control rules apply. Expert does not expose raw RST_STREAM construction or permit terminating informational responses and trailers.
+Expert: The same validation and atomicity rules apply. Expert does not expose a connection or stream identifier, raw transport close, or raw RST_STREAM construction.
 
 ```python
-for part in api.message.parts:
-    if part.frame_type == 1 and part.complete and part.headers is not None:
-        api.message.terminate(part)
-        return api.message.translate()
+part = next((part for part in api.message.parts if part.headers is not None), None)
+if part is None:
+    return None
+api.message.terminate(part)
+return api.message.translate() if part.frame_type == 1 else api.message.commit()
 ```
 
 ### Message.respond

@@ -1,0 +1,83 @@
+{
+  "client": {
+    "answer": [
+      "mutated.example.com",
+      1,
+      1,
+      90,
+      "192.0.2.99"
+    ],
+    "counts": [
+      1,
+      1,
+      0,
+      0
+    ],
+    "id": 9029,
+    "query": false,
+    "question": [
+      "mutated.example.com",
+      1,
+      1
+    ],
+    "recursion_available": true,
+    "response_code": 0
+  },
+  "hooks": [
+    {
+      "after": "mutated.example.com",
+      "before": "probe.example.com",
+      "hook": "dns_request",
+      "response_present": false,
+      "same_flow": true
+    },
+    {
+      "after": [
+        90,
+        "192.0.2.99"
+      ],
+      "before": [
+        60,
+        "192.0.2.10"
+      ],
+      "hook": "dns_response",
+      "question": "mutated.example.com",
+      "same_flow": true
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "upstream": {
+    "queries": [
+      {
+        "counts": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "flags": 256,
+        "question": [
+          "mutated.example.com",
+          1,
+          1
+        ]
+      },
+      {
+        "counts": [
+          1,
+          0,
+          0,
+          1
+        ],
+        "flags": 256,
+        "question": [
+          "mutated.example.com",
+          28,
+          1
+        ]
+      }
+    ],
+    "query_ids_differ_from_client": true,
+    "query_ids_distinct": true
+  }
+}

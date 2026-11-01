@@ -44,6 +44,7 @@ class ConnectionTests(unittest.TestCase):
         corpus = json.loads(
             (ROOT / 'tests/corpus/addon_connection_adversarial_v12.json').read_text()
         )
+        self.assertEqual(corpus['reference'], 'mitmproxy 12.3.1')
         self.assertEqual(collect_adversarial(connection), corpus['cases'])
 
     def test_state_round_trip_preserves_identity_not_socket_readiness(self):

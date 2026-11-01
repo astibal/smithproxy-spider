@@ -27,6 +27,7 @@ class MessageState:
     local_response: bool = False
     termination_hook: str | None = None
     error_delivered: bool = False
+    suspended: bool = False
 
 
 def _killed(flow):
@@ -35,9 +36,16 @@ def _killed(flow):
             flow.error.msg == Error.KILLED_MESSAGE)
 
 
-def check_message_decisions(flow, kind, *, allow_termination=False):
+def check_message_decisions(
+        flow,
+        kind,
+        *,
+        allow_termination=False,
+        allow_late_stream=False,
+        allow_interception=False,
+):
     """Reject addon decisions without a corresponding native transport action."""
-    if flow.intercepted or ((flow.error is not None or not flow.live) and
+    if (flow.intercepted and not allow_interception) or ((flow.error is not None or not flow.live) and
                             not (allow_termination and _killed(flow))):
         raise AddonMessageError('Flow interception and termination are not connected to this HTTP driver')
     selected = getattr(flow, kind)
@@ -46,7 +54,7 @@ def check_message_decisions(flow, kind, *, allow_termination=False):
         raise AddonMessageError('The replacement must retain the HTTP message kind')
     if kind == 'request' and flow.response is not None and not isinstance(flow.response, Response):
         raise AddonMessageError('A local response must be an HTTP Response')
-    if getattr(selected, 'stream', False):
+    if getattr(selected, 'stream', False) and not allow_late_stream:
         raise AddonMessageError('Streaming callbacks are not connected to this HTTP driver')
     return selected
 
@@ -61,15 +69,19 @@ async def dispatch_local_response(generation, flow, binding):
         raise AddonMessageError('Streaming callbacks are not connected to this HTTP driver')
 
     failures.extend(await generation.dispatch('responseheaders', flow))
-    response = flow.response
-    if not isinstance(response, Response):
-        raise AddonMessageError('Response hooks must retain the local HTTP Response')
-    failures.extend(await generation.dispatch('response', flow))
+    if flow.intercepted:
+        raise AddonMessageError('Interception of generated local responses requires a retained response binding')
     response = flow.response
     if not isinstance(response, Response):
         raise AddonMessageError('Response hooks must retain the local HTTP Response')
     if response.stream:
         raise AddonMessageError('Streaming callbacks are not connected to this HTTP driver')
+    failures.extend(await generation.dispatch('response', flow))
+    if flow.intercepted:
+        raise AddonMessageError('Interception of generated local responses requires a retained response binding')
+    response = flow.response
+    if not isinstance(response, Response):
+        raise AddonMessageError('Response hooks must retain the local HTTP Response')
     if not isinstance(response.raw_content, bytes):
         raise AddonMessageError('A local response requires a complete byte body')
 
@@ -107,6 +119,7 @@ async def dispatch_message(
         *,
         allow_termination=False,
         after_headers=None,
+        allow_completed_interception=False,
 ):
     """Deliver header and completed-message hooks around one native binding."""
     failures = []
@@ -152,7 +165,15 @@ async def dispatch_message(
     if binding.complete and not state.complete:
         failures.extend(await generation.dispatch(kind, flow))
         state.message = check_message_decisions(
-            flow, kind, allow_termination=allow_termination)
+            flow,
+            kind,
+            allow_termination=allow_termination,
+            # The completed-message hook runs after buffering. mitmproxy keeps
+            # a late .stream assignment on the public object, but it cannot
+            # retroactively turn the already buffered body into a stream.
+            allow_late_stream=True,
+            allow_interception=allow_completed_interception,
+        )
         binding.message = state.message
         state.complete = True
         if _killed(flow):
@@ -317,7 +338,8 @@ def _group(parts, header):
 class H2MessageBinding:
     """One request or response, including its body and trailing header block."""
 
-    def __init__(self, native_message, header, http2, *, connection, host="", port=443):
+    def __init__(self, native_message, header, http2, *, connection, host="", port=443,
+                 parts=None):
         if header.frame_type != 1 or not header.complete or header.headers is None:
             raise AddonMessageError("A complete interpreted HEADERS block is required")
         self.native = native_message
@@ -327,9 +349,11 @@ class H2MessageBinding:
         self.stream_id = header.stream_id
         # Refresh native whole-content knowledge. A complete HEADERS or DATA
         # frame by itself does not make a complete request/response body.
-        native_message.bodies()
+        if parts is None:
+            native_message.bodies()
+            parts = native_message.parts
         self.complete = header.content.complete is True
-        group = _group(native_message.parts, header)
+        group = _group(parts, header)
         self.data_parts = [part for part in group if part.frame_type == 0]
         trailers = [part for part in group[1:] if part.frame_type == 1]
         if len(trailers) > 1:

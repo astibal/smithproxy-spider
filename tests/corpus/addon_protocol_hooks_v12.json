@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "dns": {
+      "DnsErrorHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.dns", "name": "dns_error"},
+      "DnsRequestHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.dns", "name": "dns_request"},
+      "DnsResponseHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.dns", "name": "dns_response"}
+    },
+    "tcp": {
+      "TcpEndHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.tcp", "name": "tcp_end"},
+      "TcpErrorHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.tcp", "name": "tcp_error"},
+      "TcpMessageHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.tcp", "name": "tcp_message"},
+      "TcpStartHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.tcp", "name": "tcp_start"}
+    },
+    "udp": {
+      "UdpEndHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.udp", "name": "udp_end"},
+      "UdpErrorHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.udp", "name": "udp_error"},
+      "UdpMessageHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.udp", "name": "udp_message"},
+      "UdpStartHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.udp", "name": "udp_start"}
+    },
+    "websocket": {
+      "WebsocketEndHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.websocket", "name": "websocket_end"},
+      "WebsocketMessageHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.websocket", "name": "websocket_message"},
+      "WebsocketStartHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.websocket", "name": "websocket_start"}
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

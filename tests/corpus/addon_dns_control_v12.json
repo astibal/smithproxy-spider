@@ -1,0 +1,227 @@
+{
+  "cases": [
+    {
+      "case": "request-kill",
+      "client_outcome": "response",
+      "hooks": [
+        {
+          "after": {
+            "error": "Connection killed.",
+            "live": false,
+            "response_present": false
+          },
+          "before": {
+            "error": null,
+            "live": true,
+            "response_present": false
+          },
+          "case": "request-kill",
+          "hook": "dns_request"
+        }
+      ],
+      "upstream_questions": [],
+      "wire": {
+        "counts": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "id": 30874,
+        "query": false,
+        "question": [
+          "control.example.com",
+          1,
+          1
+        ],
+        "response_code": 2
+      }
+    },
+    {
+      "case": "request-local-kill",
+      "client_outcome": "response",
+      "hooks": [
+        {
+          "after": {
+            "error": "Connection killed.",
+            "live": false,
+            "response_present": true
+          },
+          "before": {
+            "error": null,
+            "live": true,
+            "response_present": false
+          },
+          "case": "request-local-kill",
+          "hook": "dns_request"
+        },
+        {
+          "after": {
+            "error": "Connection killed.",
+            "live": false,
+            "response_present": true
+          },
+          "before": {
+            "error": "Connection killed.",
+            "live": false,
+            "response_present": true
+          },
+          "case": "request-local-kill",
+          "hook": "dns_response"
+        }
+      ],
+      "upstream_questions": [],
+      "wire": {
+        "answer": [
+          "control.example.com",
+          1,
+          1,
+          30,
+          "192.0.2.10"
+        ],
+        "counts": [
+          1,
+          1,
+          0,
+          0
+        ],
+        "id": 30874,
+        "query": false,
+        "question": [
+          "control.example.com",
+          1,
+          1
+        ],
+        "response_code": 0
+      }
+    },
+    {
+      "case": "local-response-kill",
+      "client_outcome": "response",
+      "hooks": [
+        {
+          "after": {
+            "error": null,
+            "live": true,
+            "response_present": true
+          },
+          "before": {
+            "error": null,
+            "live": true,
+            "response_present": false
+          },
+          "case": "local-response-kill",
+          "hook": "dns_request"
+        },
+        {
+          "after": {
+            "error": "Connection killed.",
+            "live": false,
+            "response_present": true
+          },
+          "before": {
+            "error": null,
+            "live": true,
+            "response_present": true
+          },
+          "case": "local-response-kill",
+          "hook": "dns_response"
+        }
+      ],
+      "upstream_questions": [],
+      "wire": {
+        "answer": [
+          "control.example.com",
+          1,
+          1,
+          30,
+          "192.0.2.91"
+        ],
+        "counts": [
+          1,
+          1,
+          0,
+          0
+        ],
+        "id": 30874,
+        "query": false,
+        "question": [
+          "control.example.com",
+          1,
+          1
+        ],
+        "response_code": 0
+      }
+    },
+    {
+      "case": "upstream-response-kill",
+      "client_outcome": "response",
+      "hooks": [
+        {
+          "after": {
+            "error": null,
+            "live": true,
+            "response_present": false
+          },
+          "before": {
+            "error": null,
+            "live": true,
+            "response_present": false
+          },
+          "case": "upstream-response-kill",
+          "hook": "dns_request"
+        },
+        {
+          "after": {
+            "error": "Connection killed.",
+            "live": false,
+            "response_present": true
+          },
+          "before": {
+            "error": null,
+            "live": true,
+            "response_present": true
+          },
+          "case": "upstream-response-kill",
+          "hook": "dns_response"
+        }
+      ],
+      "upstream_questions": [
+        [
+          "control.example.com",
+          1,
+          1
+        ],
+        [
+          "control.example.com",
+          28,
+          1
+        ]
+      ],
+      "wire": {
+        "answer": [
+          "control.example.com",
+          1,
+          1,
+          60,
+          "192.0.2.92"
+        ],
+        "counts": [
+          1,
+          1,
+          0,
+          0
+        ],
+        "id": 30874,
+        "query": false,
+        "question": [
+          "control.example.com",
+          1,
+          1
+        ],
+        "response_code": 0
+      }
+    }
+  ],
+  "reference": "mitmproxy 12.3.1"
+}

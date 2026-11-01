@@ -1120,12 +1120,18 @@ def request(flow):
     async def test_h1_driver_rejects_unconnected_transport_decisions(self):
         cases = [
             ('flow.intercept()', 'Flow interception and termination'),
-            ('flow.request.stream = True', 'Streaming callbacks'),
+            ('flow.request.stream = True', 'Streaming callbacks', 'requestheaders'),
         ]
         wire = b'GET /guard HTTP/1.1\r\nHost: example.test\r\n\r\n'
-        for decision, reason in cases:
+        for case in cases:
+            decision, reason, *hook = case
             with self.subTest(decision=decision):
-                source = 'from mitmproxy import http\ndef request(flow):\n    ' + decision
+                source = (
+                    'from mitmproxy import http\ndef '
+                    + (hook[0] if hook else 'request')
+                    + '(flow):\n    '
+                    + decision
+                )
                 addon = AddonGeneration(source, H1AddonEvents.HOOKS)
                 await addon.start()
                 driver = H1AddonEvents(addon)
@@ -1138,6 +1144,26 @@ def request(flow):
                 finally:
                     driver.release_connection('guard')
                     await addon.close()
+
+    async def test_h1_late_stream_selection_is_an_observable_noop(self):
+        addon = AddonGeneration('''events = []
+def request(flow):
+    flow.request.stream = True
+    events.append([flow.request.stream, flow.request.raw_content])
+''', H1AddonEvents.HOOKS)
+        await addon.start()
+        driver = H1AddonEvents(addon)
+        wire = b'POST /late HTTP/1.1\r\nHost: example.test\r\nContent-Length: 4\r\n\r\nbody'
+        message = h1_message(wire)
+        try:
+            result, failures = await driver.rewrite(
+                'late-stream', 'L', message, None, None)
+            self.assertEqual(failures, ())
+            self.assertEqual(result, wire)
+            self.assertEqual(addon.addon.module.events, [[True, b'body']])
+        finally:
+            driver.release_connection('late-stream')
+            await addon.close()
 
     async def test_h1_kill_hooks_close_only_after_native_publication(self):
         cases = (
@@ -1241,6 +1267,51 @@ def error(flow):
                 finally:
                     driver.release_connection('h1-kill-capability')
                     await addon.close()
+
+    async def test_h1_kill_revalidates_capability_after_a_held_body(self):
+        """A capability observed before a hold is not authority for its resume."""
+        addon = AddonGeneration(
+            'def request(flow):\n    flow.kill()\n',
+            H1AddonEvents.HOOKS,
+        )
+        await addon.start()
+        driver = H1AddonEvents(addon)
+        head = (
+            b'POST /kill HTTP/1.1\r\n'
+            b'Host: example.test\r\n'
+            b'Content-Length: 6\r\n\r\n'
+        )
+        try:
+            first = h1_flow_message(
+                'L', head + b'abc', connection_close=True)
+            held, failures = await driver.rewrite(
+                'h1-kill-resume', 'L', first, None, None)
+            self.assertEqual(failures, ())
+            self.assertIsInstance(held, HeldCommit)
+
+            resumed = Message(b'def', 3)
+            resume_message(resumed, held.checkpoint, {}, ())
+            _prepare_h1_responses(resumed, {
+                'instance': {'mode': 'flow'},
+                'h1_response_state': first._h1_response.checkpoint,
+                'event': {'details': {'info': {
+                    'side': 'L',
+                    'webhook_control': {'content-reverse': True},
+                }}},
+            })
+
+            with self.assertRaisesRegex(
+                    CommitException, 'connection-close capability'):
+                await driver.rewrite(
+                    'h1-kill-resume', 'L', resumed, None, None)
+
+            self.assertIsNone(resumed._h1_response.result)
+            self.assertIsNone(resumed._h1_response.termination)
+            self.assertEqual(resumed.commit(), head + b'abcdef')
+            self.assertEqual(addon.state, 'failed')
+        finally:
+            driver.release_connection('h1-kill-resume')
+            await addon.close()
 
     async def test_h1_local_response_waits_behind_older_origin_response(self):
         addon = AddonGeneration('''from mitmproxy import http
@@ -2727,14 +2798,12 @@ def response(flow):
 
     async def test_replacement_messages_do_not_bypass_transport_guards(self):
         cases = [
-            ('flow.intercept()', 'Flow interception and termination'),
             ('flow.request = None', 'retain the HTTP message kind'),
             ('flow.request = http.Response.make(200)', 'retain the HTTP message kind'),
             ('flow.request = flow.request.copy(); flow.request.host = "other.test"',
              'Changing the destination'),
             ('flow.request = flow.request.copy(); flow.request.http_version = "HTTP/1.1"',
              'Changing the transport protocol'),
-            ('flow.request = flow.request.copy(); flow.request.stream = True', 'Streaming'),
             ('flow.request = flow.request.copy(); flow.request.raw_content = None',
              'replacement body'),
         ]
@@ -2757,6 +2826,30 @@ def response(flow):
                 finally:
                     driver.release_connection('reject')
                     await addon.close()
+
+    async def test_h2_late_stream_selection_is_an_observable_noop(self):
+        addon = AddonGeneration('''events = []
+def request(flow):
+    flow.request.stream = lambda chunk: chunk.upper()
+    events.append([callable(flow.request.stream), flow.request.raw_content])
+''', H2AddonEvents.HOOKS)
+        await addon.start()
+        driver = H2AddonEvents(addon)
+        transport = Connection()
+        wire = encoded(
+            REQUEST + [(b'content-length', b'4')],
+        ) + frame(b'body')
+        message = transport.message('L', wire)
+        try:
+            result, failures = await driver.translate(
+                'late-stream', 'L', message, H2,
+                ApiConnection(message), None, None)
+            self.assertEqual(failures, ())
+            self.assertEqual(transport.bridge.accept('L', message, result), wire)
+            self.assertEqual(addon.addon.module.events, [[True, b'body']])
+        finally:
+            driver.release_connection('late-stream')
+            await addon.close()
 
     async def test_h2_kill_hooks_publish_one_reset_and_match_reference_lifecycle(self):
         cases = (
@@ -2904,7 +2997,6 @@ def error(flow):
             ('flow.response.stream = True', '', '', 'Streaming callbacks'),
             ('', 'flow.response = None', '', 'retain the local HTTP Response'),
             ('', '', 'flow.response = None', 'retain the local HTTP Response'),
-            ('', '', 'flow.response.stream = True', 'Streaming callbacks'),
             ('', '', 'flow.response.raw_content = None', 'complete byte body'),
         )
         for request_edit, headers_edit, response_edit, reason in cases:
@@ -2935,6 +3027,36 @@ def request(flow):
                 finally:
                     driver.release_connection('local-guard')
                     await addon.close()
+
+    async def test_local_response_late_stream_selection_is_a_noop(self):
+        addon = AddonGeneration('''from mitmproxy import http
+events = []
+def request(flow):
+    flow.response = http.Response.make(200, b"local")
+def response(flow):
+    flow.response.stream = True
+    events.append([flow.response.stream, flow.response.raw_content])
+''', H2AddonEvents.HOOKS)
+        await addon.start()
+        driver = H2AddonEvents(addon)
+        transport = Connection()
+        message = transport.message('L', encoded(REQUEST, end=True))
+        try:
+            result, failures = await driver.translate(
+                'local-late-stream', 'L', message, H2,
+                ApiConnection(message), None, None)
+            self.assertEqual(failures, ())
+            self.assertEqual(transport.bridge.accept('L', message, result), b'')
+            frames = unpack(bytes(transport.bridge.reverse))
+            self.assertEqual(
+                b''.join(payload for kind, _flags, _stream, payload in frames
+                         if kind == 0),
+                b'local',
+            )
+            self.assertEqual(addon.addon.module.events, [[True, b'local']])
+        finally:
+            driver.release_connection('local-late-stream')
+            await addon.close()
 
     async def test_native_publication_failure_invalidates_generation_without_replaying_hooks(self):
         addon = AddonGeneration('''calls = 0

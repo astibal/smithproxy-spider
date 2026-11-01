@@ -1578,6 +1578,247 @@ class _TranslationMessageEdits:
             flow.drain(flow.side)
 
 
+def _suspension_now_ms():
+    import time
+    return time.monotonic_ns() // 1_000_000
+
+
+class _TranslationSuspension:
+    """Callback-driven logical holds, before output HPACK encoding.
+
+    Every publication uses a private plan. Source bytes have already passed
+    through the input decoder and input-window ledger; restoring a draft must
+    not feed either of them again. Only the successful control checkpoint owns
+    the new queues. There is deliberately no idle timer or external publisher.
+    """
+    MAX_BYTES = 512 * 1024
+    INPUT_CAPACITY = 256 * 1024 + 65535
+
+    def __init__(self, transaction, saved=None):
+        import copy
+        self.transaction = transaction
+        self.side = transaction.settings.side
+        self.commands = set()
+        self.peer_resumed = []
+        saved = {'version': 1} if saved is None else saved
+        if not isinstance(saved, dict) or saved.get('version') != 1:
+            raise CommitException('Unsupported suspension checkpoint')
+        self.paused = {}
+        self.buffers = {}
+        for side in ('L', 'R'):
+            direction = saved.get(side, {})
+            if not isinstance(direction, dict) or not isinstance(direction.get('paused', {}), dict):
+                raise CommitException('Invalid directional suspension checkpoint')
+            self.paused[side] = copy.deepcopy(direction.get('paused', {}))
+            self.buffers[side] = _PartHoldBuffers.from_checkpoint(
+                direction.get('buffers'), max_bytes=self.MAX_BYTES,
+            )
+            if len(self.paused[side]) > 128:
+                raise CommitException('Suspension exceeds stream limit')
+            for stream, entry in self.paused[side].items():
+                if (not isinstance(stream, str) or not stream.isascii() or
+                        not stream.isdecimal() or not 1 <= int(stream) <= 0x7fffffff or
+                        str(int(stream)) != stream):
+                    raise CommitException('Invalid suspended stream id')
+                if (not isinstance(entry, dict) or type(entry.get('deadline')) is not int or
+                        entry['deadline'] < 0 or type(entry.get('opening')) is not bool):
+                    raise CommitException('Invalid suspended stream state')
+
+    def fork(self):
+        import copy
+        candidate = object.__new__(type(self))
+        candidate.transaction = self.transaction
+        candidate.side = self.side
+        candidate.commands = set(self.commands)
+        candidate.peer_resumed = list(self.peer_resumed)
+        candidate.paused = copy.deepcopy(self.paused)
+        candidate.buffers = {side: store.fork() for side, store in self.buffers.items()}
+        return candidate
+
+    def _check_command(self, stream):
+        _PartHoldBuffers._check_stream(stream)
+        if not stream or stream > 0x7fffffff:
+            raise CommitException('Suspension requires a valid H2 stream id')
+        transaction = self.transaction
+        if transaction.result is not None:
+            raise CommitException('Suspension must be staged before publication')
+        if not transaction.suspension_allowed or 'flow' not in transaction.control_before:
+            raise CommitException('Suspension requires a live flow with hold and content-reverse support')
+        if tuple(id(part) for part in transaction.message.parts) != transaction.identities:
+            raise CommitException('Cannot suspend or resume reordered Parts')
+        if stream in self.commands:
+            raise CommitException('Stage only one suspension command per stream per callback')
+
+    def suspend(self, part, timeout_ms):
+        transaction = self.transaction
+        if not any(item is part for item in transaction.message.parts):
+            raise CommitException('Suspension anchor must belong to this message')
+        stream = part.stream_id
+        self._check_command(stream)
+        if not part.complete or part.frame_type not in (0, 1):
+            raise CommitException('Suspend a complete H2 HEADERS or DATA Part')
+        if (part.frame_type, part.stream_id) != (part._initial[0], part._initial[2]):
+            raise CommitException('Suspension anchor must preserve source stream identity')
+        if type(timeout_ms) is not int or not 1 <= timeout_ms <= 300000:
+            raise CommitException('Suspension timeout must be 1 to 300000 milliseconds')
+        key = str(stream)
+        if key in self.paused[self.side]:
+            raise CommitException('Stream is already suspended')
+        if len(self.paused[self.side]) >= 128:
+            raise CommitException('Suspension exceeds stream limit')
+
+        flow = _TranslationFlow(transaction.control_before['flow'], self.side)
+        if flow.cancelled(self.side, stream) or flow.failed(stream) or flow.retired(self.side, stream):
+            raise CommitException('Cannot suspend a terminated stream')
+        # New client stream numbers must be opened in increasing order. An
+        # older held request blocks later openings, not already-open siblings.
+        opening = self.side == 'L' and not flow._contains(
+            flow.state['L'].get('opened', {}), stream)
+        self.paused[self.side][key] = {
+            'deadline': _suspension_now_ms() + timeout_ms,
+            'opening': opening,
+        }
+        self.commands.add(stream)
+        return stream
+
+    def _blocked(self, side, stream, flow):
+        if str(stream) in self.paused[side]:
+            return True
+        openings = [int(key) for key, value in self.paused[side].items()
+                    if value['opening']]
+        if side != 'L' or not openings or stream <= min(openings):
+            return False
+        return not flow._contains(flow.state[side].get('opened', {}), stream)
+
+    def resume(self, stream):
+        self._check_command(stream)
+        self.check_deadlines()
+        key = str(stream)
+        directions = [side for side in ('L', 'R') if key in self.paused[side]]
+        if not directions:
+            raise CommitException('Stream is not suspended')
+
+        # Work privately until all snapshots have been restored successfully.
+        candidate = self.fork()
+        for side in directions:
+            del candidate.paused[side][key]
+        flow = _TranslationFlow(self.transaction.control_before['flow'], self.side)
+        released = candidate.release_ready(flow)
+        self.transaction._install_resumed_parts(released)
+        peer = 'R' if self.side == 'L' else 'L'
+        peer_released = candidate.release_ready(flow, side=peer)
+        # Returned reverse drafts expose the same complete-content metadata as
+        # restored Parts in the triggering direction, without mixing the lists.
+        _h2_content_groups(peer_released)
+        candidate.peer_resumed.extend(peer_released)
+        self.paused = candidate.paused
+        self.buffers = candidate.buffers
+        self.peer_resumed = candidate.peer_resumed
+        self.commands.add(stream)
+        return tuple(part for part in released + peer_released if part.stream_id == stream)
+
+    def release_ready(self, flow, *, side=None):
+        """Unblock younger openings when their earlier suspension is resolved."""
+        side = self.side if side is None else side
+        released = []
+        for queued in sorted(self.buffers[side].stream_ids):
+            if self._blocked(side, queued, flow):
+                continue
+            for parts, _ in self.buffers[side].release(queued):
+                released.extend(parts)
+        return released
+
+    def check_deadlines(self):
+        now = _suspension_now_ms()
+        for side in ('L', 'R'):
+            for stream, entry in self.paused[side].items():
+                if now >= entry['deadline']:
+                    raise CommitException('Suspended H2 stream ' + stream + ' timed out; reconnect')
+
+    def discard_cancelled(self, flow):
+        for side in ('L', 'R'):
+            streams = set(self.buffers[side].stream_ids)
+            streams.update(int(key) for key in self.paused[side])
+            for stream in streams:
+                if not (flow.cancelled(side, stream) or flow.failed(stream)):
+                    continue
+                for parts, _ in self.buffers[side].release(stream):
+                    for part in parts:
+                        if part.frame_type == 0:
+                            amount = int.from_bytes(bytes(part._wire)[:3], 'big')
+                            flow.discard_input(side, stream, amount)
+                self.paused[side].pop(str(stream), None)
+
+    def partition(self, parts, flow):
+        """Keep control frames moving; retain only complete application Parts."""
+        retained = {}
+        emitted = []
+        for part in parts:
+            stream = part.stream_id
+            if (part.frame_type not in (0, 1) or not stream or
+                    flow.cancelled(self.side, stream) or flow.failed(stream) or
+                    not self._blocked(self.side, stream, flow)):
+                emitted.append(part)
+                continue
+            if not part.complete:
+                raise CommitException('Use hold_from for incomplete H2 frames before suspension')
+            retained.setdefault(stream, []).append(part)
+
+        transaction = self.transaction
+        for stream, batch in retained.items():
+            if any(id(part) in transaction.message_edits or
+                   id(part) in transaction.local_responses or
+                   id(part) in transaction.informational_responses or
+                   id(part) in transaction.informational_suppressions
+                   for part in batch):
+                raise CommitException('Apply staged response/message operations after resuming the stream')
+            copies, sizes = transaction._copy_logical_parts(batch)
+            for original, draft in zip(batch, copies):
+                draft._suspension_replay = True
+                if original.frame_type == 1:
+                    draft._suspension_source_headers = [
+                        (field.name, field.value, field.indexing == 'never')
+                        for field in transaction.decoded[id(original)].entries
+                    ]
+            self.buffers[self.side].hold(stream, copies, sizes)
+        return emitted
+
+    def advance_connection_credit(self, flow):
+        # Never grant stream credit to suspended DATA. Bounded early connection
+        # credit lets other streams run without permitting an unbounded hold.
+        # advance_due is the existing native connection-refund debt ledger.
+        for side in ('L', 'R'):
+            if not self.buffers[side].stream_ids:
+                continue
+            direction = flow.state[side]
+            state = direction['input']
+            owned_output = sum(entry.get('owned', 0)
+                               for entry in direction['streams'].values())
+            held = state['owned'] - owned_output
+            room = self.INPUT_CAPACITY - state['owned'] - state['window']
+            amount = min(held - direction.get('advance_due', 0), room)
+            if amount < 0:
+                raise CommitException('Suspension input credit exceeds admitted capacity')
+            if amount:
+                target = 'R' if side == 'L' else 'L'
+                flow.output[target].extend(flow.frame(8, 0, 0, amount.to_bytes(4, 'big')))
+                state['window'] += amount
+                direction['advance_due'] = direction.get('advance_due', 0) + amount
+            direction['input_capacity'] = self.INPUT_CAPACITY
+            direction['hold_capacity'] = 1024 * 1024
+
+    def checkpoint(self):
+        if not any(self.paused.values()) and not any(store.stream_ids for store in self.buffers.values()):
+            return None
+        checkpoint = {'version': 1}
+        for side in ('L', 'R'):
+            checkpoint[side] = {
+                'paused': self.paused[side],
+                'buffers': self.buffers[side].checkpoint(),
+            }
+        return checkpoint
+
+
 class _Translation:
     def __init__(self, message, checkpoint, peer_checkpoint, active, control=None,
                  side='L', reverse_capable=False):
@@ -1589,6 +1830,7 @@ class _Translation:
         self.encoder = _translate_hpack.Encoder()
         self.result = None
         self.checkpoint = None
+        self.checkpoint_before = checkpoint
         self.peer_checkpoint_before = peer_checkpoint
         self.peer_checkpoint = peer_checkpoint
         self.peer_checkpoint_changed = False
@@ -1601,9 +1843,13 @@ class _Translation:
         self.informational_responses = {}
         self.informational_suppressions = {}
         self.terminations = {}
+        self.peer_resume_operations = {
+            'message_edits': {}, 'terminations': {}, 'local_responses': {},
+        }
         self.pending_failures = None
         self.reset_failures = {}
         self.hold_credit_available = False
+        self.suspension_allowed = False
         self.peer_hold_known = False
         self.peer_hold = None
         self.peer_hold_result = None
@@ -1669,6 +1915,41 @@ class _Translation:
             id(group[0]): sum(len(p._data) for p in group if p.frame_type == 0)
             for group in _h2_content_groups(message.parts)
         })
+        saved_suspension = self.control_before.get('suspension')
+        self.suspension = (_TranslationSuspension(self, saved_suspension)
+                           if saved_suspension is not None else None)
+
+    def _suspension(self):
+        if self.suspension is None:
+            self.suspension = _TranslationSuspension(self)
+        return self.suspension
+
+    def _install_resumed_parts(self, parts):
+        """Restore logical drafts without replaying input HPACK or raw DATA."""
+        if not parts:
+            return
+        for part in parts:
+            if part.frame_type != 1:
+                continue
+            fields = part._suspension_source_headers
+            self.decoded[id(part)] = H2Headers([
+                HpackField(name, value, 'never' if sensitive else 'without', 0, 0)
+                for name, value, sensitive in fields
+            ])
+            self.source_lengths[id(part)] = tuple(value for name, value, _ in fields
+                                                  if name == b'content-length')
+            self.source_informational[id(part)] = _translate_informational(part, fields)
+
+        previous = self.message.parts
+        combined = PartList(parts + list(previous))
+        combined._held_from = previous._held_from
+        object.__setattr__(self.message, 'parts', combined)
+        object.__setattr__(self.message, '_body_sizes', {
+            id(group[0]): sum(len(part._data) for part in group if part.frame_type == 0)
+            for group in _h2_content_groups(combined)
+        })
+        self.identities = tuple(id(part) for part in combined)
+        self.originals = tuple(bytes(part._wire) for part in combined)
 
     def informational(self, part):
         # Source and draft must agree. Editing final headers into a 1xx status
@@ -1678,6 +1959,11 @@ class _Translation:
         return _translate_informational(part, self._header_fields(part))
 
     def stage_message_edit(self, header, operation, value):
+        peer = self._resumed_owner(header)
+        if peer is not None:
+            peer.stage_message_edit(header, operation, value)
+            self.peer_resume_operations['message_edits'] = peer.message_edits
+            return
         if 'flow' not in self.control_before:
             raise CommitException('Message replacement requires content-reverse from activation')
         if not any(part is header for part in self.message.parts):
@@ -2015,6 +2301,11 @@ class _Translation:
         }
 
     def stage_local_response(self, request, status, headers, body, trailers):
+        peer = self._resumed_owner(request)
+        if peer is not None:
+            peer.stage_local_response(request, status, headers, body, trailers)
+            self.peer_resume_operations['local_responses'] = peer.local_responses
+            return
         if 'flow' not in self.control_before:
             raise CommitException('Local responses require content-reverse from activation')
         if self.settings.side != 'L':
@@ -2072,6 +2363,11 @@ class _Translation:
 
     def stage_termination(self, header, reason, http2_error):
         """Validate and stage a callback-local H2 stream termination."""
+        peer = self._resumed_owner(header)
+        if peer is not None:
+            peer.stage_termination(header, reason, http2_error)
+            self.peer_resume_operations['terminations'] = peer.terminations
+            return
         if 'flow' not in self.control_before:
             raise CommitException('H2 termination requires content-reverse from activation')
         if not isinstance(reason, str):
@@ -2334,11 +2630,19 @@ class _Translation:
 
     def _decode_headers(self, part, active):
         """Resolve source indices without changing the receiver's table."""
-        fields = _translate_decode(self.decoder, part.get_bytes())
-        headers = H2Headers([
-            HpackField(field[0], field[1], 'never' if not field.indexable else 'without', 0, 0)
-            for field in fields
-        ])
+        if getattr(part, '_suspension_replay', False):
+            # Unlike a suffix hold, stream suspension already consumed input
+            # HPACK. Its source metadata survives independently of draft edits.
+            headers = H2Headers([
+                HpackField(name, value, 'never' if sensitive else 'without', 0, 0)
+                for name, value, sensitive in part._suspension_source_headers
+            ])
+        else:
+            fields = _translate_decode(self.decoder, part.get_bytes())
+            headers = H2Headers([
+                HpackField(field[0], field[1], 'never' if not field.indexable else 'without', 0, 0)
+                for field in fields
+            ])
         self.decoded[id(part)] = headers
         self.source_informational[id(part)] = _translate_informational(
             part, [(field.name, field.value, False) for field in headers.entries])
@@ -2416,7 +2720,183 @@ class _Translation:
 
         return fields
 
+    def _copy_logical_parts(self, parts):
+        """Detach native drafts without advancing either HPACK conversation.
+
+        Source blocks are retained for input accounting. Their editable header
+        view is stored as resolved names and values, never as indices into the
+        source table. Only a later publication may encode those logical fields.
+        """
+        if not parts:
+            return [], {}
+        checkpoint = _checkpoint(parts, self.message._body_sizes)
+        copies, body_sizes = _restore(checkpoint)
+
+        for original, draft in zip(parts, copies):
+            if not original.complete or original.frame_type not in (1, 5):
+                continue
+            if getattr(original, '_translate_cancelled', False):
+                continue
+
+            fields = self._header_fields(original)
+            draft.headers = H2Headers([
+                HpackField(name, value, 'never' if sensitive else 'without', 0, 0)
+                for name, value, sensitive in fields
+            ])
+            draft._translate_draft = True
+
+        return copies, body_sizes
+
+    def _retain_stream_parts(self, buffers, stream_id):
+        """Prepare a stream's logical batch in a callback-owned buffer fork.
+
+        This storage boundary does not suppress publication by itself. The
+        suspension coordinator must select the outgoing Parts and adopt the
+        candidate buffers together with the successful Translate checkpoint.
+        Control frames remain owned by Translate, not by an application hold.
+        """
+        if self.result is not None:
+            raise CommitException('Cannot retain Parts after Translate publication')
+        if tuple(id(part) for part in self.message.parts) != self.identities:
+            raise CommitException('Translate cannot insert, remove or reorder Parts yet')
+        _PartHoldBuffers._check_stream(stream_id)
+        if not stream_id:
+            raise CommitException('H2 suspension requires a nonzero stream')
+
+        # Select by source identity. An edited stream id must not move source
+        # ownership or frame accounting into another stream's hold queue.
+        parts = [
+            part for part in self.message.parts
+            if part._initial[2] == stream_id and part._initial[0] in (0, 1)
+        ]
+        if not parts:
+            raise CommitException('H2 suspension has no application Parts for this stream')
+        if any((part.frame_type, part.stream_id) != (part._initial[0], part._initial[2])
+               for part in parts):
+            raise CommitException('Retained H2 Parts must preserve frame type and stream id')
+        if any(not part.complete for part in parts):
+            raise CommitException('Hold incomplete H2 Parts before staging stream suspension')
+        if any(getattr(part, '_translate_cancelled', False) for part in parts):
+            raise CommitException('Cannot retain cancelled H2 stream Parts')
+
+        copies, body_sizes = self._copy_logical_parts(parts)
+        buffers.hold(stream_id, copies, body_sizes)
+
+    @staticmethod
+    def _checkpoint_held_parts(parts, body_sizes):
+        """Serialize detached drafts; incomplete wire units must stay unedited."""
+        for part in parts:
+            if part.complete:
+                continue
+            if (part._pending is not None or
+                    (part.frame_type, part.flags, part.stream_id) != part._initial):
+                raise CommitException('Cannot hold an edited incomplete H2 part')
+        return _checkpoint(parts, body_sizes)
+
     def translate(self):
+        if self.suspension is None:
+            return self._publish()
+
+        # Cancellation can release queued drafts during publication. Keep that
+        # preparation private too: a failed encoder/serializer must leave the
+        # caller's staged resume and the host's saved buffers retryable.
+        import copy
+        candidate = copy.copy(self)
+        candidate.message = copy.copy(self.message)
+        object.__setattr__(candidate.message, '_translation', candidate)
+        candidate.decoded = dict(self.decoded)
+        candidate.source_lengths = dict(self.source_lengths)
+        candidate.source_informational = dict(self.source_informational)
+        candidate.suspension = self.suspension.fork()
+        candidate.suspension.transaction = candidate
+        result = candidate._publish()
+        if candidate.suspension.peer_resumed:
+            result = candidate._publish_peer_resumed()
+
+        # Adopt both output lanes together. In particular, a reverse encoder
+        # failure must not expose the first phase's bytes or advanced tables.
+        self.result = result
+        self.checkpoint = candidate.checkpoint
+        self.peer_checkpoint = candidate.peer_checkpoint
+        self.peer_checkpoint_changed = candidate.peer_checkpoint_changed
+        self.control_checkpoint = candidate.control_checkpoint
+        self.reverse_output = candidate.reverse_output
+        self.peer_hold_result = candidate.peer_hold_result
+        self.peer_hold_changed = candidate.peer_hold_changed
+        self.flow_summary = candidate.flow_summary
+        return result
+
+    def _resumed_owner(self, header):
+        """Route native operations by draft ownership, never callback direction."""
+        if self.suspension is None or header is None:
+            return None
+        # Identity matters here: stream IDs alone cannot distinguish a request
+        # from its response, and a copied header is not an owned resume draft.
+        if not any(part is header for part in self.suspension.peer_resumed):
+            return None
+        if self.result is not None:
+            raise CommitException('Resumed operations must precede publication')
+        return self._prepare_peer_resumed(
+            self.control_before, self.checkpoint_before, self.peer_checkpoint_before,
+        )
+
+    def _prepare_peer_resumed(self, control, checkpoint, peer_checkpoint):
+        """Use the same native validation for current and resumed peer drafts."""
+        import copy
+        peer = 'R' if self.settings.side == 'L' else 'L'
+        message = Message(b'', 0, {})
+        transaction = _Translation(
+            message, peer_checkpoint, checkpoint, True,
+            control=control, side=peer, reverse_capable=True,
+        )
+        transaction.hold_credit_available = self.hold_credit_available
+        transaction.suspension_allowed = self.suspension_allowed
+        transaction._install_resumed_parts(self.suspension.peer_resumed)
+        for name, operations in self.peer_resume_operations.items():
+            # Plans contain source Parts. Preserve their identity while isolating
+            # mutable operation dictionaries used during validation.
+            setattr(transaction, name, {key: copy.copy(value) for key, value in operations.items()})
+        return transaction
+
+    def _publish_peer_resumed(self):
+        """Assemble reverse drafts with the existing peer's Translate state.
+
+        This is a second preparation phase of the same atomic publication,
+        not a script callback or a third persistent protocol context. Its empty
+        input prevents charging source bytes or decoding source HPACK twice.
+        Nothing reaches the caller until both directions have succeeded.
+        """
+        # Validate again against the first phase's resulting state. Incoming
+        # SETTINGS or cancellation may have changed what can now be emitted.
+        transaction = self._prepare_peer_resumed(
+            self.control_checkpoint, self.checkpoint, self.peer_checkpoint,
+        )
+        transaction.peer_hold_known = True
+        transaction.peer_hold = self.result.checkpoint if isinstance(self.result, HeldCommit) else None
+        reverse = transaction._publish()
+
+        # Reverse publication can also settle credit toward the triggering
+        # direction. Preserve the first phase's ordering in each output lane.
+        forward = self.result.prefix if isinstance(self.result, HeldCommit) else self.result
+        forward += transaction.reverse_output
+        reverse = self.reverse_output + reverse
+        if len(forward) + len(reverse) > 1024 * 1024:
+            raise CommitException('Translated directional output exceeds 1 MiB')
+        if isinstance(self.result, HeldCommit):
+            self.result = HeldCommit(forward, transaction.peer_hold_result, self.result.count)
+        else:
+            self.result = forward
+        self.reverse_output = reverse
+        self.peer_checkpoint = transaction.checkpoint
+        self.peer_checkpoint_changed = True
+        if transaction.peer_checkpoint_changed:
+            self.checkpoint = transaction.peer_checkpoint
+        self.control_checkpoint = transaction.control_checkpoint
+        self.flow_summary = dict(transaction.flow_summary)
+        self.flow_summary.update(forward_bytes=len(forward), reverse_bytes=len(reverse))
+        return self.result
+
+    def _publish(self):
         import copy
         import json
 
@@ -2446,6 +2926,11 @@ class _Translation:
         settings = _TranslationSettings(self.control_before, self.settings.side)
         flow = (_TranslationFlow(settings.state['flow'], settings.side)
                 if 'flow' in settings.state else None)
+        suspension = self.suspension
+        if suspension is not None:
+            if flow is None or not self.suspension_allowed or not self.hold_credit_available:
+                raise CommitException('Suspension lost native hold/flow-control capability')
+            flow.state['hold_reserved'] = True
         incoming = _TranslationInput(flow) if flow is not None else None
         if incoming is not None:
             direction = flow.state[settings.side]
@@ -2495,9 +2980,18 @@ class _Translation:
                         flow.accept(part, original)
                     terminal.add(id(part))
         termination_suppressed = self._prepare_terminations(flow) if flow is not None else set()
+        if suspension is not None:
+            suspension.discard_cancelled(flow)
+            suspension.check_deadlines()
+            released = suspension.release_ready(flow)
+            self._install_resumed_parts(released)
+            cut += len(released)
+            suspension.peer_resumed.extend(suspension.release_ready(flow, side=flow.peer))
         hold_credit = _TranslationHoldCredit(self, flow, incoming, cut) if flow is not None else None
 
-        emitted = message.parts[:cut]
+        source_emitted = message.parts[:cut]
+        emitted = (suspension.partition(source_emitted, flow)
+                   if suspension is not None else source_emitted)
         live = [part for part in emitted if flow is None or not flow.cancelled(settings.side, part.stream_id)]
         edits = _TranslationMessageEdits(self, flow, cut)
         local_suppressed, local_after = self._prepare_local_responses(flow, cut) if flow is not None else (set(), {})
@@ -2510,7 +3004,9 @@ class _Translation:
         header_lengths = self._body_lengths(live, body_overrides, flow)
         header_lengths.update(edits.lengths)
 
-        for part, original in zip(emitted, self.originals):
+        original_by_id = dict(zip(self.identities, self.originals))
+        for part in emitted:
+            original = original_by_id[id(part)]
             start = len(output)
             if id(part) in terminal:
                 continue
@@ -2619,16 +3115,13 @@ class _Translation:
 
         reverse_output = b''
         suffix = [part for part in message.parts[cut:] if id(part) not in terminal]
-        suffix_fields = {}
+        # Retained drafts belong to the candidate transaction. Normalization,
+        # cancellation and serialization must never mutate script-visible Parts,
+        # including when the callback fails and its publication is retried.
+        suffix, suffix_sizes = self._copy_logical_parts(suffix)
         peer_held = self.peer_hold
         if flow is not None:
-            # Work on private copies: failed serialization may be retried using
-            # the same callback-local draft and neither hold may change early.
-            copied, _ = _restore(_checkpoint([copy.copy(part) for part in suffix], {}))
-            suffix_fields = {id(clone): self._header_fields(original)
-                             for original, clone in zip(suffix, copied)
-                             if original.complete and original.frame_type in (1, 5)}
-            suffix = self._discard_held(copied, flow, settings.side)
+            suffix = self._discard_held(suffix, flow, settings.side)
             if self.peer_hold_known:
                 peer_parts, peer_sizes = _restore(self.peer_hold) if self.peer_hold else ([], {})
                 peer_parts = self._discard_held(peer_parts, flow, flow.peer)
@@ -2636,6 +3129,8 @@ class _Translation:
             flow.output[settings.side].extend(output)
             forward, reverse_output = flow.finish()
             incoming.finish()
+            if suspension is not None:
+                suspension.advance_connection_credit(flow)
             hold_credit.advance()
             if flow.state.get('hold_reserved') and all(
                     not flow.bodies(side) and
@@ -2662,11 +3157,11 @@ class _Translation:
             _translate_table_load(decoder, self.input_before)
             replay_settings = _TranslationSettings(self.control_before, self.settings.side)
 
-            for part in emitted:
+            for part in source_emitted:
                 if part.frame_type == 4:
                     _translate_decoder_settings(decoder, replay_settings.process(part))
 
-                if part.frame_type in (1, 5):
+                if part.frame_type in (1, 5) and not getattr(part, '_suspension_replay', False):
                     _translate_decode(decoder, part._data)
 
         checkpoint = {
@@ -2693,41 +3188,20 @@ class _Translation:
             if len(json.dumps(peer_checkpoint)) > 65536:
                 raise CommitException('Peer translate checkpoint exceeds 64 KiB')
 
+        if suspension is not None:
+            saved_suspension = suspension.checkpoint()
+            if saved_suspension is None:
+                settings.state.pop('suspension', None)
+            else:
+                settings.state['suspension'] = saved_suspension
+
         if len(json.dumps(settings.state)) > 1024 * 1024:
             raise CommitException('Translate control checkpoint exceeds 1 MiB')
 
         result = bytes(output)
 
         if boundary is not None:
-            saved = []
-
-            try:
-                for part in suffix:
-                    if not part.complete and (part._pending is not None or
-                            (part.frame_type, part.flags, part.stream_id) != part._initial):
-                        raise CommitException('Cannot hold an edited incomplete H2 part')
-
-                    if part.complete and part.frame_type in (1, 5) and not (
-                            flow is not None and flow.cancelled(settings.side, part.stream_id)):
-                        # Normalize only the checkpoint, never the user's live draft.
-                        # Copies retain resolved logical fields from the live draft.
-                        fields = suffix_fields[id(part)] if flow is not None else self._header_fields(part)
-                        saved.append((part, part.headers, getattr(part, '_translate_draft', None)))
-                        part.headers = H2Headers([
-                            HpackField(name, value, 'never' if sensitive else 'without', 0, 0)
-                            for name, value, sensitive in fields
-                        ])
-                        part._translate_draft = True
-
-                held = _checkpoint(suffix, message._body_sizes)
-            finally:
-                for part, headers, marker in saved:
-                    part.headers = headers
-
-                    if marker is None:
-                        del part._translate_draft
-                    else:
-                        part._translate_draft = marker
+            held = self._checkpoint_held_parts(suffix, suffix_sizes)
 
             if len(json.dumps(held)) + (len(output) + 2) // 3 * 4 > 1400 * 1024:
                 raise CommitException('Translate prefix and hold exceed worker response budget')
@@ -2851,6 +3325,7 @@ def _prepare_translation(message, request):
             reverse_capable,
         )
         transaction.hold_credit_available = request.get('hold_credit_available') is True
+        transaction.suspension_allowed = request.get('hold_allowed') is True
         transaction.peer_hold_known = 'peer_held_parts' in request
         transaction.peer_hold = request.get('peer_held_parts')
         if transaction.control_before.get('flow', {}).get('hold_reserved') and not request.get('hold_credit_reserved'):

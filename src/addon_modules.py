@@ -57,6 +57,13 @@ import addon_dns_domain_names
 import addon_dns_https_records
 import addon_io
 import addon_script
+import addon_socks5
+import addon_tls
+import addon_proxy_context
+import addon_quic
+import addon_server_hooks
+import addon_http_hooks
+import addon_protocol_hooks
 import addon_tnetstring
 import addon_contentviews
 import addon_signals
@@ -83,7 +90,18 @@ def compatibility_modules(*, options=None, master=None):
         return result
 
     module("mitmproxy", package=True)
-    contentview_registry, add_contentview = addon_contentviews.create_contentviews()
+
+    # Content views are generation-owned. Their registry must never leak across
+    # deployments, even though addon scripts import the canonical module names.
+    (
+        contentview_registry,
+        add_contentview,
+        get_contentview,
+        remove_contentview,
+    ) = addon_contentviews.create_contentviews()
+    contentview_message = addon_contentviews.create_contentview_message_alias(
+        "mitmproxy.contentviews._utils"
+    )
 
     def contentview_metadata(message, flow):
         definitions = getattr(options, "protobuf_definitions", None)
@@ -111,14 +129,19 @@ def compatibility_modules(*, options=None, master=None):
             protobuf_definitions=definitions,
         )
 
-    module("mitmproxy.contentviews", exports={
+    module("mitmproxy.contentviews", package=True, exports={
         "Contentview": addon_contentviews.Contentview,
         "ContentviewResult": addon_contentviews.ContentviewResult,
         "ContentviewRegistry": addon_contentviews.ContentviewRegistry,
         "InteractiveContentview": addon_contentviews.InteractiveContentview,
+        "View": addon_contentviews.View,
+        "LegacyContentview": addon_contentviews.LegacyContentview,
+        "ContentviewMessage": contentview_message,
         "SyntaxHighlight": addon_contentviews.SyntaxHighlight,
         "Metadata": addon_contentviews.Metadata,
         "add": add_contentview,
+        "get": get_contentview,
+        "remove": remove_contentview,
         "get_data": addon_contentviews.get_data,
         "make_metadata": contentview_metadata,
         "prettify_message": prettify_contentview_message,
@@ -127,12 +150,26 @@ def compatibility_modules(*, options=None, master=None):
         # custom renderers. It is intentionally outside the star-import API.
         "registry": contentview_registry,
     }, star_exports=addon_contentviews.__all__)
+    module("mitmproxy.contentviews.base", exports={
+        "View": addon_contentviews.View,
+    })
+    module("mitmproxy.contentviews._compat", exports={
+        "LegacyContentview": addon_contentviews.LegacyContentview,
+        "get": get_contentview,
+        "remove": remove_contentview,
+    })
+    module("mitmproxy.contentviews._utils", exports={
+        "ContentviewMessage": contentview_message,
+    })
     module('mitmproxy.version', exports={
         # This is the public compatibility contract, not the Spider release.
         'FLOW_FORMAT_VERSION': 21,
         'MITMPROXY': 'mitmproxy 12.3.1',
         'VERSION': '12.3.1',
     })
+
+    # Register the stateless network, HTTP and utility helpers before the
+    # public message classes that expose them as canonical module aliases.
     module("mitmproxy.net", package=True)
     server_spec = module("mitmproxy.net.server_spec", exports={
         "ServerSpec": ServerSpec,
@@ -256,6 +293,9 @@ def compatibility_modules(*, options=None, master=None):
         'SyncSignal': addon_signals.SyncSignal,
         'make_weak_ref': addon_signals.make_weak_ref,
     })
+
+    # Context services are the only facade values tied directly to the current
+    # runtime generation. All other modules remain ordinary value/helper APIs.
     if options is not None:
         log = master.log if master is not None else Log(None)
         module("mitmproxy.ctx", exports={"options": options, "log": log})
@@ -265,12 +305,13 @@ def compatibility_modules(*, options=None, master=None):
         'AddonManager': AddonManager, 'AddonManagerError': AddonManagerError,
         'LoadHook': LoadHook, 'Loader': Loader, 'traverse': traverse,
     })
-    module('mitmproxy.hooks', exports={
+    hooks_module = module('mitmproxy.hooks', exports={
         'Hook': Hook, 'ConfigureHook': ConfigureHook, 'RunningHook': RunningHook,
         'DoneHook': DoneHook, 'UpdateHook': UpdateHook,
         'all_hooks': {
             'add_log': AddLogHook, 'configure': ConfigureHook,
-            'done': DoneHook, 'running': RunningHook, 'update': UpdateHook,
+            'done': DoneHook, 'load': LoadHook, 'running': RunningHook,
+            'update': UpdateHook,
         },
     })
     module('mitmproxy.command', exports={
@@ -286,6 +327,9 @@ def compatibility_modules(*, options=None, master=None):
         'Marker': Marker, 'Path': Path, 'Space': Space, 'Unknown': Unknown,
         'CommandTypes': CommandTypes, 'TypeManager': TypeManager,
     })
+
+    # Public flow and message models. These objects are detached values until
+    # the native event adapters bind them to retained Parts for one callback.
     module("mitmproxy.http", exports={
         "Headers": Headers,
         "Message": Message,
@@ -378,7 +422,122 @@ def compatibility_modules(*, options=None, master=None):
         'TlsVersion': TlsVersion, 'TransportProtocol': TransportProtocol,
         'server_spec': server_spec,
     }, star_exports=('Connection', 'Client', 'Server', 'ConnectionState'))
+
+    # Hook value modules mirror the reference import layout. Registration does
+    # not promise live delivery; each native producer enables its own adapter.
     module('mitmproxy.proxy', package=True)
+    module('mitmproxy.proxy.context', exports={
+        'Context': addon_proxy_context.Context,
+    })
+    module('mitmproxy.proxy.server_hooks', exports={
+        'ServerConnectionHookData': (
+            addon_server_hooks.ServerConnectionHookData
+        ),
+        'ClientConnectedHook': addon_server_hooks.ClientConnectedHook,
+        'ClientDisconnectedHook': addon_server_hooks.ClientDisconnectedHook,
+        'ServerConnectHook': addon_server_hooks.ServerConnectHook,
+        'ServerConnectedHook': addon_server_hooks.ServerConnectedHook,
+        'ServerConnectErrorHook': addon_server_hooks.ServerConnectErrorHook,
+        'ServerDisconnectedHook': addon_server_hooks.ServerDisconnectedHook,
+    })
+    module('mitmproxy.proxy.layers', package=True)
+    http_hook_exports = {
+        'HttpConnectHook': addon_http_hooks.HttpConnectHook,
+        'HttpConnectErrorHook': addon_http_hooks.HttpConnectErrorHook,
+        'HttpConnectedHook': addon_http_hooks.HttpConnectedHook,
+        'HttpRequestHeadersHook': addon_http_hooks.HttpRequestHeadersHook,
+        'HttpRequestHook': addon_http_hooks.HttpRequestHook,
+        'HttpResponseHeadersHook': addon_http_hooks.HttpResponseHeadersHook,
+        'HttpResponseHook': addon_http_hooks.HttpResponseHook,
+        'HttpErrorHook': addon_http_hooks.HttpErrorHook,
+    }
+    http_private_hook_exports = {
+        **http_hook_exports,
+        'HttpConnectUpstreamHook': addon_http_hooks.HttpConnectUpstreamHook,
+    }
+    module('mitmproxy.proxy.layers.http', package=True,
+           exports=http_hook_exports)
+    module('mitmproxy.proxy.layers.http._hooks',
+           exports=http_private_hook_exports)
+    module('mitmproxy.proxy.layers.websocket', exports={
+        'WebsocketStartHook': addon_protocol_hooks.WebsocketStartHook,
+        'WebsocketMessageHook': addon_protocol_hooks.WebsocketMessageHook,
+        'WebsocketEndHook': addon_protocol_hooks.WebsocketEndHook,
+    })
+    module('mitmproxy.proxy.layers.dns', exports={
+        'DnsRequestHook': addon_protocol_hooks.DnsRequestHook,
+        'DnsResponseHook': addon_protocol_hooks.DnsResponseHook,
+        'DnsErrorHook': addon_protocol_hooks.DnsErrorHook,
+    })
+    module('mitmproxy.proxy.layers.tcp', exports={
+        'TcpStartHook': addon_protocol_hooks.TcpStartHook,
+        'TcpMessageHook': addon_protocol_hooks.TcpMessageHook,
+        'TcpEndHook': addon_protocol_hooks.TcpEndHook,
+        'TcpErrorHook': addon_protocol_hooks.TcpErrorHook,
+    })
+    module('mitmproxy.proxy.layers.udp', exports={
+        'UdpStartHook': addon_protocol_hooks.UdpStartHook,
+        'UdpMessageHook': addon_protocol_hooks.UdpMessageHook,
+        'UdpEndHook': addon_protocol_hooks.UdpEndHook,
+        'UdpErrorHook': addon_protocol_hooks.UdpErrorHook,
+    })
+    module('mitmproxy.proxy.layers.modes', exports={
+        'Socks5AuthData': addon_socks5.Socks5AuthData,
+        'Socks5AuthHook': addon_socks5.Socks5AuthHook,
+    })
+    quic_hook_exports = {
+        'QuicTlsSettings': addon_quic.QuicTlsSettings,
+        'QuicTlsData': addon_quic.QuicTlsData,
+        'QuicStartClientHook': addon_quic.QuicStartClientHook,
+        'QuicStartServerHook': addon_quic.QuicStartServerHook,
+    }
+    module('mitmproxy.proxy.layers.quic', package=True,
+           exports=quic_hook_exports)
+    module('mitmproxy.proxy.layers.quic._hooks', exports=quic_hook_exports)
+    tls_hook_exports = {
+        'TlsClienthelloHook': addon_tls.TlsClienthelloHook,
+        'TlsStartClientHook': addon_tls.TlsStartClientHook,
+        'TlsStartServerHook': addon_tls.TlsStartServerHook,
+        'TlsEstablishedClientHook': addon_tls.TlsEstablishedClientHook,
+        'TlsEstablishedServerHook': addon_tls.TlsEstablishedServerHook,
+        'TlsFailedClientHook': addon_tls.TlsFailedClientHook,
+        'TlsFailedServerHook': addon_tls.TlsFailedServerHook,
+    }
+    module('mitmproxy.proxy.layers.tls', exports=tls_hook_exports)
+
+    supported_hooks = (
+        addon_server_hooks.ClientConnectedHook,
+        addon_server_hooks.ClientDisconnectedHook,
+        addon_server_hooks.ServerConnectHook,
+        addon_server_hooks.ServerConnectedHook,
+        addon_server_hooks.ServerConnectErrorHook,
+        addon_server_hooks.ServerDisconnectedHook,
+        *http_private_hook_exports.values(),
+        addon_protocol_hooks.WebsocketStartHook,
+        addon_protocol_hooks.WebsocketMessageHook,
+        addon_protocol_hooks.WebsocketEndHook,
+        addon_protocol_hooks.DnsRequestHook,
+        addon_protocol_hooks.DnsResponseHook,
+        addon_protocol_hooks.DnsErrorHook,
+        addon_protocol_hooks.TcpStartHook,
+        addon_protocol_hooks.TcpMessageHook,
+        addon_protocol_hooks.TcpEndHook,
+        addon_protocol_hooks.TcpErrorHook,
+        addon_protocol_hooks.UdpStartHook,
+        addon_protocol_hooks.UdpMessageHook,
+        addon_protocol_hooks.UdpEndHook,
+        addon_protocol_hooks.UdpErrorHook,
+        addon_socks5.Socks5AuthHook,
+        *tls_hook_exports.values(),
+        addon_quic.QuicStartClientHook,
+        addon_quic.QuicStartServerHook,
+    )
+    hooks_module.all_hooks.update({
+        hook.name: hook
+        for hook in supported_hooks
+    })
+
+    # Remaining public value modules and compatibility constants.
     module('mitmproxy.proxy.mode_specs', exports={
         'ProxyMode': ProxyMode, 'RegularMode': RegularMode,
         'TransparentMode': TransparentMode, 'Socks5Mode': Socks5Mode,
@@ -388,6 +547,11 @@ def compatibility_modules(*, options=None, master=None):
         'TCP': 'tcp', 'UDP': 'udp', 'BOTH': 'both',
     })
     module('mitmproxy.certs', exports={'Cert': Cert})
+    module('mitmproxy.tls', exports={
+        'ClientHello': addon_tls.ClientHello,
+        'ClientHelloData': addon_tls.ClientHelloData,
+        'TlsData': addon_tls.TlsData,
+    })
     module('mitmproxy.websocket', exports={
         'Opcode': Opcode, 'WebSocketMessage': WebSocketMessage,
         'WebSocketData': WebSocketData,
@@ -424,6 +588,9 @@ def compatibility_modules(*, options=None, master=None):
         "MultiDict": MultiDict,
         "MultiDictView": MultiDictView,
     })
+
+    # Canonical aliases are assigned last so every target module already exists
+    # and each generation exposes one stable object identity per module.
     cookies = module("mitmproxy.net.http.cookies", exports={
         "CookieAttrs": CookieAttrs,
         "format_cookie_header": format_cookie_header,

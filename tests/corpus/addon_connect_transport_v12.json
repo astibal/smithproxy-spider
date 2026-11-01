@@ -1,0 +1,76 @@
+{
+  "hooks": [
+    {
+      "error": null,
+      "flow": "accepted",
+      "flow_type": "http",
+      "hook": "http_connect",
+      "host": "127.0.0.1",
+      "method": "CONNECT",
+      "port": "accepted",
+      "response_present": false,
+      "response_status": null,
+      "server_address": null,
+      "server_id_preserved": true,
+      "server_object_preserved": true,
+      "server_peername_present": false
+    },
+    {
+      "error": null,
+      "flow": "accepted",
+      "flow_type": "http",
+      "hook": "http_connected",
+      "host": "127.0.0.1",
+      "method": "CONNECT",
+      "port": "accepted",
+      "response_present": true,
+      "response_status": 200,
+      "server_address": [
+        "127.0.0.1",
+        "accepted"
+      ],
+      "server_id_preserved": true,
+      "server_object_preserved": true,
+      "server_peername_present": true
+    },
+    {
+      "error": null,
+      "flow": "rejected",
+      "flow_type": "http",
+      "hook": "http_connect",
+      "host": "127.0.0.1",
+      "method": "CONNECT",
+      "port": "rejected",
+      "response_present": false,
+      "response_status": null,
+      "server_address": null,
+      "server_id_preserved": true,
+      "server_object_preserved": true,
+      "server_peername_present": false
+    },
+    {
+      "error": null,
+      "flow": "rejected",
+      "flow_type": "http",
+      "hook": "http_connect_error",
+      "host": "127.0.0.1",
+      "method": "CONNECT",
+      "port": "rejected",
+      "response_present": true,
+      "response_status": 502,
+      "server_address": [
+        "127.0.0.1",
+        "rejected"
+      ],
+      "server_id_preserved": true,
+      "server_object_preserved": true,
+      "server_peername_present": false
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "wire": {
+    "accepted_status": "HTTP/1.1 200 Connection established",
+    "origin_contacted": true,
+    "rejected_status": "HTTP/1.1 502 Bad Gateway"
+  }
+}

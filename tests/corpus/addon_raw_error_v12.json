@@ -1,0 +1,83 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "tcp_connect_refused": {
+    "client_outcome": "eof",
+    "client_received": "",
+    "hooks": []
+  },
+  "tcp_reset": {
+    "client_outcome": "eof",
+    "client_received": "",
+    "hooks": [
+      {
+        "after": null,
+        "before": null,
+        "error": null,
+        "from_client": null,
+        "hook": "tcp_start",
+        "live": true,
+        "message_count": 0
+      },
+      {
+        "after": "hello",
+        "before": "hello",
+        "error": null,
+        "from_client": true,
+        "hook": "tcp_message",
+        "live": true,
+        "message_count": 1
+      },
+      {
+        "after": null,
+        "before": null,
+        "error": null,
+        "from_client": null,
+        "hook": "tcp_end",
+        "live": true,
+        "message_count": 1
+      }
+    ]
+  },
+  "udp_unreachable": {
+    "client_outcome": "timeout",
+    "client_received": "",
+    "hooks": [
+      {
+        "after": null,
+        "before": null,
+        "error": null,
+        "from_client": null,
+        "hook": "udp_start",
+        "live": true,
+        "message_count": 0
+      },
+      {
+        "after": "hello",
+        "before": "hello",
+        "error": null,
+        "from_client": true,
+        "hook": "udp_message",
+        "live": true,
+        "message_count": 1
+      },
+      {
+        "after": "again",
+        "before": "again",
+        "error": null,
+        "from_client": true,
+        "hook": "udp_message",
+        "live": true,
+        "message_count": 2
+      },
+      {
+        "after": null,
+        "before": null,
+        "error": null,
+        "from_client": null,
+        "hook": "udp_end",
+        "live": true,
+        "message_count": 2
+      }
+    ]
+  }
+}

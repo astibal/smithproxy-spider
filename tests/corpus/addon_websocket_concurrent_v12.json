@@ -1,0 +1,141 @@
+{
+  "client": {
+    "closes": [
+      "A+hvbmU=",
+      "A+h0d28="
+    ],
+    "responses": [
+      "MjpvcmlnaW46MTpvbmUtYQ==",
+      "NDpvcmlnaW46Mzp0d28tYQ==",
+      "NjpvcmlnaW46NTpvbmUtYg==",
+      "ODpvcmlnaW46Nzp0d28tYg=="
+    ],
+    "statuses": [
+      "HTTP/1.1 101 Switching Protocols",
+      "HTTP/1.1 101 Switching Protocols"
+    ]
+  },
+  "hooks": [
+    {
+      "active": 1,
+      "after": null,
+      "before": null,
+      "from_client": null,
+      "hook": "websocket_start",
+      "message_count": 0,
+      "ordinal": 0
+    },
+    {
+      "active": 2,
+      "after": null,
+      "before": null,
+      "from_client": null,
+      "hook": "websocket_start",
+      "message_count": 0,
+      "ordinal": 0
+    },
+    {
+      "active": 2,
+      "after": "MTpvbmUtYQ==",
+      "before": "b25lLWE=",
+      "from_client": true,
+      "hook": "websocket_message",
+      "message_count": 1,
+      "ordinal": 1
+    },
+    {
+      "active": 2,
+      "after": "MjpvcmlnaW46MTpvbmUtYQ==",
+      "before": "b3JpZ2luOjE6b25lLWE=",
+      "from_client": false,
+      "hook": "websocket_message",
+      "message_count": 2,
+      "ordinal": 2
+    },
+    {
+      "active": 2,
+      "after": "Mzp0d28tYQ==",
+      "before": "dHdvLWE=",
+      "from_client": true,
+      "hook": "websocket_message",
+      "message_count": 1,
+      "ordinal": 3
+    },
+    {
+      "active": 2,
+      "after": "NDpvcmlnaW46Mzp0d28tYQ==",
+      "before": "b3JpZ2luOjM6dHdvLWE=",
+      "from_client": false,
+      "hook": "websocket_message",
+      "message_count": 2,
+      "ordinal": 4
+    },
+    {
+      "active": 2,
+      "after": "NTpvbmUtYg==",
+      "before": "b25lLWI=",
+      "from_client": true,
+      "hook": "websocket_message",
+      "message_count": 3,
+      "ordinal": 5
+    },
+    {
+      "active": 2,
+      "after": "NjpvcmlnaW46NTpvbmUtYg==",
+      "before": "b3JpZ2luOjU6b25lLWI=",
+      "from_client": false,
+      "hook": "websocket_message",
+      "message_count": 4,
+      "ordinal": 6
+    },
+    {
+      "active": 2,
+      "after": "Nzp0d28tYg==",
+      "before": "dHdvLWI=",
+      "from_client": true,
+      "hook": "websocket_message",
+      "message_count": 3,
+      "ordinal": 7
+    },
+    {
+      "active": 2,
+      "after": "ODpvcmlnaW46Nzp0d28tYg==",
+      "before": "b3JpZ2luOjc6dHdvLWI=",
+      "from_client": false,
+      "hook": "websocket_message",
+      "message_count": 4,
+      "ordinal": 8
+    },
+    {
+      "active": 2,
+      "after": null,
+      "before": null,
+      "from_client": null,
+      "hook": "websocket_end",
+      "message_count": 4,
+      "ordinal": 8
+    },
+    {
+      "active": 1,
+      "after": null,
+      "before": null,
+      "from_client": null,
+      "hook": "websocket_end",
+      "message_count": 4,
+      "ordinal": 8
+    }
+  ],
+  "origin": {
+    "one": [
+      "MTpvbmUtYQ==",
+      "NTpvbmUtYg=="
+    ],
+    "one_close": "A+hvbmU=",
+    "two": [
+      "Mzp0d28tYQ==",
+      "Nzp0d28tYg=="
+    ],
+    "two_close": "A+h0d28="
+  },
+  "reference": "mitmproxy 12.3.1"
+}

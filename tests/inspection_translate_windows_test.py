@@ -38,6 +38,7 @@ class Bridge:
             'held_parts': self.held.get(side),
             'peer_held_parts': self.held.get('R' if side == 'L' else 'L'),
             'hold_credit_available': True, 'hold_credit_reserved': self.reserved,
+            'hold_allowed': True,
         })
         return message
 
@@ -1438,6 +1439,51 @@ class WindowsTests(unittest.TestCase):
             self.assertEqual([int.from_bytes(item[3], 'big') for item in unpack(reverse)], [7, 7])
             self.assertEqual(bridge.control['flow'][side]['input']['window'], 65535)
             self.assertEqual(bridge.feed(side, b''), (b'', b''))
+
+    def test_every_partial_frame_header_boundary_is_accounted_once(self):
+        """A frame header may be divided at any of its eight inner boundaries."""
+        wire = frame(b'\x03abc\0\0\0', 0, 8, 1)
+
+        for side in ('L', 'R'):
+            for split in range(1, 9):
+                with self.subTest(side=side, split=split):
+                    bridge = self.input_bridge()
+                    before = json.loads(json.dumps(bridge.control))
+
+                    output, reverse = bridge.feed(side, wire[:split])
+                    self.assertEqual((output, reverse), (b'', b''))
+
+                    # An incomplete nine-byte header is retained parser input.
+                    # That header checkpoint is the only permitted state
+                    # change: no window debit, stream record or publishable
+                    # Part may appear before the rest of the header arrives.
+                    after = json.loads(json.dumps(bridge.control))
+                    self.assertEqual(
+                        after['flow'][side]['input']['header'],
+                        list(wire[:split]),
+                    )
+                    after['flow'][side]['input']['header'] = []
+                    self.assertEqual(after, before)
+
+                    output, reverse = bridge.feed(
+                        side,
+                        wire[split:],
+                        lambda message: message.parts.hold_from(message.parts[0]),
+                    )
+                    self.assertEqual((output, reverse), (b'', b''))
+                    state = bridge.control['flow'][side]['input']
+                    self.assertEqual(state['window'], 65535 - 7)
+                    self.assertEqual(state['remaining'], 0)
+
+                    output, reverse = bridge.feed(side, b'')
+                    self.assertEqual(output, wire)
+                    self.assertEqual(
+                        [int.from_bytes(item[3], 'big') for item in unpack(reverse)],
+                        [7, 7],
+                    )
+                    self.assertEqual(
+                        bridge.control['flow'][side]['input']['window'], 65535)
+                    self.assertEqual(bridge.feed(side, b''), (b'', b''))
 
     def test_input_connection_oversend_is_atomic_at_partial_header(self):
         for side in ('L', 'R'):

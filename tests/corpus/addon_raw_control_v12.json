@@ -1,0 +1,803 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "tcp": {
+    "empty-client-message": {
+      "client_outcome": "timeout",
+      "client_received": "",
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_end",
+          "live": true,
+          "message_count": 1
+        }
+      ],
+      "origin": {
+        "connections": 0,
+        "received": []
+      }
+    },
+    "empty-server-message": {
+      "client_outcome": "eof",
+      "client_received": "",
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": "",
+          "before": "one:hello",
+          "error": null,
+          "from_client": false,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_end",
+          "live": true,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "connections": 1,
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "kill-client-message": {
+      "client_outcome": "eof",
+      "client_received": "one:hello",
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": "Connection killed.",
+          "from_client": true,
+          "hook": "tcp_message",
+          "live": false,
+          "message_count": 1
+        },
+        {
+          "after": "one:hello",
+          "before": "one:hello",
+          "error": "Connection killed.",
+          "from_client": false,
+          "hook": "tcp_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "tcp_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "connections": 1,
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "kill-server-message": {
+      "client_outcome": "eof",
+      "client_received": "one:hello",
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": "one:hello",
+          "before": "one:hello",
+          "error": "Connection killed.",
+          "from_client": false,
+          "hook": "tcp_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "tcp_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "connections": 1,
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "kill-start": {
+      "client_outcome": "eof",
+      "client_received": "one:hello",
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "tcp_start",
+          "live": false,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": "Connection killed.",
+          "from_client": true,
+          "hook": "tcp_message",
+          "live": false,
+          "message_count": 1
+        },
+        {
+          "after": "one:hello",
+          "before": "one:hello",
+          "error": "Connection killed.",
+          "from_client": false,
+          "hook": "tcp_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "tcp_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "connections": 1,
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "set-custom-error": {
+      "client_outcome": "eof",
+      "client_received": "one:hello",
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": "custom transport error",
+          "from_client": true,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": "one:hello",
+          "before": "one:hello",
+          "error": "custom transport error",
+          "from_client": false,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": "custom transport error",
+          "from_client": null,
+          "hook": "tcp_end",
+          "live": true,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "connections": 1,
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "set-live-false": {
+      "client_outcome": "eof",
+      "client_received": "one:hello",
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "tcp_message",
+          "live": false,
+          "message_count": 1
+        },
+        {
+          "after": "one:hello",
+          "before": "one:hello",
+          "error": null,
+          "from_client": false,
+          "hook": "tcp_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "connections": 1,
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "tag-messages": {
+      "client_outcome": "eof",
+      "client_received": "S:one:C:helloS:two:C:world",
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "C:hello",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": "S:one:C:hello",
+          "before": "one:C:hello",
+          "error": null,
+          "from_client": false,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 2
+        },
+        {
+          "after": "C:world",
+          "before": "world",
+          "error": null,
+          "from_client": true,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 3
+        },
+        {
+          "after": "S:two:C:world",
+          "before": "two:C:world",
+          "error": null,
+          "from_client": false,
+          "hook": "tcp_message",
+          "live": true,
+          "message_count": 4
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "tcp_end",
+          "live": true,
+          "message_count": 4
+        }
+      ],
+      "origin": {
+        "connections": 1,
+        "received": [
+          "C:hello",
+          "C:world"
+        ]
+      }
+    }
+  },
+  "udp": {
+    "empty-client-message": {
+      "client_received": [
+        "1:"
+      ],
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": "1:",
+          "before": "1:",
+          "error": null,
+          "from_client": false,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_end",
+          "live": true,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "received": [
+          ""
+        ]
+      }
+    },
+    "empty-server-message": {
+      "client_received": [
+        ""
+      ],
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": "",
+          "before": "1:hello",
+          "error": null,
+          "from_client": false,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_end",
+          "live": true,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "kill-client-message": {
+      "client_received": [
+        "1:hello"
+      ],
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": "Connection killed.",
+          "from_client": true,
+          "hook": "udp_message",
+          "live": false,
+          "message_count": 1
+        },
+        {
+          "after": "1:hello",
+          "before": "1:hello",
+          "error": "Connection killed.",
+          "from_client": false,
+          "hook": "udp_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "udp_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "kill-server-message": {
+      "client_received": [
+        "1:hello"
+      ],
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": "1:hello",
+          "before": "1:hello",
+          "error": "Connection killed.",
+          "from_client": false,
+          "hook": "udp_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "udp_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "kill-start": {
+      "client_received": [
+        "1:hello"
+      ],
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "udp_start",
+          "live": false,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": "Connection killed.",
+          "from_client": true,
+          "hook": "udp_message",
+          "live": false,
+          "message_count": 1
+        },
+        {
+          "after": "1:hello",
+          "before": "1:hello",
+          "error": "Connection killed.",
+          "from_client": false,
+          "hook": "udp_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "udp_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "set-custom-error": {
+      "client_received": [
+        "1:hello"
+      ],
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": "custom transport error",
+          "from_client": true,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": "1:hello",
+          "before": "1:hello",
+          "error": "custom transport error",
+          "from_client": false,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": "custom transport error",
+          "from_client": null,
+          "hook": "udp_end",
+          "live": true,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "set-live-false": {
+      "client_received": [
+        "1:hello"
+      ],
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "hello",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "udp_message",
+          "live": false,
+          "message_count": 1
+        },
+        {
+          "after": "1:hello",
+          "before": "1:hello",
+          "error": null,
+          "from_client": false,
+          "hook": "udp_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "received": [
+          "hello"
+        ]
+      }
+    },
+    "tag-messages": {
+      "client_received": [
+        "S:1:C:hello",
+        "S:2:C:world"
+      ],
+      "hooks": [
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "after": "C:hello",
+          "before": "hello",
+          "error": null,
+          "from_client": true,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "after": "S:1:C:hello",
+          "before": "1:C:hello",
+          "error": null,
+          "from_client": false,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 2
+        },
+        {
+          "after": "C:world",
+          "before": "world",
+          "error": null,
+          "from_client": true,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 3
+        },
+        {
+          "after": "S:2:C:world",
+          "before": "2:C:world",
+          "error": null,
+          "from_client": false,
+          "hook": "udp_message",
+          "live": true,
+          "message_count": 4
+        },
+        {
+          "after": null,
+          "before": null,
+          "error": null,
+          "from_client": null,
+          "hook": "udp_end",
+          "live": true,
+          "message_count": 4
+        }
+      ],
+      "origin": {
+        "received": [
+          "C:hello",
+          "C:world"
+        ]
+      }
+    }
+  }
+}

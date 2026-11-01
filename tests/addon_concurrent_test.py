@@ -2,6 +2,7 @@
 
 import asyncio
 import contextvars
+import fcntl
 import importlib
 import json
 from pathlib import Path
@@ -130,6 +131,44 @@ class ConcurrentRunnerTests(unittest.IsolatedAsyncioTestCase):
         finally:
             runner.close()
             loop._write_to_self = original_wakeup
+
+    async def test_full_wakeup_pipe_does_not_drop_queued_callbacks(self):
+        entered = threading.Event()
+        release = threading.Event()
+        observed = []
+
+        def block_runner():
+            entered.set()
+            release.wait(timeout=5)
+
+        first = self.runner.submit(block_runner, ())
+        async with asyncio.timeout(1):
+            while not entered.is_set():
+                await asyncio.sleep(0.001)
+
+        pipe_size = fcntl.fcntl(
+            self.runner._write_fd,
+            fcntl.F_SETPIPE_SZ,
+            4096,
+        )
+        callback_count = pipe_size + 64
+
+        def record(index):
+            observed.append(index)
+
+        queued = [
+            self.runner.submit(record, (index,))
+            for index in range(callback_count)
+        ]
+        release.set()
+
+        async with asyncio.timeout(5):
+            while not all(result.done() for result in queued):
+                await asyncio.sleep(0.001)
+
+        self.assertIsNone(first.result())
+        self.assertTrue(all(result.result() is None for result in queued))
+        self.assertEqual(observed, list(range(callback_count)))
 
     async def test_runner_propagates_callback_failure(self):
         @concurrent

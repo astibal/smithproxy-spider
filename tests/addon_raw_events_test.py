@@ -341,7 +341,7 @@ def tcp_end(flow):
                 ['start', ('192.0.2.10', 41000), ('198.51.100.30', 443)],
                 ['message', True, b'hello', 1],
                 ['message', False, b'world', 2],
-                ['end', False, 2],
+                ['end', True, 2],
             ])
             self.assertEqual(addon.active_flows, 0)
         finally:
@@ -531,35 +531,128 @@ def tcp_message(flow):
         finally:
             await adapter.close()
 
-    async def test_unsupported_transport_decisions_fail_closed(self):
+    async def test_raw_interception_fails_closed_without_producer_suspension(self):
+        source = '''def tcp_message(flow):
+    flow.intercept()
+'''
+        addon = AddonGeneration(source, NativeAddonAdapter.HOOKS)
+        await addon.start()
+        adapter = NativeAddonAdapter(addon, opaque_part_factory=RewritePart)
+        raw = envelope('tcp')
+        try:
+            self.assertEqual(
+                await adapter.setup(setup_api('intercept', raw), None, None), ())
+            api = content_api(
+                'intercept',
+                'L',
+                b'original',
+                content_envelope(raw, 'client-to-server', 0),
+            )
+            with self.assertRaisesRegex(RawTransportError, 'suspension support'):
+                await adapter.content(api)
+            self.assertEqual(addon.state, 'failed')
+        finally:
+            await adapter.close()
+
+    async def test_raw_kill_marks_flow_but_keeps_forwarding_until_end(self):
+        for kind in ('tcp', 'udp'):
+            for hook in ('start', 'message'):
+                with self.subTest(kind=kind, hook=hook):
+                    source = f'''events = []
+def {kind}_start(flow):
+    if {hook!r} == "start":
+        flow.kill()
+    events.append(("start", flow.live, str(flow.error)))
+def {kind}_message(flow):
+    if {hook!r} == "message":
+        flow.kill()
+    events.append(("message", flow.live, str(flow.error)))
+def {kind}_end(flow):
+    events.append(("end", flow.live, str(flow.error)))
+'''
+                    addon = AddonGeneration(source, NativeAddonAdapter.HOOKS)
+                    await addon.start()
+                    adapter = NativeAddonAdapter(
+                        addon, opaque_part_factory=RewritePart)
+                    raw = envelope(kind)
+                    identity = kind + '-' + hook
+                    try:
+                        self.assertEqual(
+                            await adapter.setup(
+                                setup_api(identity, raw), None, None),
+                            (),
+                        )
+                        api = content_api(
+                            identity,
+                            'L',
+                            b'forwarded',
+                            content_envelope(
+                                raw, 'client-to-server', 0),
+                        )
+                        self.assertEqual(
+                            await adapter.content(api), b'forwarded')
+                        self.assertEqual(await adapter.stop(
+                            identity,
+                            {'raw_transport': terminal_envelope(raw)},
+                        ), ())
+                        error_at_start = (
+                            'Connection killed.' if hook == 'start' else 'None')
+                        self.assertEqual(addon.addon.module.events, [
+                            ('start', hook != 'start', error_at_start),
+                            ('message', False, 'Connection killed.'),
+                            ('end', False, 'Connection killed.'),
+                        ])
+                    finally:
+                        await adapter.close()
+
+    async def test_raw_live_and_error_edits_are_state_only(self):
         cases = {
-            'kill': 'flow.kill()',
-            'intercept': 'flow.intercept()',
+            'live': (
+                'flow.live = False',
+                False,
+                'None',
+            ),
+            'error': (
+                '''from mitmproxy.flow import Error
+    flow.error = Error("custom transport error")''',
+                True,
+                'custom transport error',
+            ),
         }
-        for name, action in cases.items():
-            with self.subTest(action=name):
-                source = f'''def tcp_message(flow):
+        for name, (action, expected_live, expected_error) in cases.items():
+            with self.subTest(state=name):
+                source = f'''events = []
+def tcp_message(flow):
     {action}
+    events.append(("message", flow.live, str(flow.error)))
+def tcp_end(flow):
+    events.append(("end", flow.live, str(flow.error)))
 '''
                 addon = AddonGeneration(source, NativeAddonAdapter.HOOKS)
                 await addon.start()
                 adapter = NativeAddonAdapter(
                     addon, opaque_part_factory=RewritePart)
                 raw = envelope('tcp')
-                identity = 'decision-' + name
+                identity = 'terminal-state-' + name
                 try:
-                    self.assertEqual(
-                        await adapter.setup(setup_api(identity, raw), None, None), ())
+                    self.assertEqual(await adapter.setup(
+                        setup_api(identity, raw), None, None), ())
                     api = content_api(
                         identity,
                         'L',
                         b'original',
                         content_envelope(raw, 'client-to-server', 0),
                     )
-                    with self.assertRaisesRegex(
-                            RawTransportError, 'producer control support'):
-                        await adapter.content(api)
-                    self.assertEqual(addon.state, 'failed')
+                    self.assertEqual(await adapter.content(api), b'original')
+                    self.assertEqual(await adapter.stop(
+                        identity,
+                        {'raw_transport': terminal_envelope(raw)},
+                    ), ())
+                    self.assertEqual(addon.addon.module.events, [
+                        ('message', expected_live, expected_error),
+                        ('end', expected_live, expected_error),
+                    ])
+                    self.assertEqual(addon.state, 'running')
                 finally:
                     await adapter.close()
 

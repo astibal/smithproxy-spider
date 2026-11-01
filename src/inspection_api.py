@@ -198,6 +198,8 @@ class Message:
         try:
             _validate_safety(safety)
             translation = getattr(self, '_translation', None)
+            if translation is not None and translation.suspension is not None:
+                raise CommitException('Suspension requires message.translate()')
             if translation is not None and translation.message_edits:
                 raise CommitException('Staged message replacements require message.translate()')
             if translation is not None and translation.terminations:
@@ -214,6 +216,28 @@ class Message:
             raise
         except (ValueError, TypeError, AttributeError, OverflowError) as error:
             raise CommitException(str(error)) from error
+
+    @api_method('part: RewritePart, *, timeout_ms: int = 60000', 'int',
+                'Stage a directional H2 stream suspension until resume. Complete logical Parts are retained before output encoding. Return translate() to commit. Deadlines are enforced at the next callback; no idle wakeup is scheduled. New stream openings preserve H2 ordering.',
+                'stream = api.message.suspend(part)\nreturn api.message.translate()',
+                availability='Live H2 flow with native hold and content-reverse support.',
+                access='stage directional stream suspension')
+    def suspend(self, part, *, timeout_ms=60000):
+        translation = getattr(self, '_translation', None)
+        if translation is None:
+            raise CommitException('Stream suspension currently requires H2 Translate')
+        return translation._suspension().suspend(part, timeout_ms)
+
+    @api_method('stream_id: int', 'tuple[RewritePart, ...]',
+                'Resume the suspended directions of this stream and return editable retained Parts. Any later callback on the same connection may trigger resume. Translate publishes each draft through its original directional context, using reverse output when necessary. This is not an asynchronous transport operation.',
+                '# Resume a stream saved by an earlier callback on this connection.\nparts = api.message.resume(1)\nreturn api.message.translate()',
+                availability='Live H2 flow with native hold and content-reverse support.',
+                access='stage stream resume across directions')
+    def resume(self, stream_id):
+        translation = getattr(self, '_translation', None)
+        if translation is None:
+            raise CommitException('Stream resume currently requires H2 Translate')
+        return translation._suspension().resume(stream_id)
 
     @api_method('*, safety: str = Safety.Easy', 'bytes | HeldCommit',
                 'Explicitly translate every callback of a pinned H2 flow. With content-reverse capability from activation, DATA resizing uses bounded directional queues and independent flow-control windows; legacy peers allow same-length DATA only. Hold incomplete Parts explicitly. No silent background runs.',
@@ -232,7 +256,7 @@ class Message:
 
     @api_method('part: RewritePart, *, reason: str = "Connection killed.", http2_error: int = 2', 'None',
                 'Stage protocol-owned termination of the message identified by its initial header Part. HTTP/1 commit suppresses the callback and requests callback-local connection close. HTTP/2 Translate suppresses the selected message and emits one RST_STREAM atomically. The reason is bounded diagnostic metadata; http2_error applies only to HTTP/2.',
-                'part = next(part for part in api.message.parts if part.headers is not None)\napi.message.terminate(part)\nreturn api.message.translate() if part.frame_type == 1 else api.message.commit()',
+                'part = next((part for part in api.message.parts if part.headers is not None), None)\nif part is None:\n    return None\napi.message.terminate(part)\nreturn api.message.translate() if part.frame_type == 1 else api.message.commit()',
                 availability='Live HTTP/1 flow with negotiated connection-close, or live translated H2 flow with content-reverse from activation. The Part must be a callback-local initial request or response header which has not been published or retired.',
                 access='stage one protocol-owned message termination',
                 easy='HTTP/1 closes only the callback connection and emits no message bytes. HTTP/2 resets only the selected stream. Other connections, persistent addon state, sibling H2 streams and compression histories remain independent.',

@@ -328,6 +328,37 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(registry.addons, ())
         self.assertEqual(registry.callbacks("request"), ())
 
+    def test_target_public_hook_inventory_is_complete(self):
+        """Fix every event name documented by the target major API."""
+        self.assertEqual(set(HOOK_ARGUMENTS), {
+            "load", "running", "configure", "done",
+            "client_connected", "client_disconnected",
+            "server_connect", "server_connected", "server_disconnected",
+            "server_connect_error",
+            "requestheaders", "request", "responseheaders", "response",
+            "error", "http_connect", "http_connect_upstream",
+            "http_connected", "http_connect_error",
+            "dns_request", "dns_response", "dns_error",
+            "tcp_start", "tcp_message", "tcp_end", "tcp_error",
+            "udp_start", "udp_message", "udp_end", "udp_error",
+            "quic_start_client", "quic_start_server",
+            "tls_clienthello", "tls_start_client", "tls_start_server",
+            "tls_established_client", "tls_established_server",
+            "tls_failed_client", "tls_failed_server",
+            "websocket_start", "websocket_message", "websocket_end",
+            "socks5_auth", "next_layer", "update", "add_log",
+        })
+
+    def test_socks5_auth_is_rejected_instead_of_silently_ignored(self):
+        addon = SimpleNamespace(socks5_auth=lambda data: None)
+        registry = HookRegistry(H2AddonEvents.HOOKS)
+
+        with self.assertRaisesRegex(
+                UnsupportedAddonHook, r"hook socks5_auth is not supported"):
+            registry.add(addon)
+
+        self.assertEqual(registry.addons, ())
+
     def test_every_public_hook_has_an_explicit_transport_capability(self):
         """Never let a recognized hook silently become a capability claim."""
         for protocol, transport_hooks in (

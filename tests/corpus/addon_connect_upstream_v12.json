@@ -1,0 +1,61 @@
+{
+  "hooks": [
+    {
+      "error": null,
+      "flow": "upstream",
+      "flow_type": "http",
+      "hook": "http_connect",
+      "host": "127.0.0.1",
+      "method": "CONNECT",
+      "port": "destination",
+      "response_present": false,
+      "response_status": null,
+      "server_address": null,
+      "server_id_preserved": true,
+      "server_object_preserved": true,
+      "server_peername_present": false
+    },
+    {
+      "error": null,
+      "flow": "upstream",
+      "flow_type": "http",
+      "hook": "http_connected",
+      "host": "127.0.0.1",
+      "method": "CONNECT",
+      "port": "destination",
+      "response_present": true,
+      "response_status": 200,
+      "server_address": [
+        "127.0.0.1",
+        "destination"
+      ],
+      "server_id_preserved": true,
+      "server_object_preserved": true,
+      "server_peername_present": false
+    },
+    {
+      "error": null,
+      "flow": "upstream",
+      "flow_type": "http",
+      "hook": "http_connect_upstream",
+      "host": "127.0.0.1",
+      "method": "CONNECT",
+      "port": "destination",
+      "response_present": false,
+      "response_status": null,
+      "server_address": [
+        "127.0.0.1",
+        "upstream"
+      ],
+      "server_id_preserved": true,
+      "server_object_preserved": true,
+      "server_peername_present": true
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "wire": {
+    "client_status": "HTTP/1.1 200 Connection established",
+    "upstream_contacted": true,
+    "upstream_request": "CONNECT 127.0.0.1:destination HTTP/1.1"
+  }
+}

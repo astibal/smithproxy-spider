@@ -1,0 +1,46 @@
+{
+  "hooks": [
+    {
+      "client_host": "127.0.0.1",
+      "client_port_present": true,
+      "password": "allow",
+      "username": "override",
+      "valid_after": true,
+      "valid_before": false
+    },
+    {
+      "client_host": "127.0.0.1",
+      "client_port_present": true,
+      "password": "secret",
+      "username": "alice",
+      "valid_after": false,
+      "valid_before": true
+    },
+    {
+      "client_host": "127.0.0.1",
+      "client_port_present": true,
+      "password": "\\xfe",
+      "username": "\\xff",
+      "valid_after": false,
+      "valid_before": false
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "wire": [
+    {
+      "auth_reply": "0100",
+      "method_reply": "0502",
+      "case": "addon-allows"
+    },
+    {
+      "auth_reply": "0101",
+      "method_reply": "0502",
+      "case": "addon-rejects"
+    },
+    {
+      "auth_reply": "0101",
+      "case": "non-utf8",
+      "method_reply": "0502"
+    }
+  ]
+}

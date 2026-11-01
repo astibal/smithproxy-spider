@@ -5,16 +5,45 @@ registry deliberately contains only views registered by the loaded addon;
 Spider keeps ownership of its built-in payload renderers.
 """
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol, TypeAliasType, runtime_checkable
+
+from addon_dns import DNSMessage
+from addon_flow import TCPMessage, UDPMessage
+from addon_http_message import Message
+from addon_websocket import WebSocketMessage
 
 from addon_signals import SyncSignal
 
 
 SyntaxHighlight = Literal["css", "javascript", "xml", "yaml", "none", "error"]
 SYNTAX_HIGHLIGHTS = frozenset(("css", "javascript", "xml", "yaml", "none", "error"))
+
+_CONTENTVIEW_MESSAGE_VALUE = (
+    Message | TCPMessage | UDPMessage | WebSocketMessage | DNSMessage
+)
+
+
+def create_contentview_message_alias(module_name):
+    """Create the public alias with the module identity visible to addons."""
+    namespace = {
+        "__name__": module_name,
+        "TypeAliasType": TypeAliasType,
+        "_value": _CONTENTVIEW_MESSAGE_VALUE,
+    }
+    # TypeAliasType derives __module__ from the defining frame and exposes no
+    # module argument. Evaluate this fixed definition in the public module's
+    # namespace so repr, introspection and pickling never leak our internals.
+    exec(
+        "ContentviewMessage = TypeAliasType('ContentviewMessage', _value)",
+        namespace,
+    )
+    return namespace["ContentviewMessage"]
+
+
+ContentviewMessage = create_contentview_message_alias(__name__)
 
 
 @dataclass
@@ -74,6 +103,80 @@ class InteractiveContentview(Contentview, Protocol):
         """Encode edited text using the view's original binary format."""
 
 
+class View(ABC):
+    """Deprecated line-oriented content-view contract from mitmproxy 11."""
+
+    name = "View"
+
+    @abstractmethod
+    def __call__(self, data, **metadata):
+        """Return a description and an iterable of styled text lines."""
+
+    def render_priority(self, data, **metadata):
+        return 0
+
+
+View.__module__ = "mitmproxy.contentviews.base"
+
+
+class LegacyContentview(Contentview):
+    """Adapt one deprecated line-oriented view to the current protocol."""
+
+    def __init__(self, contentview: View):
+        self.contentview = contentview
+
+    @property
+    def name(self):
+        return self.contentview.name
+
+    @property
+    def syntax_highlight(self):
+        return "none"
+
+    @staticmethod
+    def _metadata(metadata):
+        names = (
+            "flow",
+            "content_type",
+            "http_message",
+            "tcp_message",
+            "udp_message",
+            "websocket_message",
+            "dns_message",
+        )
+        result = {}
+        for name in names:
+            value = getattr(metadata, name)
+            if value is not None:
+                result[name] = value
+        return result
+
+    @staticmethod
+    def _text(value):
+        if isinstance(value, bytes):
+            return value.decode("utf-8", "replace")
+        return str(value)
+
+    def prettify(self, data, metadata):
+        _, lines = self.contentview(data, **self._metadata(metadata))
+        rendered = []
+        for line in lines:
+            rendered.append("".join(
+                self._text(text)
+                for _, text in line
+            ))
+        return "\n".join(rendered)
+
+    def render_priority(self, data, metadata):
+        return self.contentview.render_priority(
+            data,
+            **self._metadata(metadata),
+        )
+
+
+LegacyContentview.__module__ = "mitmproxy.contentviews._compat"
+
+
 class ContentviewRegistry:
     """Small generation-owned mapping used by both the facade and Spider UI."""
 
@@ -131,20 +234,53 @@ class ContentviewRegistry:
 
 
 def create_contentviews():
-    """Return one isolated registry and its public registration function."""
+    """Return one isolated registry and its public compatibility functions."""
     registry = ContentviewRegistry()
 
     def add(contentview):
-        registry.register(contentview)
+        instance = contentview() if isinstance(contentview, type) else contentview
+        if isinstance(instance, View):
+            import warnings
 
-    return registry, add
+            warnings.warn(
+                "`mitmproxy.contentviews.View` is deprecated since mitmproxy "
+                "12, migrate " + type(instance).__name__ + " to "
+                "`mitmproxy.contentviews.Contentview` instead.",
+                UserWarning,
+                stacklevel=2,
+            )
+            instance = LegacyContentview(instance)
+        registry.register(instance)
+
+    def get(name):
+        import warnings
+
+        warnings.warn(
+            "Use `mitmproxy.contentviews.registry` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return registry.get(name)
+
+    def remove(view):
+        import warnings
+
+        warnings.warn(
+            "Use `mitmproxy.contentviews.Contentview` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # The legacy operation is intentionally a no-op in mitmproxy 12.3.1.
+        # Keep the argument for its public signature and preserve that behavior.
+
+    add.__module__ = "mitmproxy.contentviews"
+    get.__module__ = "mitmproxy.contentviews._compat"
+    remove.__module__ = "mitmproxy.contentviews._compat"
+    return registry, add, get, remove
 
 
 def get_data(message):
     """Return the bytes rendered by a content view and their wire annotation."""
-    from addon_dns import DNSMessage
-    from addon_http_message import Message
-
     if isinstance(message, DNSMessage):
         return message.packed, ""
     if isinstance(message, Message):
@@ -160,11 +296,6 @@ def get_data(message):
 
 def make_metadata(message, flow, protobuf_definitions=None):
     """Build content-view metadata without retaining a global proxy context."""
-    from addon_dns import DNSMessage
-    from addon_flow import TCPMessage, UDPMessage
-    from addon_http_message import Message
-    from addon_websocket import WebSocketMessage
-
     metadata = Metadata(
         flow=flow,
         protobuf_definitions=(

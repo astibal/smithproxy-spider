@@ -31,6 +31,171 @@ class PartList(list):
         self._held_from = part
 
 
+class _PartHoldBuffers:
+    """Bounded Parts queues for one connection direction, indexed by stream.
+
+    This is storage, not a publisher or a wire-protocol interpreter. Translate
+    must resolve header drafts before retaining them and encode them against
+    its current output state on release. No HPACK table belongs in this store.
+
+    Each callback works on fork(). The owner adopts that candidate only after
+    the whole publication succeeds; failed encoding must not consume a queue.
+    This helper is deliberately internal until that lifecycle is wired in.
+    """
+
+    def __init__(self, *, max_bytes=1024 * 1024, max_streams=128,
+                 max_batches=1024, max_parts=8192):
+        limits = (max_bytes, max_streams, max_batches, max_parts)
+        if any(type(value) is not int or value <= 0 for value in limits):
+            raise ValueError('Parts hold limits must be positive integers')
+
+        self._limits = limits
+        self._queues = {}
+        self.bytes_held = 0
+        self.batches_held = 0
+        self.parts_held = 0
+
+    @property
+    def stream_ids(self):
+        return tuple(self._queues)
+
+    @staticmethod
+    def _check_stream(stream_id):
+        # Zero can name a non-multiplexed exchange. Protocol-specific identity
+        # and ordering checks belong to the caller, not this generic store.
+        if type(stream_id) is not int or stream_id < 0:
+            raise CommitException('Parts hold stream id must be a nonnegative integer')
+
+    def fork(self):
+        """Copy queue ownership, sharing only immutable serialized snapshots."""
+        from collections import deque
+
+        candidate = _PartHoldBuffers(
+            max_bytes=self._limits[0], max_streams=self._limits[1],
+            max_batches=self._limits[2], max_parts=self._limits[3],
+        )
+        candidate._queues = {
+            stream: deque(batches) for stream, batches in self._queues.items()
+        }
+        candidate.bytes_held = self.bytes_held
+        candidate.batches_held = self.batches_held
+        candidate.parts_held = self.parts_held
+        return candidate
+
+    def hold(self, stream_id, parts, body_sizes):
+        """Append an isolated typed batch; rejected admission changes nothing."""
+        import json
+        from collections import deque
+
+        self._check_stream(stream_id)
+        if not isinstance(parts, (list, tuple)) or not parts:
+            raise CommitException('Parts hold requires a nonempty Parts sequence')
+        if any(not isinstance(part, RewritePart) for part in parts):
+            raise CommitException('Parts hold accepts only native Parts')
+        if len({id(part) for part in parts}) != len(parts):
+            raise CommitException('Parts hold cannot contain duplicate Parts')
+
+        # Bound queue metadata as well as payload. Empty DATA and tiny headers
+        # must not allow an unlimited number of retained objects or streams.
+        max_bytes, max_streams, max_batches, max_parts = self._limits
+        if stream_id not in self._queues and len(self._queues) >= max_streams:
+            raise CommitException('Parts hold exceeds stream limit')
+        if self.batches_held >= max_batches:
+            raise CommitException('Parts hold exceeds batch limit')
+        if self.parts_held + len(parts) > max_parts:
+            raise CommitException('Parts hold exceeds part limit')
+
+        # Reuse the existing data-only checkpoint format. Serialization captures
+        # edits and shared body groups without retaining callback-owned objects.
+        # Charge the complete representation, including original wire bytes,
+        # logical drafts and base64 overhead, rather than just message.size.
+        checkpoint = _checkpoint(parts, body_sizes)
+        snapshot = json.dumps(checkpoint).encode('utf-8')
+        if self.bytes_held + len(snapshot) > max_bytes:
+            raise CommitException('Parts hold exceeds byte limit')
+
+        batch = (snapshot, len(parts))
+        queue = self._queues.get(stream_id)
+        if queue is None:
+            queue = deque([batch])
+            self._queues[stream_id] = queue
+        else:
+            queue.append(batch)
+        self.bytes_held += len(snapshot)
+        self.batches_held += 1
+        self.parts_held += len(parts)
+
+    def release(self, stream_id):
+        """Return fresh (Parts, body baselines) batches in FIFO order.
+
+        Batches remain distinct: combining message/body groups is Translate's
+        responsibility. Releasing a draft is not publishing its bytes.
+        """
+        import json
+
+        self._check_stream(stream_id)
+        queue = self._queues.get(stream_id)
+        if queue is None:
+            return []
+
+        # Restore everything before removing anything. A decoding/allocation
+        # failure cannot silently consume part of the suspended stream.
+        restored = []
+        for snapshot, _ in queue:
+            restored.append(_restore(json.loads(snapshot)))
+        self.discard(stream_id)
+        return restored
+
+    def discard(self, stream_id):
+        """Forget one stream without encoding or releasing any of its Parts."""
+        self._check_stream(stream_id)
+        queue = self._queues.pop(stream_id, None)
+        if queue is None:
+            return False
+
+        for snapshot, count in queue:
+            self.bytes_held -= len(snapshot)
+            self.batches_held -= 1
+            self.parts_held -= count
+        return True
+
+    def checkpoint(self):
+        """Export data only; neither callers nor the host receive live queues."""
+        import json
+        return {
+            'version': 1,
+            'streams': [
+                {'id': stream, 'batches': [json.loads(snapshot) for snapshot, _ in queue]}
+                for stream, queue in self._queues.items()
+            ],
+        }
+
+    @classmethod
+    def from_checkpoint(cls, checkpoint, **limits):
+        """Restore through normal admission, so saved state cannot bypass limits."""
+        import json
+        result = cls(**limits)
+        if checkpoint is None:
+            return result
+        if (not isinstance(checkpoint, dict) or checkpoint.get('version') != 1 or
+                not isinstance(checkpoint.get('streams'), list)):
+            raise CommitException('Invalid Parts buffer checkpoint')
+        if len(json.dumps(checkpoint).encode('utf-8')) > result._limits[0] + 65536:
+            raise CommitException('Parts buffer checkpoint exceeds byte limit')
+        for entry in checkpoint['streams']:
+            if (not isinstance(entry, dict) or 'id' not in entry or
+                    not isinstance(entry.get('batches'), list)):
+                raise CommitException('Invalid Parts buffer stream')
+            stream = entry['id']
+            result._check_stream(stream)
+            if stream in result.stream_ids or not entry['batches']:
+                raise CommitException('Duplicate or empty Parts buffer stream')
+            for batch in entry['batches']:
+                parts, body_sizes = _restore(batch)
+                result.hold(stream, parts, body_sizes)
+        return result
+
+
 def _body_encoding(values):
     """Keep unsupported/stacked codings opaque until logical access is requested."""
     return ','.join(values).strip().lower()

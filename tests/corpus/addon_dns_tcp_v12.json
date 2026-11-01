@@ -1,0 +1,83 @@
+{
+  "hooks": [
+    {
+      "answer": null,
+      "flow": 1,
+      "hook": "dns_request",
+      "question": "first.invalid",
+      "same_client_connection": true
+    },
+    {
+      "answer": "192.0.2.91",
+      "flow": 1,
+      "hook": "dns_response",
+      "question": "first.invalid",
+      "same_client_connection": true
+    },
+    {
+      "answer": null,
+      "flow": 2,
+      "hook": "dns_request",
+      "question": "second.invalid",
+      "same_client_connection": true
+    },
+    {
+      "answer": "192.0.2.92",
+      "flow": 2,
+      "hook": "dns_response",
+      "question": "second.invalid",
+      "same_client_connection": true
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "responses": [
+    {
+      "answer": [
+        "first.invalid",
+        1,
+        1,
+        30,
+        "192.0.2.91"
+      ],
+      "counts": [
+        1,
+        1,
+        0,
+        0
+      ],
+      "id": 17767,
+      "query": false,
+      "question": [
+        "first.invalid",
+        1,
+        1
+      ],
+      "recursion_available": true,
+      "response_code": 0
+    },
+    {
+      "answer": [
+        "second.invalid",
+        1,
+        1,
+        30,
+        "192.0.2.92"
+      ],
+      "counts": [
+        1,
+        1,
+        0,
+        0
+      ],
+      "id": 35243,
+      "query": false,
+      "question": [
+        "second.invalid",
+        1,
+        1
+      ],
+      "recursion_available": true,
+      "response_code": 0
+    }
+  ]
+}

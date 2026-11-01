@@ -1,0 +1,156 @@
+{
+  "hooks": [
+    {
+      "hook": "dns_request",
+      "message": {
+        "additionals": [
+          [
+            "ns.example.com",
+            1,
+            1,
+            30,
+            "c0000214"
+          ]
+        ],
+        "answers": [
+          [
+            "alpha.example.com",
+            1,
+            1,
+            10,
+            "c000020a"
+          ]
+        ],
+        "authoritative_answer": true,
+        "authorities": [
+          [
+            "example.com",
+            2,
+            1,
+            20,
+            "026e73076578616d706c6503636f6d00"
+          ]
+        ],
+        "id": 26505,
+        "op_code": 4,
+        "query": true,
+        "questions": [
+          [
+            "alpha.example.com",
+            1,
+            1
+          ],
+          [
+            "beta.example.com",
+            28,
+            1
+          ]
+        ],
+        "recursion_available": true,
+        "recursion_desired": true,
+        "reserved": 7,
+        "response_code": 7,
+        "truncation": true
+      }
+    },
+    {
+      "hook": "dns_response",
+      "message": {
+        "additionals": [
+          [
+            "ns.example.com",
+            1,
+            1,
+            30,
+            "c0000263"
+          ]
+        ],
+        "answers": [
+          [
+            "alpha.example.com",
+            1,
+            1,
+            99,
+            "c000020a"
+          ]
+        ],
+        "authoritative_answer": true,
+        "authorities": [
+          [
+            "example.com",
+            2,
+            1,
+            20,
+            "026e73076578616d706c6503636f6d00"
+          ]
+        ],
+        "id": 26505,
+        "op_code": 4,
+        "query": false,
+        "questions": [
+          [
+            "alpha.example.com",
+            1,
+            1
+          ],
+          [
+            "beta.example.com",
+            28,
+            1
+          ]
+        ],
+        "recursion_available": true,
+        "recursion_desired": true,
+        "reserved": 7,
+        "response_code": 7,
+        "truncation": true
+      }
+    }
+  ],
+  "input_hex": "678927f7000200010001000105616c706861076578616d706c6503636f6d00000100010462657461c012001c0001c00c000100010000000a0004c000020ac01200020001000000140005026e73c012026e73c012000100010000001e0004c0000214",
+  "reference": "mitmproxy 12.3.1",
+  "wire": {
+    "additionals": [
+      [
+        "ns.example.com",
+        1,
+        1,
+        30,
+        "c0000263"
+      ]
+    ],
+    "answers": [
+      [
+        "alpha.example.com",
+        1,
+        1,
+        99,
+        "c000020a"
+      ]
+    ],
+    "authorities": [
+      [
+        "example.com",
+        2,
+        1,
+        20,
+        "026e73076578616d706c6503636f6d00"
+      ]
+    ],
+    "flags": 42999,
+    "fully_consumed": true,
+    "id": 26505,
+    "questions": [
+      [
+        "alpha.example.com",
+        1,
+        1
+      ],
+      [
+        "beta.example.com",
+        28,
+        1
+      ]
+    ]
+  }
+}

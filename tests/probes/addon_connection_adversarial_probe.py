@@ -8,4 +8,7 @@ from mitmproxy import connection
 from addon_connection_adversarial_contract import collect
 
 
-print(json.dumps({"cases": collect(connection)}, indent=2, sort_keys=True))
+print(json.dumps({
+    "cases": collect(connection),
+    "reference": "mitmproxy 12.3.1",
+}, indent=2, sort_keys=True))

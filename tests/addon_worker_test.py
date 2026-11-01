@@ -176,7 +176,7 @@ def tcp_end(flow):
         self.assertEqual(output[2]['logs'], ['message True 1'])
         self.assertEqual(base64.b64decode(output[3]['replacement']), b'server:WORLD')
         self.assertEqual(output[3]['logs'], ['message False 2'])
-        self.assertEqual(output[4]['logs'], ['end False 2'])
+        self.assertEqual(output[4]['logs'], ['end True 2'])
         self.assertNotIn('Traceback', stderr)
 
     def test_packaged_worker_preserves_an_empty_udp_datagram(self):
@@ -325,6 +325,57 @@ contentviews.add(Probe)
         self.assertFalse(failed['_worker_recycle'])
         self.assertEqual(second['text'], 'AGAIN:3')
         self.assertEqual(base64.b64decode(reencoded['data']), b'edited')
+        self.assertNotIn('Traceback', stderr)
+
+    def test_legacy_content_view_runs_through_the_persistent_generation(self):
+        source = '''#!mitmproxy
+from mitmproxy import contentviews
+from mitmproxy.contentviews.base import View
+
+assert View is contentviews.View
+assert contentviews._compat.LegacyContentview is contentviews.LegacyContentview
+
+class LegacyProbe(View):
+    name = "Legacy Worker Probe"
+    calls = 0
+
+    def __call__(self, data, **metadata):
+        self.calls += 1
+        assert metadata == {"content_type": "text/legacy"}
+        return "legacy", iter([
+            [("header", b"legacy "), ("text", data)],
+            [("error", str(self.calls))],
+        ])
+
+    def render_priority(self, data, **metadata):
+        return 9
+
+contentviews.add(LegacyProbe)
+'''
+        encoded = lambda value: base64.b64encode(value).decode()
+        output, stderr = self.run_worker(
+            {'script': source},
+            [
+                {'content_view_action': 'list'},
+                {
+                    'content_view_action': 'render',
+                    'data': encoded(b'payload'),
+                    'content_type': 'text/legacy',
+                    'view_name': 'auto',
+                },
+            ],
+        )
+
+        self.assertEqual(output[0], {'ready': True, 'script_api': 'mitmproxy'})
+        self.assertEqual(output[1]['views'], [{
+            'key': 'legacy worker probe',
+            'name': 'Legacy Worker Probe',
+            'syntax_highlight': 'none',
+            'interactive': False,
+        }])
+        self.assertEqual(output[2]['text'], 'legacy payload\n1')
+        self.assertEqual(output[2]['view_name'], 'Legacy Worker Probe')
+        self.assertFalse(output[2]['interactive'])
         self.assertNotIn('Traceback', stderr)
 
     def test_public_content_view_helpers_run_inside_native_http_generation(self):
@@ -1201,6 +1252,71 @@ def error(flow):
             setup = callback('h1-after-kill', 'connection-start')
             setup['_request_id'] = 4
             self.assertTrue(self.exchange(process, setup)['ok'])
+
+            process.stdin.close()
+            process.stdin = None
+            stdout, stderr = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, stderr[-6000:])
+            self.assertEqual(stdout, '')
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
+
+    def test_h1_kill_revalidates_capability_after_packaged_hold(self):
+        source = '''#!mitmproxy
+def request(flow):
+    flow.kill()
+'''
+        process = subprocess.Popen(
+            worker_command('--persistent'),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        head = (
+            b'POST /kill HTTP/1.1\r\n'
+            b'Host: example.test\r\n'
+            b'Content-Length: 6\r\n\r\n'
+        )
+        try:
+            self.assertEqual(
+                self.exchange(process, {'script': source}),
+                {'ready': True, 'script_api': 'mitmproxy'},
+            )
+            setup = callback('h1-kill-resume-worker', 'connection-start')
+            setup['_request_id'] = 1
+            self.assertTrue(self.exchange(process, setup)['rewrite_requested'])
+
+            first = h1_callback(
+                'h1-kill-resume-worker',
+                head + b'abc',
+                connection_close=True,
+            )
+            first['_request_id'] = 2
+            held = self.exchange(process, first)
+            self.assertTrue(held['ok'], held)
+            self.assertEqual(held['hold']['state'], 'holding')
+            self.assertNotIn('connection_close', held)
+
+            # The producer must repeat transport capabilities on every
+            # callback. Do not inherit authority from the callback which
+            # created the retained body checkpoint.
+            resumed = h1_continuation('h1-kill-resume-worker', b'def')
+            resumed.update({
+                '_request_id': 3,
+                'held_parts': held['held_parts'],
+                'h1_response_state': held['h1_response_state'],
+            })
+            rejected = self.exchange(process, resumed)
+            self.assertFalse(rejected['ok'])
+            self.assertIn(
+                'HTTP/1 termination requires connection-close capability',
+                rejected['error'],
+            )
+            self.assertIsNone(rejected['replacement'])
+            self.assertNotIn('connection_close', rejected)
 
             process.stdin.close()
             process.stdin = None
@@ -2378,6 +2494,38 @@ def client_disconnected(client):
         self.assertEqual(output[3]['logs'], ['disconnected True False True'])
         self.assertNotIn('Traceback', stderr)
 
+    def test_packaged_worker_keeps_late_stream_selection_as_a_noop(self):
+        source = '''#!mitmproxy
+def request(flow):
+    flow.request.stream = True
+    print("late stream", flow.request.stream, flow.request.raw_content.decode("ascii"))
+'''
+        fields = [
+            (b':method', b'POST'),
+            (b':scheme', b'https'),
+            (b':authority', b'example.test'),
+            (b':path', b'/late-stream'),
+            (b'content-length', b'4'),
+        ]
+        wire = frame(hpack.Encoder().encode(fields), 1, 4)
+        wire += frame(b'body', 0, 1)
+        output, stderr = self.run_worker(
+            {'script': source},
+            [
+                callback('late-stream-worker', 'connection-start'),
+                callback('late-stream-worker', 'connection-content', wire),
+                callback('late-stream-worker', 'connection-stop'),
+            ],
+        )
+
+        self.assertEqual(output[0], {'ready': True, 'script_api': 'mitmproxy'})
+        self.assertTrue(output[1]['ok'], output[1])
+        self.assertTrue(output[2]['ok'], output[2])
+        self.assertEqual(output[2]['logs'], ['late stream True body'])
+        self.assertEqual(base64.b64decode(output[2]['replacement']), wire)
+        self.assertTrue(output[3]['ok'], output[3])
+        self.assertNotIn('Traceback', stderr)
+
     def test_concurrent_lifecycle_hook_keeps_generation_state_in_one_worker(self):
         source = '''#!mitmproxy
 import asyncio
@@ -2439,9 +2587,20 @@ def done():
 
     def test_public_data_options_and_exception_exports_are_packaged(self):
         source = '''#!mitmproxy
-from mitmproxy import addonmanager, connection, dns, exceptions, flow, hooks, http
+from mitmproxy import addonmanager, connection, dns, exceptions, flow, hooks, http, tcp, tls, udp
 from mitmproxy import optmanager, options
 from mitmproxy.net import server_spec
+from mitmproxy.proxy import context
+from mitmproxy.proxy.layers import modes
+from mitmproxy.proxy.layers import quic
+from mitmproxy.proxy.layers import http as http_hooks
+from mitmproxy.proxy.layers import dns as dns_hooks
+from mitmproxy.proxy.layers import tcp as tcp_hooks
+from mitmproxy.proxy.layers import tls as tls_hooks
+from mitmproxy.proxy.layers import udp as udp_hooks
+from mitmproxy.proxy.layers import websocket as websocket_hooks
+from mitmproxy.proxy.layers.http import _hooks as private_http_hooks
+from mitmproxy.proxy import server_hooks
 from mitmproxy.utils import signals, typecheck
 from typing import Sequence
 
@@ -2463,7 +2622,11 @@ signal.connect(receive_signal)
 signal.send("packaged")
 assert signal_events == ["packaged"]
 assert addonmanager.AddonManager is not None
-assert set(hooks.all_hooks) == {"add_log", "configure", "done", "running", "update"}
+assert hooks.all_hooks["request"] is http_hooks.HttpRequestHook
+assert hooks.all_hooks["tls_start_client"] is tls_hooks.TlsStartClientHook
+assert hooks.all_hooks["quic_start_client"] is quic.QuicStartClientHook
+assert hooks.all_hooks["tcp_message"] is tcp_hooks.TcpMessageHook
+assert hooks.all_hooks["socks5_auth"] is modes.Socks5AuthHook
 assert connection.mode_specs.ProxyMode is not None
 assert connection.certs.Cert is not None
 assert connection.human.format_address(("::1", 443)) == "[::1]:443"
@@ -2480,6 +2643,60 @@ assert dns.domain_names.unpack(dns.domain_names.pack("worker.test")) == "worker.
 assert dns.flow is flow
 assert dns.https_records.HTTPSRecord is dns.HTTPSRecord
 assert dns.serializable.Serializable is http.serializable.Serializable
+auth = modes.Socks5AuthData(
+    connection.Client(
+        peername=("192.0.2.10", 41000),
+        sockname=("192.0.2.1", 1080),
+    ),
+    "alice",
+    "secret",
+)
+assert auth.valid is False
+auth.valid = True
+assert modes.Socks5AuthHook(auth).args() == [auth]
+hello_body = bytes.fromhex(
+    "0303000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    "0000041301c02f0100002d00000011000f00000c6578616d706c652e74657374"
+    "0010000e000c02683208687474702f312e31123400020102"
+)
+hello = tls.ClientHello(hello_body)
+assert hello.sni == "example.test"
+assert hello.alpn_protocols == [b"h2", b"http/1.1"]
+tls_context = context.Context(auth.client_conn, options.Options())
+hello_data = tls.ClientHelloData(tls_context, hello)
+hello_data.ignore_connection = True
+assert hello_data.ignore_connection is True
+assert tls.TlsData(auth.client_conn, tls_context).ssl_conn is None
+assert tls_hooks.TlsClienthelloHook(hello_data).args() == [hello_data]
+quic_settings = quic.QuicTlsSettings(alpn_protocols=["h3"])
+quic_data = quic.QuicTlsData(
+    auth.client_conn,
+    tls_context,
+    settings=quic_settings,
+)
+assert isinstance(quic_data, tls.TlsData)
+assert quic_data.settings.alpn_protocols == ["h3"]
+assert quic.QuicStartClientHook(quic_data).blocking is True
+assert quic.QuicStartServerHook(quic_data).args() == [quic_data]
+server_data = server_hooks.ServerConnectionHookData(
+    connection.Server(address=("example.test", 443)),
+    auth.client_conn,
+)
+assert server_hooks.ClientConnectedHook(auth.client_conn).blocking is True
+assert server_hooks.ServerConnectHook(server_data).args() == [server_data]
+assert server_hooks.ServerConnectedHook(server_data).name == "server_connected"
+http_flow = http.HTTPFlow(auth.client_conn, server_data.server, live=True)
+assert http_hooks._hooks is private_http_hooks
+assert http_hooks.HttpRequestHook(http_flow).args() == [http_flow]
+assert http_hooks.HttpResponseHeadersHook(http_flow).name == "responseheaders"
+assert http_hooks.HttpConnectHook(http_flow).blocking is True
+dns_flow = dns.DNSFlow(auth.client_conn, server_data.server, live=True)
+tcp_flow = tcp.TCPFlow(auth.client_conn, server_data.server, live=True)
+udp_flow = udp.UDPFlow(auth.client_conn, server_data.server, live=True)
+assert websocket_hooks.WebsocketStartHook(http_flow).args() == [http_flow]
+assert dns_hooks.DnsResponseHook(dns_flow).name == "dns_response"
+assert tcp_hooks.TcpMessageHook(tcp_flow).args() == [tcp_flow]
+assert udp_hooks.UdpEndHook(udp_flow).blocking is True
 
 def request(flow):
     assert isinstance(flow.request.data, http.RequestData)

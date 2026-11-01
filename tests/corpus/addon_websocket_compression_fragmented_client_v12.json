@@ -1,0 +1,27 @@
+{
+  "client": {
+    "controls": [],
+    "message": {
+      "close": true,
+      "payload": "A+8ndXRmLTgnIGNvZGVjIGNhbid0IGRlY29kZSBieXRlIDB4ZDEgaW4gcG9zaXRpb24gNDogaW52YWxpZCBjb250aW51YXRpb24gYnl0ZQ=="
+    },
+    "response_extension": "permessage-deflate; client_no_context_takeover; server_no_context_takeover",
+    "status": "HTTP/1.1 101 Switching Protocols"
+  },
+  "fragmented_side": "client",
+  "hooks": [],
+  "origin": {
+    "controls": [
+      [
+        "ping",
+        "client-ping"
+      ]
+    ],
+    "message": {
+      "close": true,
+      "payload": "A+8ndXRmLTgnIGNvZGVjIGNhbid0IGRlY29kZSBieXRlIDB4ZDEgaW4gcG9zaXRpb24gNDogaW52YWxpZCBjb250aW51YXRpb24gYnl0ZQ=="
+    },
+    "request_extension": "permessage-deflate; client_no_context_takeover; server_no_context_takeover"
+  },
+  "reference": "mitmproxy 12.3.1"
+}

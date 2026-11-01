@@ -36,11 +36,17 @@ from addon_http_message import Request
 from addon_parts import H2MessageBinding
 from addon_h2_events import H2AddonEvents
 from addon_native import NativeAddonAdapter
+from addon_connect_events import HTTPConnectAddonEvents
 from addon_flow import HTTPFlow
 selection, code = compile_script("#!mitmproxy\\ndef request(flow): pass", "spider")
 request = Request.make("GET", "https://example.org/?x=1&x=2")
 request.query["x"] = "changed"
-print(json.dumps([selection.api, request.path, "mitmproxy" in sys.modules]))
+print(json.dumps([
+    selection.api,
+    request.path,
+    "mitmproxy" in sys.modules,
+    "http_connect" in HTTPConnectAddonEvents.HOOKS,
+]))
 '''
         with tempfile.TemporaryDirectory() as directory:
             arguments = packed_arguments(source, modules)
@@ -50,7 +56,7 @@ print(json.dumps([selection.api, request.path, "mitmproxy" in sys.modules]))
                 timeout=5,
             )
         self.assertEqual(json.loads(result.stdout),
-                         ['mitmproxy', '/?x=changed', False])
+                         ['mitmproxy', '/?x=changed', False, True])
 
     def test_bundled_modules_register_before_dataclass_execution(self):
         module = ('from __future__ import annotations\n'

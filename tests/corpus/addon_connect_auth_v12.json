@@ -1,0 +1,47 @@
+{
+  "hooks": [
+    {
+      "flow": "authorized-1",
+      "hook": "http_connect",
+      "proxy_authorization_present": false,
+      "response_status": 407
+    },
+    {
+      "flow": "authorized-1",
+      "hook": "http_connect_error",
+      "proxy_authorization_present": false,
+      "response_status": 407
+    },
+    {
+      "flow": "authorized-2",
+      "hook": "http_connect",
+      "proxy_authorization_present": true,
+      "response_status": 407
+    },
+    {
+      "flow": "authorized-2",
+      "hook": "http_connect_error",
+      "proxy_authorization_present": true,
+      "response_status": 407
+    },
+    {
+      "flow": "authorized-3",
+      "hook": "http_connect",
+      "proxy_authorization_present": false,
+      "response_status": null
+    },
+    {
+      "flow": "authorized-3",
+      "hook": "http_connected",
+      "proxy_authorization_present": false,
+      "response_status": 200
+    }
+  ],
+  "origin_connections": 1,
+  "reference": "mitmproxy 12.3.1",
+  "statuses": {
+    "correct": "HTTP/1.1 200 Connection established",
+    "incorrect": "HTTP/1.1 407 Proxy Authentication Required",
+    "missing": "HTTP/1.1 407 Proxy Authentication Required"
+  }
+}

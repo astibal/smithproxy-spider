@@ -1,0 +1,454 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "scenarios": {
+    "client-abort": {
+      "client": {
+        "status": "HTTP/1.1 101 Switching Protocols"
+      },
+      "hooks": [
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": "aGVsbG8=",
+          "error": null,
+          "from_client": true,
+          "hook": "websocket_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "close_code": 1006,
+          "close_reason": null,
+          "closed_by_client": true,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_end",
+          "live": true,
+          "message_count": 1
+        }
+      ],
+      "origin": {
+        "after": [
+          "frame",
+          true,
+          8,
+          "A+g="
+        ],
+        "received": [
+          "frame",
+          true,
+          1,
+          "aGVsbG8="
+        ]
+      },
+      "origin_errors": []
+    },
+    "invalid-client-text": {
+      "client": {
+        "first": [
+          "frame",
+          true,
+          8,
+          "A+8ndXRmLTgnIGNvZGVjIGNhbid0IGRlY29kZSBieXRlIDB4ZmYgaW4gcG9zaXRpb24gMDogaW52YWxpZCBzdGFydCBieXRl"
+        ],
+        "status": "HTTP/1.1 101 Switching Protocols"
+      },
+      "hooks": [
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "close_code": 1007,
+          "close_reason": "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+          "closed_by_client": true,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_end",
+          "live": true,
+          "message_count": 0
+        }
+      ],
+      "origin": {
+        "received": [
+          "frame",
+          true,
+          8,
+          "A+8ndXRmLTgnIGNvZGVjIGNhbid0IGRlY29kZSBieXRlIDB4ZmYgaW4gcG9zaXRpb24gMDogaW52YWxpZCBzdGFydCBieXRl"
+        ]
+      },
+      "origin_errors": []
+    },
+    "invalid-server-text": {
+      "client": {
+        "first": [
+          "frame",
+          true,
+          8,
+          "A+8ndXRmLTgnIGNvZGVjIGNhbid0IGRlY29kZSBieXRlIDB4ZmYgaW4gcG9zaXRpb24gMDogaW52YWxpZCBzdGFydCBieXRl"
+        ],
+        "status": "HTTP/1.1 101 Switching Protocols"
+      },
+      "hooks": [
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": "aGVsbG8=",
+          "error": null,
+          "from_client": true,
+          "hook": "websocket_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "close_code": 1007,
+          "close_reason": "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+          "closed_by_client": false,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_end",
+          "live": true,
+          "message_count": 1
+        }
+      ],
+      "origin": {
+        "close_reply": [
+          "frame",
+          true,
+          8,
+          "A+8ndXRmLTgnIGNvZGVjIGNhbid0IGRlY29kZSBieXRlIDB4ZmYgaW4gcG9zaXRpb24gMDogaW52YWxpZCBzdGFydCBieXRl"
+        ],
+        "received": [
+          "frame",
+          true,
+          1,
+          "aGVsbG8="
+        ]
+      },
+      "origin_errors": []
+    },
+    "kill-client-message": {
+      "client": {
+        "first": [
+          "frame",
+          true,
+          1,
+          "ZWNobzpoZWxsbw=="
+        ],
+        "second": [
+          "frame",
+          true,
+          8,
+          "A+hkb25l"
+        ],
+        "status": "HTTP/1.1 101 Switching Protocols"
+      },
+      "hooks": [
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": "aGVsbG8=",
+          "error": "Connection killed.",
+          "from_client": true,
+          "hook": "websocket_message",
+          "live": false,
+          "message_count": 1
+        },
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": "ZWNobzpoZWxsbw==",
+          "error": "Connection killed.",
+          "from_client": false,
+          "hook": "websocket_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "close_code": 1000,
+          "close_reason": "done",
+          "closed_by_client": false,
+          "content": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "websocket_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "close_reply": [
+          "frame",
+          true,
+          8,
+          "A+hkb25l"
+        ],
+        "received": [
+          "frame",
+          true,
+          1,
+          "aGVsbG8="
+        ]
+      },
+      "origin_errors": []
+    },
+    "kill-server-message": {
+      "client": {
+        "first": [
+          "frame",
+          true,
+          1,
+          "ZWNobzpoZWxsbw=="
+        ],
+        "second": [
+          "frame",
+          true,
+          8,
+          "A+hkb25l"
+        ],
+        "status": "HTTP/1.1 101 Switching Protocols"
+      },
+      "hooks": [
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": "aGVsbG8=",
+          "error": null,
+          "from_client": true,
+          "hook": "websocket_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": "ZWNobzpoZWxsbw==",
+          "error": "Connection killed.",
+          "from_client": false,
+          "hook": "websocket_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "close_code": 1000,
+          "close_reason": "done",
+          "closed_by_client": false,
+          "content": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "websocket_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "close_reply": [
+          "frame",
+          true,
+          8,
+          "A+hkb25l"
+        ],
+        "received": [
+          "frame",
+          true,
+          1,
+          "aGVsbG8="
+        ]
+      },
+      "origin_errors": []
+    },
+    "kill-start": {
+      "client": {
+        "first": [
+          "frame",
+          true,
+          1,
+          "ZWNobzpoZWxsbw=="
+        ],
+        "second": [
+          "frame",
+          true,
+          8,
+          "A+hkb25l"
+        ],
+        "status": "HTTP/1.1 101 Switching Protocols"
+      },
+      "hooks": [
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "websocket_start",
+          "live": false,
+          "message_count": 0
+        },
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": "aGVsbG8=",
+          "error": "Connection killed.",
+          "from_client": true,
+          "hook": "websocket_message",
+          "live": false,
+          "message_count": 1
+        },
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": "ZWNobzpoZWxsbw==",
+          "error": "Connection killed.",
+          "from_client": false,
+          "hook": "websocket_message",
+          "live": false,
+          "message_count": 2
+        },
+        {
+          "close_code": 1000,
+          "close_reason": "done",
+          "closed_by_client": false,
+          "content": null,
+          "error": "Connection killed.",
+          "from_client": null,
+          "hook": "websocket_end",
+          "live": false,
+          "message_count": 2
+        }
+      ],
+      "origin": {
+        "close_reply": [
+          "frame",
+          true,
+          8,
+          "A+hkb25l"
+        ],
+        "received": [
+          "frame",
+          true,
+          1,
+          "aGVsbG8="
+        ]
+      },
+      "origin_errors": []
+    },
+    "origin-abort": {
+      "client": {
+        "first": [
+          "frame",
+          true,
+          8,
+          "A+g="
+        ],
+        "status": "HTTP/1.1 101 Switching Protocols"
+      },
+      "hooks": [
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_start",
+          "live": true,
+          "message_count": 0
+        },
+        {
+          "close_code": null,
+          "close_reason": null,
+          "closed_by_client": null,
+          "content": "aGVsbG8=",
+          "error": null,
+          "from_client": true,
+          "hook": "websocket_message",
+          "live": true,
+          "message_count": 1
+        },
+        {
+          "close_code": 1006,
+          "close_reason": null,
+          "closed_by_client": false,
+          "content": null,
+          "error": null,
+          "from_client": null,
+          "hook": "websocket_end",
+          "live": true,
+          "message_count": 1
+        }
+      ],
+      "origin": {
+        "received": [
+          "frame",
+          true,
+          1,
+          "aGVsbG8="
+        ]
+      },
+      "origin_errors": []
+    }
+  }
+}

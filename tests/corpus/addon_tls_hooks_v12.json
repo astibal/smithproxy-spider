@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "TlsClienthelloHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "module": "mitmproxy.proxy.layers.tls", "name": "tls_clienthello"},
+    "TlsEstablishedClientHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "module": "mitmproxy.proxy.layers.tls", "name": "tls_established_client"},
+    "TlsEstablishedServerHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "module": "mitmproxy.proxy.layers.tls", "name": "tls_established_server"},
+    "TlsFailedClientHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "module": "mitmproxy.proxy.layers.tls", "name": "tls_failed_client"},
+    "TlsFailedServerHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "module": "mitmproxy.proxy.layers.tls", "name": "tls_failed_server"},
+    "TlsStartClientHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "module": "mitmproxy.proxy.layers.tls", "name": "tls_start_client"},
+    "TlsStartServerHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "module": "mitmproxy.proxy.layers.tls", "name": "tls_start_server"}
+  },
+  "reference": "mitmproxy 12.3.1"
+}

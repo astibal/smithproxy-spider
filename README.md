@@ -21,7 +21,8 @@ unsupported framing/SETTINGS instead of silently skipping callbacks. The origina
 ### Experimental addon runtime dependencies
 
 The clean-room addon adapter is still incomplete; see the
-[compatibility inventory](docs/ADDON_COMPATIBILITY.md) before deploying scripts.
+[compatibility inventory](docs/ADDON_COMPATIBILITY.md) and its conservative
+[release gates](docs/COMPATIBILITY_RELEASE_GATES.md) before deploying scripts.
 Its optional Python dependencies are declared separately in
 [`deploy/requirements-addon.txt`](deploy/requirements-addon.txt). The test
 requirements include that file and add independent HTTP/2 test peers. Neither

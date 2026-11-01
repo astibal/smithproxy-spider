@@ -1,0 +1,187 @@
+{
+  "examples": [
+    {
+      "evidence": ["tests/addon_concurrent_test.py", "tests/addon_worker_test.py"],
+      "name": "nonblocking.py",
+      "reason": "Async hooks and the concurrent decorator execute in the persistent bounded generation.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_worker_test.py", "tests/addon_runtime_test.py"],
+      "name": "anatomy.py",
+      "reason": "Addon objects, persistent state, and request hooks are covered end to end.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_websocket_test.py", "docs/WEBSOCKET_PRODUCER_PROPOSAL.md"],
+      "name": "websocket-inject-message.py",
+      "reason": "The detached model exists, but injection needs the proposed native producer and a separately authorized host command.",
+      "status": "producer-gated"
+    },
+    {
+      "evidence": ["tests/addon_options_test.py", "tests/addon_worker_test.py"],
+      "name": "options-simple.py",
+      "reason": "Typed custom options are generation-local and available through ctx.options.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_raw_events_test.py", "docs/RAW_TRANSPORT_PROPOSAL.md"],
+      "name": "tcp-simple.py",
+      "reason": "The hook works through the versioned raw envelope; live Smithproxy production is pending.",
+      "status": "producer-gated"
+    },
+    {
+      "evidence": ["tests/addon_options_test.py", "tests/addon_runtime_test.py"],
+      "name": "options-configure.py",
+      "reason": "Configure ordering, updates, rollback, and OptionsError propagation are covered.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_runtime_test.py", "docs/HOST_CONTROL_PROPOSAL.md"],
+      "name": "shutdown.py",
+      "reason": "Stopping a deployment, Spider, or a workspace requires an approved host-control scope.",
+      "status": "host-gated"
+    },
+    {
+      "evidence": ["tests/addon_log_test.py", "tests/addon_worker_test.py"],
+      "name": "log-events.py",
+      "reason": "Standard logging, ALERT, legacy log values, and bounded worker capture are covered.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_http_test.py", "tests/addon_parts_test.py"],
+      "name": "http-modify-query-string.py",
+      "reason": "Query views publish through native message translation.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_worker_test.py", "tests/addon_parts_test.py"],
+      "name": "anatomy2.py",
+      "reason": "Module-level abbreviated hooks execute through the same persistent generation.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_parts_test.py", "tests/addon_message_test.py"],
+      "name": "http-trailers.py",
+      "reason": "H1 and H2 request and response trailer inspection and mutation are covered.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_loader_test.py", "docs/ADDON_COMPATIBILITY.md"],
+      "name": "wsgi-flask-app.py",
+      "reason": "Hosting an application requires a proxy listener and request-routing host service.",
+      "status": "host-gated"
+    },
+    {
+      "evidence": ["tests/corpus/addon_dns_transport_v12.json", "docs/DNS_PRODUCER_PROPOSAL.md"],
+      "name": "dns-simple.py",
+      "reason": "The model and local-response wire corpus exist, but the proposed complete-message producer is still required.",
+      "status": "producer-gated"
+    },
+    {
+      "evidence": ["tests/addon_command_test.py", "tests/addon_worker_test.py"],
+      "name": "commands-flows.py",
+      "reason": "Flow command arguments work with an explicitly registered generation-local resolver.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["docs/STREAMING_API_PROPOSAL.md", "tests/addon_parts_test.py"],
+      "name": "http-stream-modify.py",
+      "reason": "Header-hook transforms need the proposed native callback-local streaming operation.",
+      "status": "native-gated"
+    },
+    {
+      "evidence": ["tests/addon_command_test.py", "tests/addon_worker_test.py"],
+      "name": "commands-paths.py",
+      "reason": "Path command arguments and sandboxed command invocation are covered.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_command_test.py", "tests/addon_worker_test.py"],
+      "name": "commands-simple.py",
+      "reason": "Decorated commands retain state and are callable inside the generation.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_message_test.py", "tests/addon_parts_test.py"],
+      "name": "internet-in-mirror.py",
+      "reason": "Complete body mutation is published through native H1 and H2 translation.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_contentviews_test.py", "tests/addon_worker_test.py"],
+      "name": "contentview.py",
+      "reason": "Current custom views register and render in the persistent generation.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_worker_test.py", "tests/addon_parts_test.py"],
+      "name": "http-add-header.py",
+      "reason": "Stateful response hooks publish header mutations through native translation.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_contentviews_test.py", "tests/addon_worker_test.py"],
+      "name": "contentview-interactive.py",
+      "reason": "Interactive views render and re-encode through the bounded worker boundary.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_io_test.py", "tests/addon_flow_state_test.py"],
+      "name": "io-write-flow-file.py",
+      "reason": "FlowWriter emits byte-compatible tagged-netstring records from detached flows.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_io_test.py", "tests/addon_flow_state_test.py"],
+      "name": "io-read-saved-flows.py",
+      "reason": "FlowReader restores supported saved flow models and failures exactly.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/corpus/addon_websocket_transport_v12.json", "docs/WEBSOCKET_PRODUCER_PROPOSAL.md"],
+      "name": "websocket-simple.py",
+      "reason": "The message model and wire corpus are complete, but the proposed native logical-message producer is still required.",
+      "status": "producer-gated"
+    },
+    {
+      "evidence": ["tests/addon_parts_test.py", "tests/addon_worker_test.py"],
+      "name": "http-reply-from-proxy.py",
+      "reason": "Protocol-owned local responses are covered for H1 and H2 with atomic publication.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_http_test.py", "tests/addon_parts_test.py"],
+      "name": "http-modify-form.py",
+      "reason": "URL-encoded and multipart form views publish complete body and header changes.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["tests/addon_parts_test.py", "docs/DESTINATION_ROUTING_API_PROPOSAL.md"],
+      "name": "http-redirect-requests.py",
+      "reason": "Changing the upstream destination needs an approved native rerouting operation.",
+      "status": "native-gated"
+    },
+    {
+      "evidence": ["tests/addon_command_test.py", "docs/ADDON_COMPATIBILITY.md"],
+      "name": "duplicate-modify-replay.py",
+      "reason": "Live replay and interactive-view duplication are host-owned command services.",
+      "status": "host-gated"
+    },
+    {
+      "evidence": ["tests/addon_flowfilter_test.py", "tests/addon_worker_test.py"],
+      "name": "filter-flows.py",
+      "reason": "Filter parsing, matching, custom options, and live HTTP use are covered.",
+      "status": "supported"
+    },
+    {
+      "evidence": ["docs/STREAMING_API_PROPOSAL.md", "tests/addon_parts_test.py"],
+      "name": "http-stream-simple.py",
+      "reason": "Header-hook stream selection needs the proposed native pass-through boundary.",
+      "status": "native-gated"
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "reviewed": "2026-10-31",
+  "source": "https://docs.mitmproxy.org/stable/addons/examples/"
+}

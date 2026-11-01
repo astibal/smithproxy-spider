@@ -11,7 +11,7 @@ from addon_flow import Error
 from addon_http_message import Request
 from addon_loader import REFERENCE_RELEASE
 from addon_parts import (AddonMessageError, H2MessageBinding, dispatch_local_response,
-                         dispatch_message)
+                         dispatch_message, check_message_decisions, _killed)
 
 
 class H2AddonEvents:
@@ -47,6 +47,11 @@ class H2AddonEvents:
         try:
             failures, keys = await self.prepare(connection_id, side, native_message,
                                                  http2, connection, client_conn, server_conn)
+            resumed_failures, resumed_keys = await self._resume_pending(
+                connection_id, native_message, http2, connection, keys,
+            )
+            failures = tuple(failures) + tuple(resumed_failures)
+            keys = tuple(keys) + tuple(resumed_keys)
             result = native_message.translate()
             terminated = self.published(keys)
             later_failures = await self._finish_terminations(terminated)
@@ -55,6 +60,62 @@ class H2AddonEvents:
             self._failed = True
             self.generation.invalidate()
             raise
+
+    async def _resume_pending(self, connection_id, native_message, http2, connection, prepared):
+        """Publish completed intercepted messages without replaying their hooks.
+
+        Another callback may have changed the retained public flow. Only this
+        connection can publish it; native resume retains directional ownership
+        and performs all encoding, cancellation and window accounting.
+        """
+        # Cancellation observed in this callback wins over a pending resume.
+        # A retained public flow may still exist until publication cleans it up.
+        terminal = {key[2] for key, outcome in prepared
+                    if outcome in ('failed', 'terminated')}
+        streams = []
+        for key, state in self._messages.items():
+            if key[0] != connection_id or not state.suspended or key[2] in terminal:
+                continue
+            flow = self.generation.get_flow(connection_id, key[2])
+            if flow is not None and not flow.intercepted and key[2] not in streams:
+                streams.append(key[2])
+
+        # Resume once per stream: native storage may release both directions.
+        # The returned Parts, not the callback's side, identify each message.
+        failures, published = [], []
+        for stream in streams:
+            flow = self.generation.get_flow(connection_id, stream)
+            parts = native_message.resume(stream)
+            for header in parts:
+                if not self._initial_header(header):
+                    continue
+                binding = H2MessageBinding(
+                    native_message, header, http2, connection=connection, parts=parts,
+                )
+                kind = 'request' if isinstance(binding.message, Request) else 'response'
+                side = 'L' if kind == 'request' else 'R'
+                key = (connection_id, side, stream)
+                state = self._messages[key]
+                # Rebind the edited public object without rerunning its hook.
+                # Transport guards still apply to mutations made while held.
+                binding.message = check_message_decisions(
+                    flow, kind, allow_termination=True, allow_late_stream=True,
+                )
+                outcome = 'normal'
+                if _killed(flow):
+                    native_message.terminate(header, reason=Error.KILLED_MESSAGE, http2_error=2)
+                    state.termination_hook = kind
+                    outcome = 'terminated'
+                elif kind == 'request' and flow.response is not None:
+                    failures.extend(await dispatch_local_response(self.generation, flow, binding))
+                    outcome = 'local'
+                else:
+                    binding.apply()
+                # These are prepared outcomes only. published() retires the
+                # suspension after the complete native translation succeeds.
+                state.message = binding.message
+                published.append((key, outcome))
+        return failures, published
 
     @staticmethod
     def _initial_header(part):
@@ -298,6 +359,7 @@ class H2AddonEvents:
                 self.generation, flow, kind, binding, state,
                 allow_termination=True,
                 after_headers=handle_expect_continue,
+                allow_completed_interception=True,
             )
             self._messages[key] = state
             failures.extend(dispatched)
@@ -313,6 +375,9 @@ class H2AddonEvents:
                     http2_error=2,
                 )
                 prepared.append((index, binding, state, 'terminated'))
+                continue
+            if flow.intercepted and state.complete:
+                prepared.append((index, binding, state, 'suspended'))
                 continue
             if not binding.complete:
                 hold_index = min(hold_index, index)
@@ -342,6 +407,10 @@ class H2AddonEvents:
             if outcome == 'terminated':
                 published.append(((connection_id, side, binding.stream_id), outcome))
             elif index < hold_index:
+                if outcome == 'suspended':
+                    native_message.suspend(binding.header)
+                    state.suspended = True
+                    continue
                 if outcome != 'local':
                     binding.apply()
                 published.append(((connection_id, side, binding.stream_id), outcome))
@@ -365,6 +434,7 @@ class H2AddonEvents:
                 continue
             state = self._messages[key]
             state.published = True
+            state.suspended = False
             if outcome == 'terminated':
                 flow = self.generation.get_flow(connection_id, stream)
                 if flow is not None:

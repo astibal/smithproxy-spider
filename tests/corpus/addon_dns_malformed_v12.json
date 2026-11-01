@@ -1,0 +1,69 @@
+{
+  "hooks": [
+    {
+      "hook": "dns_request",
+      "message_id": 4101,
+      "question": "baseline.invalid"
+    },
+    {
+      "hook": "dns_response",
+      "message_id": 4101,
+      "question": "baseline.invalid"
+    }
+  ],
+  "outcomes": [
+    {
+      "case": "empty",
+      "outcome": "timeout"
+    },
+    {
+      "case": "one-byte",
+      "outcome": "timeout"
+    },
+    {
+      "case": "short-header",
+      "outcome": "timeout"
+    },
+    {
+      "case": "missing-question",
+      "outcome": "timeout"
+    },
+    {
+      "case": "compression-pointer-loop",
+      "outcome": "timeout"
+    },
+    {
+      "case": "trailing-bytes",
+      "outcome": "timeout"
+    },
+    {
+      "case": "baseline",
+      "outcome": "response",
+      "response": {
+        "answer": [
+          "baseline.invalid",
+          1,
+          1,
+          30,
+          "192.0.2.77"
+        ],
+        "counts": [
+          1,
+          1,
+          0,
+          0
+        ],
+        "id": 4101,
+        "query": false,
+        "question": [
+          "baseline.invalid",
+          1,
+          1
+        ],
+        "recursion_available": true,
+        "response_code": 0
+      }
+    }
+  ],
+  "reference": "mitmproxy 12.3.1"
+}

@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "HttpConnectErrorHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.http._hooks", "name": "http_connect_error"},
+    "HttpConnectHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.http._hooks", "name": "http_connect"},
+    "HttpConnectUpstreamHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.http._hooks", "name": "http_connect_upstream"},
+    "HttpConnectedHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.http._hooks", "name": "http_connected"},
+    "HttpErrorHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.http._hooks", "name": "error"},
+    "HttpRequestHeadersHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.http._hooks", "name": "requestheaders"},
+    "HttpRequestHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.http._hooks", "name": "request"},
+    "HttpResponseHeadersHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.http._hooks", "name": "responseheaders"},
+    "HttpResponseHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["flow"], "module": "mitmproxy.proxy.layers.http._hooks", "name": "response"}
+  },
+  "reference": "mitmproxy 12.3.1"
+}

@@ -148,6 +148,54 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_flow_state_test.py)
     add_test(NAME addon_public_surface_tests
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_public_surface_test.py)
+    add_test(NAME addon_official_examples_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_official_examples_test.py)
+    add_test(NAME addon_websocket_events_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_websocket_events_test.py)
+    add_test(NAME addon_websocket_control_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_websocket_control_contract_test.py)
+    add_test(NAME addon_websocket_error_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_websocket_error_contract_test.py)
+    add_test(NAME addon_websocket_concurrent_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_websocket_concurrent_contract_test.py)
+    add_test(NAME addon_websocket_compression_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_websocket_compression_contract_test.py)
+    add_test(NAME addon_dns_events_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_events_test.py)
+    add_test(NAME addon_dns_forward_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_forward_contract_test.py)
+    add_test(NAME addon_dns_error_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_error_contract_test.py)
+    add_test(NAME addon_dns_tcp_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_tcp_contract_test.py)
+    add_test(NAME addon_dns_concurrent_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_concurrent_contract_test.py)
+    add_test(NAME addon_dns_malformed_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_malformed_contract_test.py)
+    add_test(NAME addon_dns_local_error_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_local_error_contract_test.py)
+    add_test(NAME addon_dns_complex_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_complex_contract_test.py)
+    add_test(NAME addon_dns_rdata_compression_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_rdata_compression_contract_test.py)
+    add_test(NAME addon_dns_control_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_dns_control_contract_test.py)
+    add_test(NAME addon_intercept_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_intercept_contract_test.py)
+    add_test(NAME addon_termination_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_termination_contract_test.py)
+    add_test(NAME addon_streaming_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_streaming_contract_test.py)
+    add_test(NAME addon_response_pipeline_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_response_pipeline_contract_test.py)
+    add_test(NAME addon_reroute_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_reroute_contract_test.py)
+    add_test(NAME addon_transport_reference_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_transport_reference_contract_test.py)
+    add_test(NAME addon_corpus_inventory_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_corpus_inventory_test.py)
+    add_test(NAME addon_transport_envelope_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_transport_envelope_test.py)
     add_test(NAME addon_clean_room_tests
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_clean_room_test.py)
     add_test(NAME addon_serializable_tests
@@ -166,6 +214,30 @@ if(BUILD_TESTING)
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_typecheck_test.py)
     add_test(NAME addon_signal_tests
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_signal_test.py)
+    add_test(NAME addon_socks5_auth_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_socks5_auth_test.py)
+    add_test(NAME addon_socks5_events_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_socks5_events_test.py)
+    add_test(NAME addon_connect_transport_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_connect_transport_contract_test.py)
+    add_test(NAME addon_connect_events_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_connect_events_test.py)
+    add_test(NAME addon_raw_control_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_raw_control_contract_test.py)
+    add_test(NAME addon_raw_error_contract_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_raw_error_contract_test.py)
+    add_test(NAME addon_tls_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_tls_test.py)
+    add_test(NAME addon_tls_hooks_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_tls_hooks_test.py)
+    add_test(NAME addon_quic_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_quic_test.py)
+    add_test(NAME addon_server_hooks_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_server_hooks_test.py)
+    add_test(NAME addon_http_hooks_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_http_hooks_test.py)
+    add_test(NAME addon_protocol_hooks_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_protocol_hooks_test.py)
     add_test(NAME addon_version_tests
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_version_test.py)
     add_test(NAME addon_http_header_helpers_tests
@@ -198,6 +270,9 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME addon_parts_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_parts_test.py)
+        add_test(NAME addon_h2_suspend_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_h2_suspend_test.py)
+        set_tests_properties(addon_h2_suspend_tests PROPERTIES TIMEOUT 45)
         add_test(NAME addon_raw_events_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_raw_events_test.py)
         add_test(NAME addon_command_tests
@@ -276,6 +351,12 @@ if(BUILD_TESTING)
         add_test(NAME inspection_translate_hold_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_hold_test.py)
         set_tests_properties(inspection_translate_hold_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_translate_part_buffers_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_part_buffers_test.py)
+        set_tests_properties(inspection_translate_part_buffers_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
+        add_test(NAME inspection_suspend_tests
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_suspend_test.py)
+        set_tests_properties(inspection_suspend_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
         add_test(NAME inspection_translate_settings_tests
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_translate_settings_test.py)
         set_tests_properties(inspection_translate_settings_tests PROPERTIES TIMEOUT 45 LABELS "experimental")
@@ -381,6 +462,8 @@ if(BUILD_TESTING)
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_h2_test.py)
     add_test(NAME inspection_hold_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_hold_test.py)
+    add_test(NAME inspection_part_buffers_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_part_buffers_test.py)
     add_test(NAME inspection_chunked_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_chunked_test.py)
     add_test(NAME inspection_h2_body_tests

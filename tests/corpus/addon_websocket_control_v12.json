@@ -1,0 +1,219 @@
+{
+  "client": {
+    "close": [
+      8,
+      "A+hkb25l"
+    ],
+    "controls": [
+      [
+        "pong",
+        "client-ping"
+      ],
+      [
+        "pong",
+        "between-client"
+      ],
+      [
+        "ping",
+        "server-ping"
+      ],
+      [
+        "ping",
+        "between-server"
+      ]
+    ],
+    "messages": [
+      [
+        1,
+        "Y2xpZW50OnNlcnZlcg=="
+      ],
+      [
+        2,
+        "Ee4="
+      ],
+      [
+        1,
+        "YWZ0ZXItc2VydmVy"
+      ],
+      [
+        1,
+        "ZmlsbGVkLXNlcnZlcg=="
+      ]
+    ],
+    "status": "HTTP/1.1 101 Switching Protocols"
+  },
+  "hooks": [
+    {
+      "after": null,
+      "before": null,
+      "dropped": null,
+      "error": null,
+      "from_client": null,
+      "hook": "websocket_start",
+      "live": true,
+      "message_count": 0,
+      "type": null
+    },
+    {
+      "after": "RlJBR01FTlQ=",
+      "before": "ZnJhZ21lbnQ=",
+      "dropped": false,
+      "error": null,
+      "from_client": true,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 1,
+      "type": 1
+    },
+    {
+      "after": "Af4=",
+      "before": "AP8=",
+      "dropped": false,
+      "error": null,
+      "from_client": true,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 2,
+      "type": 2
+    },
+    {
+      "after": "ZHJvcC1jbGllbnQ=",
+      "before": "ZHJvcC1jbGllbnQ=",
+      "dropped": true,
+      "error": null,
+      "from_client": true,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 3,
+      "type": 1
+    },
+    {
+      "after": "YWZ0ZXItY2xpZW50",
+      "before": "YWZ0ZXItY2xpZW50",
+      "dropped": false,
+      "error": null,
+      "from_client": true,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 4,
+      "type": 1
+    },
+    {
+      "after": "ZmlsbGVkLWNsaWVudA==",
+      "before": "",
+      "dropped": false,
+      "error": null,
+      "from_client": true,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 5,
+      "type": 1
+    },
+    {
+      "after": "Y2xpZW50OnNlcnZlcg==",
+      "before": "c2VydmVy",
+      "dropped": false,
+      "error": null,
+      "from_client": false,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 6,
+      "type": 1
+    },
+    {
+      "after": "Ee4=",
+      "before": "EO8=",
+      "dropped": false,
+      "error": null,
+      "from_client": false,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 7,
+      "type": 2
+    },
+    {
+      "after": "ZHJvcC1zZXJ2ZXI=",
+      "before": "ZHJvcC1zZXJ2ZXI=",
+      "dropped": true,
+      "error": null,
+      "from_client": false,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 8,
+      "type": 1
+    },
+    {
+      "after": "YWZ0ZXItc2VydmVy",
+      "before": "YWZ0ZXItc2VydmVy",
+      "dropped": false,
+      "error": null,
+      "from_client": false,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 9,
+      "type": 1
+    },
+    {
+      "after": "ZmlsbGVkLXNlcnZlcg==",
+      "before": "",
+      "dropped": false,
+      "error": null,
+      "from_client": false,
+      "hook": "websocket_message",
+      "live": true,
+      "message_count": 10,
+      "type": 1
+    },
+    {
+      "after": null,
+      "before": null,
+      "dropped": null,
+      "error": null,
+      "from_client": null,
+      "hook": "websocket_end",
+      "live": true,
+      "message_count": 10,
+      "type": null
+    }
+  ],
+  "origin": {
+    "close": [
+      true,
+      8,
+      "A+hkb25l"
+    ],
+    "controls": [
+      [
+        "ping",
+        "client-ping"
+      ],
+      [
+        "ping",
+        "between-client"
+      ],
+      [
+        "pong",
+        "server-ping"
+      ]
+    ],
+    "messages": [
+      [
+        1,
+        "RlJBR01FTlQ="
+      ],
+      [
+        2,
+        "Af4="
+      ],
+      [
+        1,
+        "YWZ0ZXItY2xpZW50"
+      ],
+      [
+        1,
+        "ZmlsbGVkLWNsaWVudA=="
+      ]
+    ]
+  },
+  "reference": "mitmproxy 12.3.1"
+}

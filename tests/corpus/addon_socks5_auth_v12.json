@@ -1,0 +1,40 @@
+{
+  "after": {
+    "hook_args_identity": true,
+    "hook_data_identity": true,
+    "hook_equal_other": false,
+    "hook_equal_self": true,
+    "valid": true
+  },
+  "before": {
+    "client_identity": true,
+    "equal_different": false,
+    "equal_same": true,
+    "match_args": [
+      "client_conn",
+      "username",
+      "password",
+      "valid"
+    ],
+    "password": "secret",
+    "username": "alice",
+    "valid": false
+  },
+  "reference": "mitmproxy 12.3.1",
+  "surface": {
+    "data_fields": [
+      "client_conn",
+      "username",
+      "password",
+      "valid"
+    ],
+    "data_module": "mitmproxy.proxy.layers.modes",
+    "data_signature": "(client_conn: 'connection.Client', username: 'str', password: 'str', valid: 'bool' = False) -> None",
+    "hook_fields": [
+      "data"
+    ],
+    "hook_module": "mitmproxy.proxy.layers.modes",
+    "hook_name": "socks5_auth",
+    "hook_signature": "(data: 'Socks5AuthData') -> None"
+  }
+}

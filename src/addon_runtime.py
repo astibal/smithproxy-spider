@@ -200,6 +200,27 @@ class AddonGeneration:
         self._flows[key] = flow
         return flow
 
+    def create_dns_flow(self, connection_id, exchange_id,
+                        client_conn, server_conn):
+        """Allocate one producer-classified DNS exchange."""
+
+        if self.state != 'running' or self._busy:
+            raise AddonRuntimeError(
+                'Create flows between callbacks of a running generation')
+        key = self._flow_key(connection_id, exchange_id)
+        if key in self._flows:
+            raise AddonRuntimeError('The exchange already has an addon flow')
+        if len(self._flows) >= self.max_flows:
+            raise AddonRuntimeError('Addon active-flow limit reached')
+
+        # Import lazily because addon_dns builds DNSFlow on Flow from the
+        # runtime's dependency graph.
+        from addon_dns import DNSFlow
+
+        flow = DNSFlow(client_conn, server_conn, live=True)
+        self._flows[key] = flow
+        return flow
+
     def get_flow(self, connection_id, exchange_id):
         return self._flows.get(self._flow_key(connection_id, exchange_id))
 

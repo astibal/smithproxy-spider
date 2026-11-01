@@ -2,15 +2,24 @@
 
 import asyncio
 import json
+import time
+
+
+first_flow_id = None
 
 
 def report(name, flow):
+    global first_flow_id
+    if first_flow_id is None:
+        first_flow_id = flow.id
     print("PROBE " + json.dumps({
         "hook": name,
         "path": flow.request.path,
         "live": flow.live,
         "intercepted": flow.intercepted,
         "error": None if flow.error is None else flow.error.msg,
+        "same_flow": flow.id == first_flow_id,
+        "monotonic_time": time.monotonic(),
     }), flush=True)
 
 
@@ -42,4 +51,3 @@ def response(flow):
 
 def error(flow):
     report("error", flow)
-

@@ -40,9 +40,9 @@ class CleanRoomBoundaryTests(unittest.TestCase):
         ).read_text(encoding="utf-8").splitlines()
         self.assertIn("Brotli>=1.2.1", requirements)
 
-    def test_spider_owned_runtime_never_imports_the_reference_package(self):
+    def test_spider_runtime_never_imports_the_reference_package(self):
         violations = []
-        for path in sorted((ROOT / "src").glob("addon_*.py")):
+        for path in sorted((ROOT / "src").rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
@@ -53,7 +53,21 @@ class CleanRoomBoundaryTests(unittest.TestCase):
                     continue
                 for module_name in imported:
                     if module_name == "mitmproxy" or module_name.startswith("mitmproxy."):
-                        violations.append(f"{path.name}:{node.lineno}: {module_name}")
+                        relative = path.relative_to(ROOT)
+                        violations.append(
+                            f"{relative}:{node.lineno}: {module_name}"
+                        )
+        self.assertEqual(violations, [])
+
+    def test_source_tree_does_not_vendor_the_reference_package(self):
+        violations = []
+        for source_root in ("src", "external", "third_party", "vendor"):
+            root = ROOT / source_root
+            if not root.exists():
+                continue
+            for path in root.rglob("mitmproxy"):
+                if path.is_dir():
+                    violations.append(str(path.relative_to(ROOT)))
         self.assertEqual(violations, [])
 
     def test_worker_manifest_contains_only_spider_owned_modules(self):

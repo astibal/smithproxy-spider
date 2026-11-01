@@ -1,0 +1,72 @@
+{
+  "observations": {
+    "add_warnings": [
+      {
+        "message": "`mitmproxy.contentviews.View` is deprecated since mitmproxy 12, migrate LegacyProbe to `mitmproxy.contentviews.Contentview` instead.",
+        "type": "UserWarning"
+      }
+    ],
+    "default_priority": 0,
+    "get": {
+      "identity": true,
+      "warnings": [
+        {
+          "message": "Use `mitmproxy.contentviews.registry` instead.",
+          "type": "DeprecationWarning"
+        }
+      ]
+    },
+    "metadata": {
+      "content_type": "text/plain",
+      "flow_identity": true,
+      "http_message_identity": true,
+      "keys": [
+        "content_type",
+        "flow",
+        "http_message"
+      ]
+    },
+    "remove": {
+      "result": null,
+      "still_registered": true,
+      "warnings": [
+        {
+          "message": "Use `mitmproxy.contentviews.Contentview` instead.",
+          "type": "DeprecationWarning"
+        }
+      ]
+    },
+    "surface": {
+      "alias_members": [
+        "Message",
+        "TCPMessage",
+        "UDPMessage",
+        "WebSocketMessage",
+        "DNSMessage"
+      ],
+      "alias_name": "ContentviewMessage",
+      "alias_module": "mitmproxy.contentviews._utils",
+      "alias_type": "TypeAliasType",
+      "base_identity": true,
+      "compat_identity": true,
+      "legacy_metaclass": "_ProtocolMeta",
+      "legacy_module": "mitmproxy.contentviews._compat",
+      "utils_identity": true,
+      "view_module": "mitmproxy.contentviews.base"
+    },
+    "view_constructor": {
+      "message": "Can't instantiate abstract class View without an implementation for abstract method '__call__'",
+      "type": "TypeError"
+    },
+    "wrapper": {
+      "contentview_identity": true,
+      "module": "mitmproxy.contentviews._compat",
+      "name": "Spider Legacy Probe",
+      "prettified": "first payload\ntail",
+      "priority": 7,
+      "syntax_highlight": "none",
+      "type": "LegacyContentview"
+    }
+  },
+  "reference": "mitmproxy 12.3.1"
+}

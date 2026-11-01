@@ -274,6 +274,12 @@ class Http2Tests(unittest.TestCase):
                             api.connection = Connection(phase='setup')
                             scope['example'](api, part, part.headers.entries[0], PartType)
                             self.assertTrue(api.connection._rewrite_requested)
+                        elif name == 'Message' and field['name'] in ('suspend', 'resume'):
+                            # These operations need a live Translate checkpoint.
+                            # Their successful examples run against H2 peers and
+                            # fresh workers in inspection_suspend_test.py.
+                            with self.assertRaisesRegex(CommitException, 'requires H2 Translate'):
+                                scope['example'](api, part, part.headers.entries[0], PartType)
                         elif name in ('Connection', 'ConnectionHttp2') or field['name'] == 'connection':
                             # Offline views cannot activate live connection policy.
                             with self.assertRaisesRegex(CommitException, 'flow instantiation'):

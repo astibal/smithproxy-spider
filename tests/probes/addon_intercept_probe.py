@@ -47,6 +47,7 @@ def main():
     origin.settimeout(5)
     origin_port = origin.getsockname()[1]
     origin_result = {"request_seen": False}
+    origin_time = []
     origin_error = []
 
     def serve():
@@ -61,6 +62,7 @@ def main():
                         raise RuntimeError("Origin received an incomplete request")
                     request.extend(chunk)
                 origin_result["request_seen"] = True
+                origin_time.append(time.monotonic())
                 origin_result["request_line"] = bytes(request).split(b"\r\n", 1)[0].decode("latin-1")
                 connection.sendall(
                     b"HTTP/1.1 200 OK\r\n"
@@ -123,6 +125,16 @@ def main():
         for line in output.splitlines()
         if line.startswith("PROBE ")
     ]
+    resumed_at = next(
+        hook["monotonic_time"]
+        for hook in hooks
+        if hook["hook"] == "after-resume"
+    )
+    origin_result["request_after_resume"] = bool(
+        origin_time and origin_time[0] >= resumed_at
+    )
+    for hook in hooks:
+        del hook["monotonic_time"]
     result = {
         "reference": "mitmproxy 12.3.1",
         "origin": origin_result,

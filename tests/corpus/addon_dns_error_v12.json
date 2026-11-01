@@ -1,0 +1,38 @@
+{
+  "client_outcome": "response",
+  "hooks": [
+    {
+      "error": null,
+      "hook": "dns_request",
+      "live": true,
+      "question": "resolver-failure.example.com",
+      "response_code": null,
+      "response_present": false
+    },
+    {
+      "error": null,
+      "hook": "dns_response",
+      "live": true,
+      "question": "resolver-failure.example.com",
+      "response_code": 2,
+      "response_present": true
+    }
+  ],
+  "reference": "mitmproxy 12.3.1",
+  "wire": {
+    "counts": [
+      1,
+      0,
+      0,
+      0
+    ],
+    "id": 13398,
+    "query": false,
+    "question": [
+      "resolver-failure.example.com",
+      1,
+      1
+    ],
+    "response_code": 2
+  }
+}

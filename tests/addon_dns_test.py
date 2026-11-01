@@ -125,6 +125,10 @@ class DNSModelTests(unittest.TestCase):
     def test_domain_name_codec_rejects_ambiguous_or_truncated_names(self):
         self.assertEqual(dns._encode_domain_name(""), b"\0")
         self.assertEqual(dns._encode_domain_name("."), b"\0")
+        self.assertEqual(
+            dns._decode_domain_name(b"\xc0\x02\xc0\x04\x00", 0),
+            ("", 2),
+        )
 
         for name, message in (
             ("a..b", "Invalid DNS label"),
@@ -176,6 +180,7 @@ class DNSModelTests(unittest.TestCase):
         self.assertEqual(dns.types.from_str("A"), dns.types.A)
         self.assertEqual(dns.types.from_str("TYPE(65000)"), 65000)
         self.assertEqual(dns.types.from_str("65000"), 65000)
+        self.assertEqual(dns._Constants({1: "ONE"}).to_str(2), "2")
         with self.assertRaises(ValueError):
             dns.types.from_str("a")
         self.assertEqual(dns.response_codes.http_equiv_status_code(
@@ -250,6 +255,115 @@ class DNSModelTests(unittest.TestCase):
         self.assertEqual(dns.DNSMessage.unpack(value.packed, timestamp=2).get_state()[
             "answers"], value.get_state()["answers"])
 
+    def test_rdata_compression_normalization_matches_reference(self):
+        corpus = json.loads(
+            (ROOT / "tests/corpus/addon_dns_rdata_compression_v12.json").read_text()
+        )["records"]
+        record_types = {
+            "AFSDB": dns.types.AFSDB,
+            "CNAME": dns.types.CNAME,
+            "DNAME": dns.types.DNAME,
+            "HTTPS": dns.types.HTTPS,
+            "KX": dns.types.KX,
+            "MB": dns.types.MB,
+            "MD": dns.types.MD,
+            "MF": dns.types.MF,
+            "MG": dns.types.MG,
+            "MINFO": dns.types.MINFO,
+            "MR": dns.types.MR,
+            "MX": dns.types.MX,
+            "NAPTR": dns.types.NAPTR,
+            "NS": dns.types.NS,
+            "NSEC": dns.types.NSEC,
+            "PTR": dns.types.PTR,
+            "PX": dns.types.PX,
+            "RP": dns.types.RP,
+            "RRSIG": dns.types.RRSIG,
+            "RT": dns.types.RT,
+            "SOA": dns.types.SOA,
+            "SRV": dns.types.SRV,
+            "SVCB": dns.types.SVCB,
+            "TKEY": dns.types.TKEY,
+            "TSIG": dns.types.TSIG,
+        }
+        question = b"\x07example\x03com\x00" + struct.pack("!HH", 1, 1)
+        for name, expected in corpus.items():
+            with self.subTest(record=name):
+                data = bytes.fromhex(expected["input"])
+                answer = (
+                    b"\xc0\x0c"
+                    + struct.pack(
+                        "!HHIH",
+                        record_types[name],
+                        dns.classes.IN,
+                        30,
+                        len(data),
+                    )
+                    + data
+                )
+                packet = (
+                    struct.pack("!HHHHHH", 1, 0x8180, 1, 1, 0, 0)
+                    + question
+                    + answer
+                )
+                record = dns.DNSMessage.unpack(packet).answers[0]
+                self.assertEqual(record.data.hex(), expected["output"])
+
+    def test_name_bearing_rdata_rejects_incomplete_or_trailing_fields(self):
+        question = b"\x07example\x03com\x00" + struct.pack("!HH", 1, 1)
+
+        def message(record_type, data):
+            answer = (
+                b"\xc0\x0c"
+                + struct.pack(
+                    "!HHIH",
+                    record_type,
+                    dns.classes.IN,
+                    30,
+                    len(data),
+                )
+                + data
+            )
+            return (
+                struct.pack("!HHHHHH", 1, 0x8180, 1, 1, 0, 0)
+                + question
+                + answer
+            )
+
+        cases = (
+            (dns.types.NS, b"", "truncated DNS name"),
+            (dns.types.MX, b"\x00", "truncated DNS MX record data"),
+            (
+                dns.types.MINFO,
+                b"\x00\x00x",
+                "trailing bytes after DNS resource names",
+            ),
+            (
+                dns.types.MX,
+                b"\x00\x01\x00x",
+                "trailing bytes after DNS resource name",
+            ),
+            (
+                dns.types.SOA,
+                b"\x00\x00" + b"\x00" * 20 + b"x",
+                "trailing bytes after DNS SOA record",
+            ),
+            (
+                dns.types.PX,
+                b"\x00\x01\x00\x00x",
+                "trailing bytes after DNS PX record",
+            ),
+            (
+                dns.types.NAPTR,
+                b"\x00\x01\x00\x02\x00\x00\x00\x00x",
+                "trailing bytes after DNS NAPTR record",
+            ),
+        )
+        for record_type, data, error in cases:
+            with self.subTest(record_type=record_type, error=error):
+                with self.assertRaisesRegex(struct.error, error):
+                    dns.DNSMessage.unpack(message(record_type, data))
+
     def test_txt_wire_format_preserves_public_raw_text_value(self):
         value = request().succeed([dns.ResourceRecord.TXT("txt.test", "hello")])
         self.assertTrue(value.packed.endswith(b"\x00\x05hello"))
@@ -283,6 +397,22 @@ class DNSModelTests(unittest.TestCase):
             "error": "AttributeError",
             "message": "property 'content' of 'DNSMessage' object has no setter",
         })
+
+    def test_state_restoration_rejects_unknown_fields(self):
+        values = (
+            request().questions[0],
+            records()[0],
+            request(),
+        )
+        for value in values:
+            with self.subTest(value=type(value).__name__):
+                state = value.get_state()
+                state["unexpected"] = True
+                with self.assertRaisesRegex(AssertionError, "Unexpected DNS"):
+                    type(value).from_state(state)
+
+    def test_message_string_uses_the_first_question_when_present(self):
+        self.assertEqual(str(request()), "example.test")
 
     def test_record_factory_ttl_is_keyword_only(self):
         with self.assertRaises(TypeError):

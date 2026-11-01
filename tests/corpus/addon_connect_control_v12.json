@@ -1,0 +1,158 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "scenarios": [
+    {
+      "action": "local-response",
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "origin",
+          "response_status": 418
+        },
+        {
+          "error": null,
+          "hook": "http_connect_error",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "origin",
+          "response_status": 418
+        }
+      ],
+      "origin_contacted": false,
+      "status": "HTTP/1.1 418 I'm a teapot"
+    },
+    {
+      "action": "kill",
+      "hooks": [
+        {
+          "error": "Connection killed.",
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": false,
+          "port": "origin",
+          "response_status": null
+        }
+      ],
+      "origin_contacted": false,
+      "status": "connection-closed"
+    },
+    {
+      "action": "reroute",
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "origin",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connected",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "origin",
+          "response_status": 200
+        }
+      ],
+      "origin_contacted": true,
+      "status": "HTTP/1.1 200 Connection established"
+    },
+    {
+      "action": "mutate-connected",
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "origin",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connected",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "origin",
+          "response_status": 299
+        }
+      ],
+      "origin_contacted": true,
+      "status": "HTTP/1.1 299 Connection established"
+    },
+    {
+      "action": "mutate-error",
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "destination",
+          "response_status": null
+        },
+        {
+          "error": null,
+          "hook": "http_connect_error",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "destination",
+          "response_status": 599
+        }
+      ],
+      "origin_contacted": false,
+      "status": "HTTP/1.1 599 Bad Gateway"
+    },
+    {
+      "action": "kill-connected",
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "origin",
+          "response_status": null
+        },
+        {
+          "error": "Connection killed.",
+          "hook": "http_connected",
+          "host": "127.0.0.1",
+          "live": false,
+          "port": "origin",
+          "response_status": 200
+        }
+      ],
+      "origin_contacted": true,
+      "status": "HTTP/1.1 200 Connection established"
+    },
+    {
+      "action": "kill-error",
+      "hooks": [
+        {
+          "error": null,
+          "hook": "http_connect",
+          "host": "127.0.0.1",
+          "live": true,
+          "port": "destination",
+          "response_status": null
+        },
+        {
+          "error": "Connection killed.",
+          "hook": "http_connect_error",
+          "host": "127.0.0.1",
+          "live": false,
+          "port": "destination",
+          "response_status": 502
+        }
+      ],
+      "origin_contacted": false,
+      "status": "HTTP/1.1 502 Bad Gateway"
+    }
+  ]
+}

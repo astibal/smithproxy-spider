@@ -331,6 +331,133 @@ def _decode_domain_name(message, offset, *, limit=None):
     return ".".join(labels), consumed
 
 
+_SINGLE_NAME_RDATA_TYPES = frozenset((
+    types.NS,
+    types.MD,
+    types.MF,
+    types.CNAME,
+    types.MB,
+    types.MG,
+    types.MR,
+    types.PTR,
+))
+
+_TWO_NAME_RDATA_TYPES = frozenset((
+    types.MINFO,
+    types.RP,
+))
+
+_PREFERENCE_NAME_RDATA_TYPES = frozenset((
+    types.MX,
+    types.AFSDB,
+    types.RT,
+))
+
+
+def _decode_rdata_name(message, offset, limit):
+    name, consumed = _decode_domain_name(message, offset, limit=limit)
+    return _encode_domain_name(name), consumed
+
+
+def _require_rdata_bytes(offset, size, limit, label):
+    end = offset + size
+    if end > limit:
+        raise struct.error("truncated DNS " + label + " record data")
+    return end
+
+
+def _normalize_single_name_rdata(message, offset, limit):
+    name, consumed = _decode_rdata_name(message, offset, limit)
+    if consumed != limit:
+        raise struct.error("trailing bytes after DNS resource name")
+    return name
+
+
+def _normalize_two_name_rdata(message, offset, limit):
+    first, cursor = _decode_rdata_name(message, offset, limit)
+    second, cursor = _decode_rdata_name(message, cursor, limit)
+    if cursor != limit:
+        raise struct.error("trailing bytes after DNS resource names")
+    return first + second
+
+
+def _normalize_prefixed_name_rdata(message, offset, limit, prefix_size, label):
+    cursor = _require_rdata_bytes(offset, prefix_size, limit, label)
+    prefix = message[offset:cursor]
+    name, cursor = _decode_rdata_name(message, cursor, limit)
+    if cursor != limit:
+        raise struct.error("trailing bytes after DNS resource name")
+    return prefix + name
+
+
+def _normalize_soa_rdata(message, offset, limit):
+    primary, cursor = _decode_rdata_name(message, offset, limit)
+    responsible, cursor = _decode_rdata_name(message, cursor, limit)
+    values_end = _require_rdata_bytes(cursor, 20, limit, "SOA")
+    if values_end != limit:
+        raise struct.error("trailing bytes after DNS SOA record")
+    return primary + responsible + message[cursor:values_end]
+
+
+def _normalize_px_rdata(message, offset, limit):
+    cursor = _require_rdata_bytes(offset, 2, limit, "PX")
+    prefix = message[offset:cursor]
+    first, cursor = _decode_rdata_name(message, cursor, limit)
+    second, cursor = _decode_rdata_name(message, cursor, limit)
+    if cursor != limit:
+        raise struct.error("trailing bytes after DNS PX record")
+    return prefix + first + second
+
+
+def _skip_character_string(message, offset, limit):
+    length_end = _require_rdata_bytes(offset, 1, limit, "NAPTR")
+    length = message[offset]
+    return _require_rdata_bytes(length_end, length, limit, "NAPTR")
+
+
+def _normalize_naptr_rdata(message, offset, limit):
+    cursor = _require_rdata_bytes(offset, 4, limit, "NAPTR")
+    for _ in range(3):
+        cursor = _skip_character_string(message, cursor, limit)
+    prefix = message[offset:cursor]
+    replacement, cursor = _decode_rdata_name(message, cursor, limit)
+    if cursor != limit:
+        raise struct.error("trailing bytes after DNS NAPTR record")
+    return prefix + replacement
+
+
+def _normalize_record_data(record_type, message, offset, limit):
+    """Expand compressed names for the RR formats normalized by mitmproxy."""
+
+    if record_type in _SINGLE_NAME_RDATA_TYPES:
+        return _normalize_single_name_rdata(message, offset, limit)
+    if record_type in _TWO_NAME_RDATA_TYPES:
+        return _normalize_two_name_rdata(message, offset, limit)
+    if record_type in _PREFERENCE_NAME_RDATA_TYPES:
+        return _normalize_prefixed_name_rdata(
+            message,
+            offset,
+            limit,
+            2,
+            types.to_str(record_type),
+        )
+    if record_type == types.SOA:
+        return _normalize_soa_rdata(message, offset, limit)
+    if record_type == types.PX:
+        return _normalize_px_rdata(message, offset, limit)
+    if record_type == types.SRV:
+        return _normalize_prefixed_name_rdata(
+            message,
+            offset,
+            limit,
+            6,
+            "SRV",
+        )
+    if record_type == types.NAPTR:
+        return _normalize_naptr_rdata(message, offset, limit)
+    return message[offset:limit]
+
+
 class Question(SerializableDataclass):
     HEADER = struct.Struct("!HH")
 
@@ -809,13 +936,12 @@ class DNSMessage(SerializableDataclass):
                 if data_end > len(content):
                     raise struct.error("truncated DNS resource data")
 
-                if record_type in (types.CNAME, types.PTR):
-                    target, consumed = _decode_domain_name(content, cursor, limit=data_end)
-                    if consumed != data_end:
-                        raise struct.error("trailing bytes after DNS resource name")
-                    data = _encode_domain_name(target)
-                else:
-                    data = content[cursor:data_end]
+                data = _normalize_record_data(
+                    record_type,
+                    content,
+                    cursor,
+                    data_end,
+                )
 
                 cursor = data_end
                 records.append(ResourceRecord(name, record_type, record_class,

@@ -140,5 +140,6 @@
       "status": "error",
       "type": "ValueError"
     }
-  }
+  },
+  "reference": "mitmproxy 12.3.1"
 }

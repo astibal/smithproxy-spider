@@ -11,33 +11,11 @@ import time
 from addon_connection import Client, ConnectionState, Server
 from addon_flow import Error, TCPMessage, UDPMessage
 from addon_runtime import AddonRuntimeError
+from addon_transport_envelope import exact_object, network_address
 
 
 class RawTransportError(AddonRuntimeError):
     """The producer envelope cannot preserve raw transport semantics."""
-
-
-def _address(name, value):
-    if value is None:
-        return None
-    if not isinstance(value, (list, tuple)) or len(value) != 2:
-        raise RawTransportError(name + ' must be null or [host, port]')
-    host, port = value
-    if (not isinstance(host, str) or not host or
-            len(host.encode('utf-8')) > 1024 or
-            any(character in host for character in ('\r', '\n', '\x00'))):
-        raise RawTransportError(name + ' host must be bounded text')
-    if type(port) is not int or not 0 <= port <= 65535:
-        raise RawTransportError(name + ' port must be an integer in 0..65535')
-    return host, port
-
-
-def _object(name, value, expected):
-    if not isinstance(value, dict):
-        raise RawTransportError(name + ' must be an object')
-    if set(value) != set(expected):
-        raise RawTransportError(name + ' has missing or unknown fields')
-    return value
 
 
 @dataclass(frozen=True)
@@ -49,8 +27,8 @@ class RawTransportSetup:
 
     @classmethod
     def parse(cls, value):
-        envelope = _object(
-            'raw_transport', value,
+        envelope = exact_object(
+            RawTransportError, 'raw_transport', value,
             ('version', 'kind', 'delivery', 'client', 'server'),
         )
         if envelope['version'] != 1 or type(envelope['version']) is not int:
@@ -61,16 +39,22 @@ class RawTransportSetup:
         if envelope['delivery'] != 'raw':
             raise RawTransportError('raw_transport.delivery must be raw')
 
-        client_data = _object(
-            'raw_transport.client', envelope['client'], ('peername', 'sockname'))
-        server_data = _object(
-            'raw_transport.server', envelope['server'],
+        client_data = exact_object(
+            RawTransportError, 'raw_transport.client', envelope['client'],
+            ('peername', 'sockname'))
+        server_data = exact_object(
+            RawTransportError, 'raw_transport.server', envelope['server'],
             ('address', 'peername', 'sockname'))
-        client_peer = _address('raw_transport.client.peername', client_data['peername'])
-        client_sock = _address('raw_transport.client.sockname', client_data['sockname'])
-        server_address = _address('raw_transport.server.address', server_data['address'])
-        server_peer = _address('raw_transport.server.peername', server_data['peername'])
-        server_sock = _address('raw_transport.server.sockname', server_data['sockname'])
+        client_peer = network_address(
+            RawTransportError, 'raw_transport.client.peername', client_data['peername'])
+        client_sock = network_address(
+            RawTransportError, 'raw_transport.client.sockname', client_data['sockname'])
+        server_address = network_address(
+            RawTransportError, 'raw_transport.server.address', server_data['address'])
+        server_peer = network_address(
+            RawTransportError, 'raw_transport.server.peername', server_data['peername'])
+        server_sock = network_address(
+            RawTransportError, 'raw_transport.server.sockname', server_data['sockname'])
 
         client = Client(
             peername=client_peer,
@@ -99,8 +83,8 @@ class RawTransportContent:
 
     @classmethod
     def parse(cls, value, setup, side, previous_sequence):
-        envelope = _object(
-            'raw_transport', value,
+        envelope = exact_object(
+            RawTransportError, 'raw_transport', value,
             ('version', 'kind', 'delivery', 'client', 'server',
              'direction', 'sequence', 'unit'),
         )
@@ -136,8 +120,8 @@ class RawTransportTerminal:
 
     @classmethod
     def parse(cls, value, setup):
-        envelope = _object(
-            'raw_transport', value,
+        envelope = exact_object(
+            RawTransportError, 'raw_transport', value,
             ('version', 'kind', 'delivery', 'client', 'server', 'terminal'),
         )
         core = {key: envelope[key] for key in
@@ -145,8 +129,9 @@ class RawTransportTerminal:
         observed = RawTransportSetup.parse(core)
         if observed.fingerprint != setup.fingerprint:
             raise RawTransportError('raw transport identity changed during the connection')
-        terminal = _object(
-            'raw_transport.terminal', envelope['terminal'], ('state', 'message'))
+        terminal = exact_object(
+            RawTransportError, 'raw_transport.terminal', envelope['terminal'],
+            ('state', 'message'))
         state = terminal['state']
         if state not in ('closed', 'error'):
             raise RawTransportError('raw transport terminal state is invalid')
@@ -274,12 +259,12 @@ class RawAddonEvents:
         failures = []
         try:
             terminal = RawTransportTerminal.parse(envelope, setup)
-            flow.live = False
             flow.client_conn.state = ConnectionState.CLOSED
             flow.server_conn.state = ConnectionState.CLOSED
             flow.client_conn.timestamp_end = time.time()
             flow.server_conn.timestamp_end = flow.client_conn.timestamp_end
             if terminal.error is not None:
+                flow.live = False
                 flow.error = Error(terminal.error)
                 failures.extend(await self.generation.dispatch(
                     setup.kind + '_error', flow))
@@ -334,6 +319,6 @@ class RawAddonEvents:
 
     @staticmethod
     def _check_transport_decision(flow):
-        if flow.intercepted or flow.error is not None or not flow.live:
+        if flow.intercepted:
             raise RawTransportError(
-                'Raw flow interception and termination require producer control support')
+                'Raw flow interception requires producer suspension support')

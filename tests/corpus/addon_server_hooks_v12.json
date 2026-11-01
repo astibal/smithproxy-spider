@@ -1,0 +1,17 @@
+{
+  "data": {
+    "client_identity": true,
+    "equal_other": true,
+    "fields": ["server", "client"],
+    "server_identity": true
+  },
+  "hooks": {
+    "ClientConnectedHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["client"], "name": "client_connected"},
+    "ClientDisconnectedHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["client"], "name": "client_disconnected"},
+    "ServerConnectErrorHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "name": "server_connect_error"},
+    "ServerConnectHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "name": "server_connect"},
+    "ServerConnectedHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "name": "server_connected"},
+    "ServerDisconnectedHook": {"argument_identity": true, "blocking": true, "equal_other": false, "fields": ["data"], "name": "server_disconnected"}
+  },
+  "reference": "mitmproxy 12.3.1"
+}

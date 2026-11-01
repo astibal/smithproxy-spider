@@ -1,0 +1,47 @@
+{
+  "client": {
+    "controls": [
+      [
+        "pong",
+        "client-ping"
+      ],
+      [
+        "ping",
+        "origin-ping"
+      ]
+    ],
+    "message": {
+      "close": true,
+      "payload": "A+8ndXRmLTgnIGNvZGVjIGNhbid0IGRlY29kZSBieXRlIDB4ZDEgaW4gcG9zaXRpb24gNDogaW52YWxpZCBjb250aW51YXRpb24gYnl0ZQ=="
+    },
+    "response_extension": "permessage-deflate; client_no_context_takeover; server_no_context_takeover",
+    "status": "HTTP/1.1 101 Switching Protocols"
+  },
+  "fragmented_side": "server",
+  "hooks": [
+    {
+      "after": "Y2xpZW50LW11dGF0ZWQ6Y2xpZW50LWNvbXByZXNzZWQtcGF5bG9hZA==",
+      "before": "Y2xpZW50LWNvbXByZXNzZWQtcGF5bG9hZA==",
+      "from_client": true,
+      "hook": "websocket_message",
+      "message_count": 1
+    }
+  ],
+  "origin": {
+    "close_opcode": 8,
+    "controls": [
+      [
+        "ping",
+        "client-ping"
+      ]
+    ],
+    "message": {
+      "compressed": true,
+      "content": "Y2xpZW50LW11dGF0ZWQ6Y2xpZW50LWNvbXByZXNzZWQtcGF5bG9hZA==",
+      "frame_count": 1,
+      "opcode": 1
+    },
+    "request_extension": "permessage-deflate; client_no_context_takeover; server_no_context_takeover"
+  },
+  "reference": "mitmproxy 12.3.1"
+}

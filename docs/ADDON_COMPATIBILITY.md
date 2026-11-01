@@ -15,6 +15,10 @@ Spider-owned Python and uses native Parts, hold, Rewrite and Translate. It does
 not run a second proxy or depend on mitmproxy at runtime. Reference package
 implementation sources must not be used to implement this adapter.
 
+`COMPATIBILITY_RELEASE_GATES.md` is the concise completion ledger. It separates
+implemented behavior from approval-gated native operations and producer work;
+this longer document records the supporting design and test evidence.
+
 ## Read the status by layer
 
 The public `mitmproxy.http.Message` base type is exported alongside Request and
@@ -253,8 +257,8 @@ integration boundary rather than an operational transport feature.
 | Area | Implemented and tested | Still required |
 | --- | --- | --- |
 | Selection | Explicit UI/backend mode; library versions retain selection; first-line `#!mitmproxy` wins, including BOM/CRLF; effective deployment mode persisted; isolated preview runs a fresh complete addon lifecycle | Preview intentionally does not reuse deployed addon state or expose live transport holds |
-| Imports and registration | Scoped Spider-owned module facade, module hooks, addon objects/trees, signature checks, async dispatch, ctx.master.addons registration, trigger, lifecycle-handler and targeted invocation APIs; clean-room `mitmproxy.log`, `mitmproxy.flowfilter`, `mitmproxy.io`, `mitmproxy.script.concurrent`, generation-local `mitmproxy.contentviews` with registry change notification and public message render/reencode helpers, `mitmproxy.net.encoding`, `mitmproxy.net.server_spec`, `mitmproxy.coretypes.serializable`, `mitmproxy.options`, `mitmproxy.optmanager`, public exception hierarchy, URL/status/cookie helpers, string helpers and public human-formatting helpers; canonical `http`, `flow` and `connection` module aliases | Replay/shutdown services and broader dynamic lifecycle coverage |
-| Lifecycle and state | Load/configure/running/done runtime; awaited `client_connected`/`client_disconnected` around each native connection with one descriptor identity shared by every HTTP flow and raw transport flow; one worker per deployment generation; multiple connections share state; parent-owned per-call CPU budgets; connection-bound native checkpoint lifetime; bounded graceful retirement with history report; failed worker is not silently recreated; exact 128-flow capacity, reuse and mass-retirement regressions | Truthful server-connect lifecycle requires producer events for target selection, upstream connect and upstream disconnect; broader resource-policy and adversarial concurrent-retirement stress tests |
+| Imports and registration | Scoped Spider-owned module facade, module hooks, addon objects/trees, signature checks, async dispatch, ctx.master.addons registration, trigger, lifecycle-handler and targeted invocation APIs; clean-room `mitmproxy.log`, `mitmproxy.flowfilter`, `mitmproxy.io`, `mitmproxy.script.concurrent`, generation-local `mitmproxy.contentviews` with current and legacy-v11 registration, registry change notification and public message render/reencode helpers, `mitmproxy.net.encoding`, `mitmproxy.net.server_spec`, `mitmproxy.coretypes.serializable`, `mitmproxy.options`, `mitmproxy.optmanager`, public exception hierarchy, URL/status/cookie helpers, string helpers and public human-formatting helpers; canonical `http`, `flow` and `connection` module aliases; independently verified public HTTP, WebSocket, DNS, TCP and UDP hook values | Replay/shutdown services and broader dynamic lifecycle coverage |
+| Lifecycle and state | Load/configure/running/done runtime; awaited `client_connected`/`client_disconnected` around each native connection with one descriptor identity shared by every HTTP flow and raw transport flow; independently verified public client/server hook values; one worker per deployment generation; multiple connections share state; parent-owned per-call CPU budgets; connection-bound native checkpoint lifetime; bounded graceful retirement with history report; failed worker is not silently recreated; exact 128-flow capacity, reuse and mass-retirement regressions | Truthful server-connect lifecycle requires producer events for target selection, upstream connect and upstream disconnect; broader resource-policy and adversarial concurrent-retirement stress tests |
 | HTTP headers | Ordered duplicate byte fields, case-insensitive lookup, multi-value operations, inherited mapping operations, atomic replacement, direct field assignment, copy/state, and adversarial differential coverage | Additional coverage only as real addon corpora expose new behavior |
 | HTTP messages | Public Message/Request/Response and MessageData/RequestData/ResponseData types; exact core class attribute inventory; construction, content/text/JSON, gzip/deflate/identity/Brotli/Zstandard, URL/query/form views including multipart, request/response cookies, timestamps, copy/state, request cache/compression helpers | Remaining adversarial view and mutation semantics |
 | Flows | Identity, metadata, copy, error, local intercept/resume/kill state; HTTP/TCP/UDP/DNS state export, data-model restoration and backup/revert; saved WebSocket message restoration; byte-compatible tagged-netstring FlowReader/FlowWriter and filtered/path loading; typed live connection descriptors shared for the connection lifetime, with unknown HTTP endpoint fields left empty | Observed production endpoint/TLS metadata and direct saving of live flows that require complete connection state |
@@ -263,15 +267,23 @@ integration boundary rather than an operational transport feature.
 | Flow filters | Clean-room public parser and matcher for documented HTTP, TCP, UDP, DNS, WebSocket, metadata, connection, replay, body/header and boolean expressions; case-sensitivity switch; adversarial lexer/parser corpus; packaged-worker use | Interactive view-selector resolution remains a host command-service concern |
 | HTTP/2 execution | Native interpreted Parts; headers and complete-message hooks; body/trailer edits; holds; multiplexing and native credit accounting; local `100 Continue`; upstream informational-response suppression; stream-reset and GOAWAY error delivery | Broader edge-case coverage and the remaining control decisions below |
 | HTTP/1 execution | Native typed Parts; sequential and annotated-pipelined request/response pairing; header and complete-message hooks; retained bodies and prefix publication; start-line/header/body/trailer edits; chunked and compressed body preservation; informational-response pass-through; bounded ordered local responses | Mixed opaque pipeline classification, fragmented-head producer annotations and the remaining transport decisions below |
-| Transport control | Request/response object replacement in headers and completed-message hooks through existing native drafts; header-hook body assignments have the reference's provisional callback semantics; protocol-owned H1/H2 local responses with reverse output and atomic checkpoints; HTTP/1 callback-local close and HTTP/2 stream reset for `flow.kill()`; unsupported decisions fail explicitly | Intercept/resume transport effects, destination changes, streaming |
-| Other protocols | TCP/UDP message and flow models; strict bounded Spider-side raw lifecycle adapter over an explicit versioned producer envelope; WebSocket message/data models; DNS constants, questions, records, messages, offset decoding, JSON/state conversion, HTTPS/SVCB helpers, RFC 1035 wire codec and detached flows | Smithproxy raw producer and end-to-end TCP/UDP wire integration; WebSocket, DNS, TLS and QUIC hook capabilities |
+| Transport control | Request/response object replacement in headers and completed-message hooks through existing native drafts; header-hook body assignments have the reference's provisional callback semantics; protocol-owned H1/H2 local responses with reverse output and atomic checkpoints; HTTP/1 callback-local close and HTTP/2 stream reset for `flow.kill()`; a late `.stream` selection in a completed-message hook remains observable but has no retroactive transport effect; unsupported decisions fail explicitly | Intercept/resume transport effects, destination changes, header-hook streaming |
+| Other protocols | TCP/UDP message and flow models; strict bounded Spider-side raw lifecycle adapter over an explicit versioned producer envelope; dormant HTTP CONNECT lifecycle adapter backed by five reference wire corpora; WebSocket message/data models; DNS constants, questions, records, messages, offset decoding, JSON/state conversion, HTTPS/SVCB helpers and RFC 1035 wire codec; TLS/DTLS ClientHello parsing plus detached TLS, QUIC TLS and proxy-context event values; the complete mitmproxy 12 event-name inventory; independently verified `Socks5AuthData`/`Socks5AuthHook` values and fail-closed recognition of `socks5_auth` | Smithproxy raw and HTTP CONNECT producers with end-to-end wire integration; WebSocket, DNS, SOCKS5 authentication, TLS and QUIC hook capabilities |
 
 ### Official example workflow audit
 
-The [mitmproxy 12 addon examples](https://docs.mitmproxy.org/stable/addons/examples/)
-were reviewed again on 2026-10-30. This is a workflow audit, not permission to
+The 30 dedicated [mitmproxy 12 addon examples](https://docs.mitmproxy.org/stable/addons/examples/)
+were reviewed again on 2026-10-31. This is a workflow audit, not permission to
 copy their implementation. Spider's clean-room tests use independently written
-scripts and black-box observations.
+scripts and black-box observations. The checked
+`tests/corpus/addon_official_examples_v12.json` manifest partitions every named
+example into supported, producer-gated, host-gated or native-gated work and
+links each classification to local evidence. A test guards completeness,
+uniqueness and the existence of every cited artifact.
+
+The result is 20 supported workflows, four producer-gated workflows, three
+host-gated workflows and three native-operation-gated workflows. These counts
+are an auditable example inventory, not an API-completion percentage.
 
 The anatomy/counter, standard logging, asynchronous hooks, custom options,
 configure callbacks, query/form/header/body mutation, trailers, custom commands,
@@ -666,6 +678,11 @@ inside a detached HTTP flow and verifies that editing the restored message does
 not modify the source. The independent wsproto dependency supplies only its public
 Opcode enum; no wsproto framing or proxy processing is used. Live WebSocket
 transport hooks remain unimplemented and are still rejected at registration.
+`WEBSOCKET_PRODUCER_PROPOSAL.md` records the required cross-project boundary:
+Smithproxy retains framing, masking, fragmentation, compression and control-frame
+ownership, while Spider receives complete logical messages through synchronous
+pass/replace/drop decisions. Active message injection remains a separate host
+capability. The proposal changes no code and does not enable these hooks.
 
 The tested 12.3.1 reference has two non-obvious backup behaviors: an existing
 snapshot survives `backup(force=True)`, and `modified()` is true immediately
@@ -968,12 +985,27 @@ close without response bytes. For HTTP/2 it emits
 message/stream anchor lets Rewrite/Translate select the protocol effect; the
 adapter does not close arbitrary sockets or manufacture an HTTP error response.
 
-Long-lived `intercept()`/`resume()` needs a different contract. Waiting inside
+Completed H2 `request` and `response` hooks now support callback-driven
+`intercept()`/`resume()` through native logical Parts suspension. The hook
+returns without publishing the message. A later hook can edit the retained
+public flow and resume or kill it; the next callback of the owning connection
+publishes it through the original direction, including reverse output. The
+original completed hook is not repeated. Native body/trailer replacement,
+local-response and termination validation also applies to reverse drafts.
+Tests cover independent H2 peers and the packaged persistent worker.
+
+Header-hook interception, H1/raw transport interception and idle asynchronous
+resume are not covered by that mapping. The following describes the additional
+requirements for idle asynchronous resume, not a prerequisite for the supported
+callback-driven model. A separate host suspension token is not part of the
+current design: native stream identity and the owning connection scope holds.
+
+Unrestricted asynchronous `intercept()`/`resume()` needs a different contract. Waiting inside
 the current worker invocation would consume the three-second callback budget,
 block every connection sharing that deployment worker and make resume dependent
 on another callback arriving. A correct implementation needs:
 
-1. a host-owned suspension token bound to the flow and exact publication point;
+1. host-owned suspended content bound to its connection and logical stream;
 2. atomic return from the addon callback without forwarding the staged message;
 3. a separate resume/kill control path that can wake the suspended transport
    without re-entering or recreating the original hook;
@@ -1093,11 +1125,30 @@ and quota exhaustion without forwarding held bytes.
   a real H2 client and origin connection. Request and response data reaches the
   opposite endpoint, final hooks still receive no buffered `raw_content`, and
   normal HEADERS/DATA/END_STREAM delivery is preserved.
+- `tests/addon_streaming_contract_test.py` registers both HTTP/1 and HTTP/2
+  reference corpora as executable compatibility gates. It fixes hook order,
+  the transition selected in each headers hook, absent buffered content in
+  completed-message hooks, and unchanged end-to-end body delivery.
+- The response-pipeline contract registers the pipelined local-response and
+  HTTP/1 trailer corpora. It preserves local-response hook and wire ordering,
+  response-hook mutation, and the reference's explicit live and chunked-local
+  trailer limitations instead of silently treating those cases as supported.
+- The reroute contract fixes the reference's upstream-selection semantics for
+  destination changes made in either request hook. The original destination
+  is not contacted, the Host header changes with the connection target, and
+  the selected origin response reaches the client. Native production remains
+  approval-gated as described below.
+- The transport reference contract registers the TCP, UDP and TLS corpora. It
+  guards directional message mutation, message-history growth, endpoint wire
+  results, ClientHello observation, and client/server TLS handshake ordering.
 - `tests/probes/addon_intercept_probe.py` records a real suspended request and
   asynchronous resume. `intercept()` keeps the flow live, toggles
   `intercepted`, and blocks forwarding after the request hook returns. A later
   `resume()` clears the flag and continues the same flow through the ordinary
-  response hooks to the client.
+  response hooks to the client. The strengthened corpus records stable flow
+  identity and proves that the origin receives the request only after the
+  background resume; four registered contract tests guard ordering, state and
+  final wire output.
 - `tests/probes/addon_reroute_probe.py` uses two disposable origins to prove
   that changing request `host` and `port` in either request hook selects the
   new upstream, updates the Host header and never contacts the original
@@ -2303,3 +2354,424 @@ After upgrading the isolated model environment from 1.2.0 to 1.2.1, all
 coding, worker sandbox and native publication coverage.
 The final reconfigured CTest inventory passes **81/81** in 161.92 seconds after
 all 12.3.1 patch-level behavior and dependency changes.
+
+Fragmentation and capability-revalidation checkpoint (2026-10-31): an explicit
+Translate regression now divides a nine-byte HTTP/2 frame header at every one
+of its eight internal boundaries in both directions and both safety modes. It
+proves that only the bounded partial-header checkpoint changes before the header
+is complete, that flow-control credit is debited exactly once, and that release
+refunds both stream and connection windows exactly once. HTTP/1 termination now
+also has direct-driver and packaged-worker regressions in which a body is held
+while `connection-close` is available and resumed after the producer omits that
+capability. Both layers revalidate the current callback, reject `flow.kill()`
+atomically, and emit neither message bytes nor a close request. All **537**
+direct `addon_*` tests pass with **1,895** subtests; the 6,502-statement
+production addon set retains **98%** aggregate statement/branch coverage.
+
+Late-stream selection checkpoint (2026-10-31): the official mitmproxy 12
+message contract distinguishes a streaming choice made in `requestheaders` or
+`responseheaders` from one made after buffering in `request` or `response`.
+Spider now preserves the latter assignment on the public message object and
+publishes the already buffered H1 or H2 body unchanged, rather than failing the
+deployment for a transport decision which is already too late to act on.
+Header-hook streaming remains fail-closed until a real incremental publication
+contract exists. Direct H1, H2 and local-response regressions plus the packaged
+worker boundary verify this distinction; no native API or producer behavior was
+changed.
+
+Public-hook inventory checkpoint (2026-10-31): the loader now recognizes every
+event name in the official mitmproxy 12 hook inventory. This closes a silent
+registration gap for `socks5_auth`: a script declaring that hook now fails
+before partial registration because Spider has no SOCKS5 credential observation
+or decision producer. It is not accepted and ignored. A fixed inventory test
+guards all lifecycle, connection, HTTP, DNS, TCP, UDP, QUIC, TLS, WebSocket,
+SOCKS5 and advanced hook names; the existing per-adapter capability matrix still
+requires an explicit implementation before any transport hook can load.
+
+SOCKS5 authentication value checkpoint (2026-10-31): an isolated black-box
+probe against mitmproxy 12.3.1 fixes the constructor signatures, dataclass
+fields, identity, equality, mutability and hook argument contract of
+`Socks5AuthData` and `Socks5AuthHook`. The scoped
+`mitmproxy.proxy.layers.modes` facade reproduces that corpus both directly and
+inside the packaged persistent worker. This is deliberately a data-model
+capability only: the loader continues to reject a `socks5_auth` callback until
+Smithproxy provides a truthful authentication observation and a synchronous
+decision boundary.
+
+TLS value checkpoint (2026-10-31): a separate black-box corpus against
+mitmproxy 12.3.1 fixes TLS and DTLS ClientHello parsing, cipher-suite order,
+SNI, ALPN, extension bytes, TLS record reconstruction, truncation diagnostics,
+proxy-context fork identity and the mutable `ClientHelloData`/`TlsData`
+contracts. A companion corpus fixes all seven public TLS hook values. Spider's
+implementation is a small clean-room bounded wire parser;
+it has no Kaitai, OpenSSL or mitmproxy runtime dependency. The same contract is
+verified inside the packaged worker. TLS hooks remain fail-closed because these
+detached values do not invent a producer observation or handshake decision
+boundary.
+
+QUIC TLS value checkpoint (2026-10-31): the public `QuicTlsSettings`,
+`QuicTlsData`, `QuicStartClientHook` and `QuicStartServerHook` contracts now
+match an isolated mitmproxy 12.3.1 corpus for field order, defaults, independent
+certificate-chain storage, inheritance, endpoint/context identity, hook names,
+arguments and blocking semantics. The types are available in the packaged
+worker without importing aioquic or a mitmproxy runtime. QUIC hooks remain
+fail-closed until a native producer can provide their real handshake boundary.
+
+Connection-hook value checkpoint (2026-10-31): the public
+`ServerConnectionHookData` and six client/server lifecycle hook values match a
+black-box 12.3.1 corpus for field order, endpoint identity, equality, hook names,
+arguments and blocking semantics, directly and in the packaged worker. This
+does not synthesize upstream events: only client connect/disconnect callbacks
+have a truthful producer today, while all four server callbacks remain
+fail-closed pending the ordered Smithproxy observations described above.
+
+HTTP-hook value checkpoint (2026-10-31): all eight public HTTP hook classes in
+`mitmproxy.proxy.layers.http` and its `_hooks` child match an isolated 12.3.1
+black-box corpus for module identity, dataclass fields, flow identity, equality,
+event names, arguments and blocking semantics. The same imports and values are
+verified inside the packaged worker. This closes an import-level facade gap;
+it does not make HTTP CONNECT events operational. Those callbacks remain
+fail-closed until a producer supplies the ordered CONNECT observations and
+decisions listed in the TODO.
+
+Protocol-hook value checkpoint (2026-10-31): the public WebSocket, DNS, TCP and
+UDP hook classes now match a second isolated 12.3.1 corpus for module identity,
+flow identity, fields, equality, event names, arguments and blocking semantics.
+They are available in the packaged worker beside the existing flow models.
+This adds no synthetic traffic events: TCP and UDP still require the versioned
+raw producer envelope, while WebSocket and DNS callbacks remain fail-closed
+until their native producers exist. The reconfigured project inventory passes
+all **78/78** tests after the hook-facade and registry batches.
+
+Hook-registry checkpoint (2026-10-31): the generation-local
+`mitmproxy.hooks.all_hooks` now maps every hook value implemented by the scoped
+facade, including `load`, to the same class exported by its public module. This
+matches the reference's class-identity contract after those modules are loaded;
+Spider builds its safe module set eagerly rather than exposing import-order
+changes to user scripts. `next_layer` is intentionally absent from this value
+registry even though the loader recognizes and rejects that callback: its
+argument is a live host-owned protocol state machine, not a detached event value
+that can be represented truthfully without a native producer.
+
+Legacy content-view checkpoint (2026-10-31): the deprecated line-oriented
+`mitmproxy.contentviews.View` contract is now supported through a generation-local
+`LegacyContentview` wrapper. An isolated 12.3.1 corpus fixes its abstract
+constructor, default priority, warning text, metadata projection, styled-line
+flattening, module identities, legacy `get()` and `remove()` behavior, and the
+five-member `ContentviewMessage` type alias. The historical `remove(original)`
+identity quirk is preserved rather than silently improved. The exact corpus and
+a packaged persistent-worker test pass; the current `contentviews.__all__`
+surface remains unchanged and exact, including the alias's public `_utils`
+module identity. The complete remote verification passes all **556/556** direct
+addon tests and the rebuilt **79/79** CTest inventory. Branch instrumentation
+keeps the 6,915-statement production `addon_*` set at **98%** aggregate coverage;
+the newly added hook-value modules are fully covered and omitted from the
+coverage report's non-perfect-file list.
+
+WebSocket producer-design checkpoint (2026-10-31):
+`WEBSOCKET_PRODUCER_PROPOSAL.md` now separates complete logical-message
+observation/mutation/drop from the later active-injection host capability.
+Smithproxy remains the sole framing, fragmentation, masking, compression and
+control-frame owner. A dormant Spider-side lifecycle adapter validates the
+proposed versioned envelope, preserves append-before-callback history, and
+returns explicit pass/replace/drop decisions; it is packaged but not connected
+to native traffic, and WebSocket hooks therefore remain fail-closed. Its 14-test
+suite reaches **100%** statement and branch coverage. The complete Rhino run
+passes all **570/570** direct addon tests and the rebuilt **80/80** CTest
+inventory. The 7,152-statement production `addon_*` set remains at **98%**
+aggregate branch coverage.
+
+DNS producer-design checkpoint (2026-10-31): `DNS_PRODUCER_PROPOSAL.md` fixes a
+complete-message boundary for UDP and TCP while leaving sockets, upstream
+selection, framing and transport failure in Smithproxy. A dormant Spider-side
+adapter now covers forwarded exchanges, local responses, response mutation,
+explicit termination, `dns_error`, concurrent identities and connection abort.
+It consumes only explicitly classified complete messages through the existing
+clean-room DNS model; registration remains fail-closed without the producer.
+Raw TCP/UDP, WebSocket and DNS envelope validation share one small internal
+validator instead of protocol-specific copies. Both new modules reach **100%**
+statement and branch coverage. The complete Rhino run passes all **587/587**
+direct addon tests and the rebuilt **82/82** CTest inventory. The 7,370-statement
+production `addon_*` set remains at **98%** aggregate branch coverage.
+
+SOCKS5 authentication checkpoint (2026-10-31): a real reference server now
+fixes method negotiation and RFC 1929 results for both override directions.
+`valid` enters the hook as the built-in policy decision and the addon may either
+allow a rejected credential or reject an accepted one. The corpus also proves
+that arbitrary credential bytes use reversible escaped text. A dormant
+Spider-side adapter validates the bounded observation, reuses the truthful
+native `Client`, dispatches one synchronous hook and accepts only a boolean
+result; no credential is retained. It reaches **100%** statement and branch
+coverage, while registration remains fail-closed without a Smithproxy producer.
+The complete Rhino run passes all **592/592** direct addon tests and the rebuilt
+**83/83** CTest inventory. The 7,406-statement production `addon_*` set remains
+at **98%** aggregate branch coverage.
+
+HTTP CONNECT transport checkpoint (2026-10-31): five real mitmproxy 12.3.1
+proxy-mode corpora now fix regular success and target-connection failure, the
+distinct lazy upstream-proxy sequence, and ordinary control decisions. Regular
+mode emits `http_connect` before target selection and then either
+`http_connected` with a 200 response and connected peer or
+`http_connect_error` with a 502 response but no `flow.error`. Upstream mode
+acknowledges the client first and emits
+`http_connect_upstream` only when initial tunneled bytes trigger the upstream
+CONNECT exchange; the server descriptor changes from the requested destination
+to the connected upstream proxy. The control corpus proves that a local response
+prevents target connection but proceeds through `http_connect_error`, kill
+closes silently, destination mutation reroutes the native connection, and
+success/failure status mutations reach the wire. A lightweight contract test
+protects these ordering, identity and control invariants. A dormant Spider-side
+adapter now validates a strict versioned envelope, preserves one flow and the
+same native `Server`, and returns only the proven request, response and late
+upstream-authority decisions. Its 15-test suite reaches **100%** statement and
+branch coverage. No live producer was added, so registration remains
+fail-closed. The fourth corpus fixes built-in proxy-authentication ordering:
+rejected requests still receive
+`http_connect` and `http_connect_error` around a local 407, while accepted
+credentials are removed before `http_connect` and only the accepted request
+reaches the target. The fifth fixes the late upstream hook: its flow is already
+non-live, authority mutation changes the serialized upstream CONNECT, kill
+raises `ControlException`, local response replacement has no transport effect,
+and an upstream 502 closes the tunnel without a new `http_connect_error`.
+The complete Rhino verification passes all **612/612** direct addon tests and
+the rebuilt **85/85** CTest inventory. Branch instrumentation covers the
+7,571-statement production `addon_*` set at **98%** aggregate coverage; the
+new CONNECT adapter itself remains at **100%** statement and branch coverage.
+
+Raw transport control checkpoint (2026-10-31): a new real-proxy corpus records
+eight control scenarios for both TCP and UDP and reproduces exactly against a
+second isolated mitmproxy 12.3.1 run. It proves ordered append-only history,
+multiple stream chunks and datagrams, TCP empty-chunk suppression and real
+zero-length UDP forwarding. It also corrects an inferred incompatibility:
+`flow.kill()`, direct `live` edits and direct `error` edits change only public
+flow state in the reference. Current and later traffic continues, and normal
+`tcp_end`/`udp_end` preserves that state. Spider now matches that behavior
+without inventing a native close command; interception remains fail-closed
+pending producer suspension. The five corpus-contract tests and all **26/26**
+raw adapter tests pass. The
+Smithproxy integration boundary and acceptance gates are recorded in
+`RAW_TRANSPORT_PRODUCER_PROPOSAL.md`; no other project was changed. The complete
+Rhino verification passes all **619/619** direct addon tests and the rebuilt
+**86/86** CTest inventory. Branch instrumentation covers the 7,571-statement
+production `addon_*` set at **98%** aggregate coverage; the raw adapter reaches
+**99%**, with only a defensive post-hook aggregate-quota branch made
+unreachable by the earlier message-history identity guard.
+
+Raw socket-failure checkpoint (2026-10-31): a separate reference corpus fixes
+three failure boundaries and reproduces exactly in a second isolated 12.3.1
+run. Reverse-TCP connection refusal creates no raw flow. An established TCP
+connection reset receives ordinary `tcp_end` with `live=True` and no flow error.
+Two UDP datagrams sent to an unreachable loopback target remain normal
+`udp_message` events followed by `udp_end`; the ICMP condition does not become
+`udp_error`. The proposed producer must therefore classify terminal events
+explicitly rather than mapping socket errors mechanically. Three contract tests
+guard these observations; no production code or other project changed in this
+checkpoint. The complete Rhino verification passes all **622/622** direct addon
+tests and the rebuilt **87/87** CTest inventory; production coverage remains
+**98%** across 7,571 statements.
+
+WebSocket wire-control checkpoint (2026-10-31): a second real HTTP/1 corpus
+now covers the message boundaries that the initial smoke corpus left implicit.
+Fragmented text with interleaved ping frames produces one complete addon
+message in each direction; ping, pong and close frames do not produce message
+callbacks. Bidirectional text, binary and initially empty messages preserve
+their logical type, size-changing replacements reach the peer, and explicit
+drop consumes exactly one message while retaining it in ordered public
+history. A normal close code and reason survive the proxy. The corpus also
+corrects the dormant adapter's clean-end ordering: reference
+`websocket_end` observes `flow.live=True`, so Spider now retires the flow only
+after the callback. The corpus reproduces exactly in two isolated mitmproxy
+12.3.1 runs. Five contract tests and all 15 adapter tests pass; the complete
+Rhino verification passes all **628/628** direct addon tests and the rebuilt
+**88/88** CTest inventory. The 223-statement adapter remains at **100%**
+statement and branch coverage across 76 branches. No native producer or other
+project was changed.
+
+WebSocket destructive-boundary checkpoint (2026-10-31): a third real HTTP/1
+corpus fixes six independent failure/control scenarios and reproduces exactly
+in a second isolated mitmproxy 12.3.1 run. Killing the flow at start or in
+either directional message callback changes only public live/error state;
+messages and the normal close still pass. Abrupt client and origin disconnects
+produce code 1006, no flow error and a truthful `closed_by_client` value.
+Invalid text from either peer is rejected before a callback for that message,
+closes both peers with code 1007, identifies the offending side and retains the
+UTF-8 diagnostic as the close reason. Five contract tests guard these
+boundaries. The complete direct addon inventory now
+passes **632/632**; the newly registered CTest passes and brings the generated
+inventory to 89 tests. The prior complete post-production-change CTest run
+passed **88/88**; only the new contract target was added afterward. No
+production code or other project changed in this checkpoint.
+
+WebSocket shared-state checkpoint (2026-10-31): a fourth real HTTP/1 corpus
+keeps two upgraded flows alive simultaneously and reproduces exactly in a
+second isolated mitmproxy 12.3.1 run. One addon module maintains a shared
+ordinal from one through eight across both flows, while the two independent
+message histories each grow through counts one, two, three and four. Mutations
+derived from the shared state reach only the correct origin and client in
+deterministic order. This fixes the compatibility target as one stable worker
+per script generation, not one worker per flow. Three contract tests protect
+the observation. The direct addon inventory passes **635/635**; the new CTest
+passes and brings the generated inventory to 90 tests. No production code or
+other project changed in this checkpoint.
+
+WebSocket compression checkpoint (2026-10-31): a fifth real HTTP/1 corpus
+negotiates `permessage-deflate` with no context takeover in both directions.
+The addon observes decompressed complete plaintext, applies size-changing
+mutations, and both peers receive valid recompressed messages with RSV1 set;
+ping/pong remains outside message callbacks. Two additional reproducible
+corpora split the same valid compressed stream across a data frame and
+continuation with an interleaved ping. Mitmproxy 12.3.1 closes either direction
+with code 1007 before publishing that fragmented compressed message, while the
+equivalent unfragmented message succeeds. The producer proposal records this
+as an explicit compatibility-policy decision rather than silently requiring
+Smithproxy to copy a reference protocol limitation. The destructive corpus
+also now covers invalid text from the server and confirms the symmetric 1007
+close with `closed_by_client=False`. All five compression and five destructive
+contract tests pass; the complete direct addon inventory passes **641/641**.
+The compression CTest passes and the generated inventory contains 91 tests. No
+production code or other project changed in this checkpoint.
+
+DNS forwarded-UDP checkpoint (2026-10-31): a second real DNS-server-mode
+corpus now proves both mutation directions against a disposable resolver bound
+only to Rhino loopback. The request hook changes the qname before resolution;
+the reference resolver then issues separate A and AAAA queries with EDNS and
+resolver-owned IDs. It restores the original client ID, publishes one response
+on the same public flow, and the response hook's TTL/address mutation reaches
+the UDP client. Random resolver IDs are normalized only to the stable facts
+that they are distinct and differ from the client ID. The corpus reproduces
+exactly in a second isolated 12.3.1 run. Four contract tests pass, followed by
+the complete **647/647** direct addon inventory. The new CTest passes and the
+generated inventory contains 92 tests. No production code or other project
+changed in this checkpoint.
+
+DNS resolver-failure checkpoint (2026-10-31): a third real DNS-server-mode
+corpus points the reference at an unreachable selected resolver and reproduces
+exactly in a second isolated mitmproxy 12.3.1 run. After its resolver retry
+policy, mitmproxy synthesizes SERVFAIL, calls `dns_response` on the still-live
+flow, preserves the client message ID and returns the response. It does not call
+`dns_error` and does not set `flow.error`. Three contract tests protect that
+distinction. The complete Rhino direct inventory passes **650/650**; the new
+CTest passes and brings the generated inventory to 93 tests. No production code
+or other project changed in this checkpoint.
+
+DNS-over-TCP framing checkpoint (2026-10-31): the reference DNS mode is proven
+to listen on TCP as well as UDP. A fourth real corpus splits the first message's
+two-byte length prefix and payload across writes, pipelines a second complete
+message before reading either response, and reproduces exactly in a second
+isolated mitmproxy 12.3.1 run. Each complete message receives its own `DNSFlow`
+and ordered request/response hook pair, both flows share the truthful client
+connection, and the two independently framed responses retain their original
+IDs. Three contract tests protect the boundary. No production code or other
+project changed in this checkpoint.
+
+DNS concurrent-identity checkpoint (2026-10-31): a fifth real corpus sends two
+simultaneous UDP requests from separate clients with the same 16-bit DNS ID.
+The resolver holds both lookups and returns the second lookup first. Repeated
+mitmproxy 12.3.1 runs exhibit both legal completion orders, so the corpus
+canonicalizes only that scheduler-dependent ordering. Each request and response
+still retains its independent flow identity, both responses preserve the shared
+client ID, and qname-specific mutations never cross. Eleven canonical reruns
+reproduce exactly. Four contract tests guard these invariants and make the
+producer-owned opaque exchange identity a tested requirement. No production
+code or other project changed in this checkpoint. A direct adapter test now
+replays the same shape with exchange ID 1 on two connections, completes the
+second response first, proves one shared script ordinal across all four hooks,
+and verifies distinct stable flow identities and uncrossed mutations. The full
+direct addon inventory passes **661/661**.
+
+DNS malformed-input checkpoint (2026-10-31): a sixth real DNS-server-mode
+corpus sends an empty datagram, one byte, an 11-byte header, a declared but
+missing question, a compression-pointer loop, and a syntactically complete
+query followed by trailing bytes. Mitmproxy 12.3.1 silently drops every case
+before addon dispatch and sends no response; a clean baseline immediately
+afterward still runs request/response hooks and succeeds. The exact corpus
+reproduces in a second isolated run. Three contract tests protect strict whole-
+payload consumption and pre-hook rejection. No production code or other project
+changed in this checkpoint.
+
+DNS local-error checkpoint (2026-10-31): a seventh real corpus creates NXDOMAIN
+in `dns_request`, mutates it to REFUSED in `dns_response` on the same flow, and
+delivers the final code with the original client ID and question. A sentinel
+resolver bound to the configured upstream address receives no packet, proving
+that local error responses bypass resolution rather than merely winning a race.
+The corpus reproduces exactly in a second isolated mitmproxy 12.3.1 run. Three
+contract tests and a direct dormant-adapter replay protect the lifecycle, wire
+result and zero-upstream invariant. The complete Rhino verification passes all
+**665/665** direct addon tests and the rebuilt **97/97** CTest inventory. No
+production code or other project changed.
+
+DNS complex-message checkpoint (2026-10-31): an eighth real corpus sends a
+compressed UDP message with two questions, one answer, one authority and one
+additional record. It also sets NOTIFY, AA, TC, RD, RA, every reserved bit and
+response code 7. Both hooks receive the complete logical message; response-hook
+TTL/address mutations reach the client while every other field survives. The
+wire output is fully consumed and deterministically normalizes compressed names
+to ordinary record data. The exact corpus reproduces in a second isolated
+mitmproxy 12.3.1 run. Four contract tests and a direct dormant-adapter replay
+protect flags, sections, compression and mutation. No other project changed.
+
+DNS RDATA-compression checkpoint (2026-10-31): the complex corpus exposed a
+clean-room codec defect: compressed NS target data retained a pointer into the
+original packet. A new black-box public-model corpus probes 25 standard RR
+formats against mitmproxy 12.3.1 and reproduces exactly. The native codec now
+normalizes the reference's exact 17-format set, including single-name,
+two-name, preference, SOA, PX, SRV and NAPTR layouts, while leaving the eight
+reference-opaque formats untouched. Three corpus contracts and a table-driven
+codec test prevent stale compression pointers from surviving repacking. Strict
+malformed-layout tests cover every new guard, and the complete 567-statement,
+158-branch DNS model now has **100%** statement and branch coverage. The full
+Rhino verification passes **677/677** direct addon tests and the rebuilt
+**99/99** CTest inventory.
+
+DNS control checkpoint (2026-10-31): a ninth real DNS-server-mode corpus fixes
+the protocol-specific meaning of `flow.kill()`. Killing in `dns_request`
+without a response produces a local SERVFAIL with the original question, skips
+`dns_response`, and never contacts upstream. Killing after a local response has
+been created still runs `dns_response`; killing in either local or upstream
+response hooks preserves the final response and its mutations on the wire. In
+all cases the public flow becomes non-live with `Connection killed.`. The
+dormant adapter now follows these semantics instead of mapping DNS kill to a
+generic transport termination. Four corpus contracts and three direct adapter
+paths protect the exact hook, state, upstream and wire distinctions. The
+changed 204-statement, 62-branch lifecycle adapter retains **100%** statement
+and branch coverage. The complete Rhino Python discovery and rebuilt
+**100/100** CTest inventory pass.
+
+Clean-room and coverage audit (2026-10-31): the release check against PyPI still
+identifies **12.3.1** as the latest mitmproxy release and therefore confirms the
+documented major-12 target. The build-time clean-room guard now parses every
+Python module under `src`, rejects any import of the reference distribution,
+and rejects a vendored `mitmproxy` package tree under source or conventional
+third-party directories. Runtime and test requirements remain independently
+guarded against installing the reference product. A complete branch-instrumented
+Rhino run covers 7,635 production `addon_*` statements and 2,488 branches at
+**98%** aggregate coverage; 31 modules are fully covered. The remaining lines
+are predominantly fail-closed invariant checks and OS/thread failure paths,
+not evidence for an unimplemented public method. They remain visible rather
+than being hidden with coverage exclusions or artificial production branches.
+
+Termination-corpus registration checkpoint (2026-10-31): nine existing
+black-box corpora for HTTP/1 close, HTTP/2 stream reset, multiplexed sibling
+survival, late request/response DATA and RST_STREAM/GOAWAY ordering are now
+loaded by a registered contract suite. Five tests protect the protocol-specific
+wire outcomes and hook differences directly from the checked reference data,
+instead of relying only on separately encoded native regressions.
+
+Reference-corpus inventory checkpoint (2026-10-31): all 144 checked JSON
+corpora are named by direct `*_test.py` contracts, and every such consumer is
+registered with CTest. A dedicated inventory test now enforces both invariants
+and rejects corpus references from runtime source, so future black-box evidence
+cannot silently become an inert fixture or leak into the clean-room adapter.
+Every corpus also identifies the audited 12.3.1 patch release. The one older
+adversarial connection fixture that lacked that metadata was regenerated in the
+isolated reference environment; all 25 observed cases remained byte-for-byte
+equivalent and only the release marker changed. The final Rhino checkpoint
+passes all 712 direct Python tests and all 107 CTests.
+
+Concurrent-runner saturation checkpoint (2026-10-31): a deterministic stress
+test blocks the runner, shrinks its ordinary wakeup pipe to 4096 bytes, queues
+more callbacks than the pipe can represent, and then releases the owner. Every
+accepted callback runs exactly once and in publication order. This exercises
+the real full-pipe path and proves that the in-memory queue, rather than one
+wakeup byte per operation, owns delivery. The focused direct and CTest runs
+pass without increasing a timeout or adding a retry.
