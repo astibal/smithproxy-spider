@@ -14,9 +14,11 @@ branches in the future before this feature is considered integrated there.
 Do not silently drop this dependency when merging Spider's `mitmproxy-api`.
 No such merge is part of this checkpoint.
 Before that merge, finish the code cleanup and broker executable behavior, and
-redesign authentication activation using authentication profiles. The current
-`--comm-auth` switch also requiring authentication globally is explicitly not
-the intended final design; broker connectivity and policy must be separated.
+consider finer authentication profiles. Broker connectivity is now separate
+from activation: `--comm-auth` sets the socket, while
+`settings.socks.proxy_authorization` and
+`settings.http_connect.proxy_authorization` independently require authentication.
+Both default to false. Per-policy refinement is deferred.
 
 Native scripts also support `init(api, state)` / `main(api, state)` /
 `exit(api, state)` with generation-local Python state and explicit, default-off

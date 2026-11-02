@@ -181,6 +181,13 @@ with tempfile.TemporaryDirectory(prefix='auth-webhook-live-') as directory:
         make_config(FIXTURE, config, root, root, http_port, free_port())
         content = config.read_text().replace('accept_socks = FALSE;', 'accept_socks = TRUE;')
         content = content.replace('socks_workers = 0;', f'socks_workers = 1; socks_port = "{socks_port}";')
+        # Authentication is opted into independently of the broker socket.
+        import re
+        content = re.sub(r'\s*proxy_authorization\s*=\s*(?:TRUE|FALSE);', '', content)
+        content = re.sub(r'\s*http_connect\s*=\s*\{\s*\}', '', content)
+        content = content.replace('socks = {', 'socks = { proxy_authorization = TRUE;')
+        content = content.replace('settings = {',
+                                  'settings = { http_connect = { proxy_authorization = TRUE; };', 1)
         content = content.replace('settings = {', f'settings = {{\n webhook = {{enabled=true; url="{relay_url}/relay";}};', 1)
         config.write_text(content)
         proxy = launch([PROXY, '--config-file', config, '--debug', '--comm-auth', auth_socket], process_env(root))

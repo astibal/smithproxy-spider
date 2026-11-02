@@ -1,14 +1,14 @@
 # Proxy authentication hooks
 
-Pending design correction: the current coupling between `--comm-auth` and
-mandatory authentication on all explicit proxy listeners is not the intended
-configuration model. Before release integration, revisit authentication
-profiles and separate broker connectivity from the policy requiring user
-authentication. The commands below describe the current development behavior.
+Authentication is enabled independently by `settings.socks.proxy_authorization`
+and `settings.http_connect.proxy_authorization`, both defaulting to false.
+`--comm-auth` only selects the AAA broker socket. The per-protocol switches are
+the current configuration boundary; per-policy profiles remain future work.
 
 Smithproxy owns protocol negotiation, AAA verification, target setup and wire
-responses. With `--comm-auth /path/to/auth.sock`, it verifies submitted HTTP
-CONNECT or SOCKS5 credentials through the external AAA/PAM daemon. If its
+responses. When a protocol requires authentication,
+`--comm-auth /path/to/auth.sock` selects the external AAA/PAM daemon that verifies
+its submitted credentials. A missing or unavailable broker denies access. If its
 webhook is enabled, it then sends a transient `proxy-authentication` event to
 Spider. No credentials enter captured traffic or inspection diagnostics.
 
