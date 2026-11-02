@@ -12,13 +12,16 @@ namespace spider {
 class InspectionPool;
 class Inspection {
 public:
+    bool authenticate(const nlohmann::json& event);
     explicit Inspection(std::filesystem::path collection_root = {});
     nlohmann::json configure(const nlohmann::json& request);
     nlohmann::json status() const;
     bool has_enabled_scripts() const {
         std::scoped_lock lock(mutex_);
         if (!chain_mode_) return enabled_;
-        for (const auto& item : chain_) if (item.value("enabled", false)) return true;
+        for (const auto& item : chain_) {
+            if (item.value("enabled", false) && item.value("hook", "content") == "content") return true;
+        }
         return false;
     }
     nlohmann::json run(nlohmann::json request);

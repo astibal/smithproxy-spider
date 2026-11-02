@@ -46,6 +46,40 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
+    if (action == "proxy-authentication") {
+        // This is a transient control exchange, not a captured connection event.
+        // Reject malformed metadata before any script sees credentials.
+        try {
+            const auto& auth = event.at("details").at("authentication");
+            const auto text = [](const nlohmann::json& value, std::size_t maximum) {
+                return value.is_string() && value.get_ref<const std::string&>().size() <= maximum &&
+                       value.get_ref<const std::string&>().find('\0') == std::string::npos;
+            };
+            const bool valid_metadata = text(event.at("id"), 128) && event["id"] != "" &&
+                auth.at("version").is_number_integer() && auth["version"] == 1 &&
+                (auth.at("protocol") == "http-connect" || auth["protocol"] == "socks5") &&
+                (auth.at("status") == "accepted" || auth["status"] == "rejected" || auth["status"] == "unavailable");
+            const bool valid_identity = text(auth.at("username"), 255) &&
+                text(auth.at("password"), 1024) && text(auth.at("identity"), 512) &&
+                auth.at("groups").is_array() && auth["groups"].size() <= 64;
+            const bool valid_peer = text(auth.at("peer").at("host"), 255) &&
+                                    text(auth.at("peer").at("port"), 5);
+            if (!valid_metadata || !valid_identity || !valid_peer) {
+                return {400, {{"error", "Invalid authentication event"}}};
+            }
+
+            for (const auto& group : auth["groups"]) {
+                if (!text(group, 255)) return {400, {{"error", "Invalid authentication group"}}};
+            }
+
+            const bool allowed = inspection && inspection->authenticate(event);
+            return {200, {{"action", action}, {"id", event["id"]}, {"version", 1},
+                          {"decision", allowed ? "accept" : "reject"}}};
+        } catch (const nlohmann::json::exception&) {
+            return {400, {{"error", "Invalid authentication event"}}};
+        }
+    }
+
     constexpr std::array<std::string_view, 9> supported{
         "access-request", "connection-content", "connection-start", "connection-stop",
         "connection-info", "hostname-info", "info", "neighbor", "ping",

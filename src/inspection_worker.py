@@ -332,6 +332,43 @@ class LifecycleApi:
         print(*values, **options)
 
 
+class AuthenticationApi(LifecycleApi):
+    """A pre-target policy callback, with no payload or connection controls."""
+
+    def __init__(self, observation):
+        super().__init__('authentication')
+        from types import SimpleNamespace
+        self.auth = SimpleNamespace(**observation)
+        self.auth.groups = tuple(observation['groups'])
+        self.auth.allowed = observation['status'] == 'accepted'
+
+
+def invoke_authentication(observation, compiled):
+    global authentication_worker
+    authentication_worker = True
+    native_output.text = ''
+    output = Output()
+    namespace = {}
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            api = AuthenticationApi(observation)
+            if native_lifecycle:
+                result = native_namespace['main'](api, native_state)
+            else:
+                exec(compiled, namespace)
+                result = namespace['__spider_script'](api)
+            if result is not None or type(api.auth.allowed) is not bool:
+                raise ValueError('Authentication returns None and sets api.auth.allowed')
+            allowed = observation['status'] == 'accepted' and api.auth.allowed
+        return {'ok': True, 'replacement': None, 'logs': [], 'auth_allowed': allowed}
+    except BaseException:
+        # Tracebacks and prints can contain credentials; never publish them.
+        return {'ok': False, 'replacement': None, 'logs': [], 'auth_allowed': False,
+                'error': 'Authentication callback failed'}
+    finally:
+        namespace.clear()
+
+
 def compile_native(source):
     """Detect module-style hooks without executing administrator code."""
     import ast
@@ -371,6 +408,7 @@ def compile_native(source):
 native_namespace = {}
 native_state = None
 native_initialized = False
+authentication_worker = False
 native_lifecycle = False
 native_output = Output()
 network_enabled = request.get('network_enabled', False)
@@ -396,6 +434,10 @@ def close_native():
         native_namespace.clear()
         sys.modules.pop('_spider_deployment', None)
     response['logs'] = output.text.splitlines()
+    if authentication_worker:
+        response['logs'] = []
+        if not response['ok']:
+            response['error'] = 'Authentication cleanup failed'
     return response
 
 
@@ -753,7 +795,9 @@ def serve_persistent():
             sys.stdout.flush()
             break
         current['storage_directory'] = storage_directory
-        if 'content_view_action' in current:
+        if 'authentication' in current:
+            response = invoke_authentication(current['authentication'], compiled)
+        elif 'content_view_action' in current:
             response = invoke_content_view(current)
         else:
             response = invoke_script(current, compiled)

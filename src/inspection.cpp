@@ -187,6 +187,11 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             const auto filter = request.value("filter", "");
             const auto instancing = request.value("instancing", "message");
             const auto endpoint = request.value("endpoint", "destination");
+            const auto hook = request.value("hook", item == next.end() ? std::string("content") :
+                                             item->value("hook", "content"));
+            if (hook != "content" && hook != "authentication") {
+                throw std::invalid_argument("Unknown deployment hook");
+            }
             for (const auto* field : {"timeout_ms", "error_limit", "max_instances", "idle_seconds"}) {
                 if (request.contains(field) && (!request[field].is_number_integer() ||
                     request[field] < 0 || request[field] > 86400))
@@ -228,6 +233,11 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             if (!validation.value("ok", false)) throw std::invalid_argument(validation.value("error", "Validation failed"));
             if (!id.empty() && item == next.end()) throw std::invalid_argument("Unknown deployment");
             const auto script_api = validation.value("script_api", "spider");
+            if (hook == "authentication" && (script_api != "spider" || instancing != "message" ||
+                                               scope != "all" || !filter.empty())) {
+                throw std::invalid_argument(
+                    "Authentication requires native Spider API, message instancing, all scope and no traffic filter");
+            }
             if (script_api != "mitmproxy" && !addon_options.empty()) {
                 throw std::invalid_argument("Addon options require the mitmproxy script API");
             }
@@ -247,6 +257,7 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             (*item)["script_api_source"] = validation.value("script_api_source", "selection");
             (*item)["addon_options"] = std::move(addon_options);
             (*item)["network_enabled"] = network_enabled;
+            (*item)["hook"] = hook;
             (*item)["timeout_ms"] = timeout; (*item)["error_limit"] = error_limit;
             (*item)["max_instances"] = max_instances; (*item)["idle_seconds"] = idle_seconds;
             (*item)["suspended"] = false; (*item)["suspension_reason"] = "";
@@ -282,7 +293,7 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             } else throw std::invalid_argument("Unknown operation");
         }
         const auto enabled_count = std::count_if(next.begin(), next.end(),
-            [](const auto& entry) { return entry.value("enabled", false); });
+            [](const auto& entry) { return entry.value("enabled", false) && entry.value("hook", "content") == "content"; });
         for (const auto& entry : next) {
             if (!entry.value("enabled", false) || entry.value("script_api", "spider") != "mitmproxy") {
                 continue;
@@ -1065,6 +1076,77 @@ bool Inspection::translation_required(const nlohmann::json& event) const {
     return translations_.contains(event.value("id", "")) || control.value("mode", "regular") == "strict";
 }
 
+bool Inspection::authenticate(const nlohmann::json& event) {
+    // Authentication never enters capture, traffic rules or instance state.
+    // Snapshot the active owners, then release the control-plane lock before
+    // calling scripts. A concurrent redeploy invalidates the old decision.
+    struct Observer {
+        std::string id;
+        std::shared_ptr<Runtime> runtime;
+        int timeout;
+    };
+    std::vector<Observer> observers;
+    std::uint64_t revision;
+    {
+        std::scoped_lock lock(mutex_);
+        revision = revision_;
+        for (const auto& item : chain_) {
+            if (item.value("hook", "content") != "authentication") continue;
+            if (item.value("suspended", false)) return false;
+            if (!item.value("enabled", false)) continue;
+
+            const auto id = item["id"].get<std::string>();
+            const auto found = runtimes_.find(id);
+            if (found == runtimes_.end()) return false;
+            observers.push_back({id, found->second, item.value("timeout_ms", 1000)});
+        }
+    }
+
+    bool accepted = event.at("details").at("authentication").at("status") == "accepted";
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+    for (const auto& observer : observers) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        if (remaining <= 0) return false;
+        if (running_.fetch_add(1) >= 4) {
+            --running_;
+            return false;
+        }
+
+        nlohmann::json result;
+        try {
+            result = observer.runtime->pool->run({{"authentication", event["details"]["authentication"]}},
+                                               std::min<int>(remaining, observer.timeout));
+        } catch (...) {
+            --running_;
+            return false;
+        }
+        --running_;
+
+        // Neither credentials, script output nor traceback source are retained
+        // in inspection history. The transport receives one boolean decision.
+        const bool valid = result.value("ok", false) && result.contains("auth_allowed") &&
+                           result["auth_allowed"].is_boolean();
+        const bool allowed = valid && result["auth_allowed"].get<bool>();
+        nlohmann::json diagnostic = {
+            {"ok", valid}, {"phase", "authentication"}, {"auth_allowed", allowed},
+            {"logs", nlohmann::json::array()}
+        };
+        if (!valid) diagnostic["error"] = "Authentication callback unavailable or failed";
+        record_result({{"script_id", observer.id}, {"event", {{"id", event.at("id")}}}},
+                      std::move(diagnostic));
+        if (!valid) return false;
+        accepted = accepted && allowed;
+
+        std::scoped_lock lock(mutex_);
+        const auto current = runtimes_.find(observer.id);
+        if (current == runtimes_.end() || current->second != observer.runtime ||
+            observer.runtime->retired) return false;
+    }
+    std::scoped_lock lock(mutex_);
+    return accepted && revision_ == revision;
+}
+
 nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann::json& enrichments) {
     const bool setup = event.value("action", "") == "connection-start";
 
@@ -1129,7 +1211,12 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         const bool bypassed = state == "passed" || state == "forgotten" || state == "auto-accepted";
 
         if (!translate_active && bypassed) return nullptr;
-        if (!translate_active) chain = chain_;
+        if (!translate_active) {
+            chain = nlohmann::json::array();
+            for (const auto& item : chain_) {
+                if (item.value("hook", "content") == "content") chain.push_back(item);
+            }
+        }
 
         if (chain_mode_ && chain.empty()) return nullptr;
         if (chain.empty() && !enabled_) return nullptr;

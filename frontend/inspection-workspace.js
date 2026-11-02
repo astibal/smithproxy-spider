@@ -81,6 +81,7 @@
     '<button id="library-save">Save to library</button><button id="library-export">Export script</button>' +
     '<span id="library-version"></span>' +
     '<label>Deploy target <select id="chain-target"><option value="">New disabled item</option></select></label>' +
+    '<label>Hook <select id="chain-hook"><option value="content">Traffic content</option><option value="authentication">Proxy authentication</option></select></label>' +
     '<label>Scope <select id="chain-scope"><option value="rules">INSPECT traffic</option><option value="all">All non-bypassed traffic</option></select></label>' +
     '<label>Session filter <input id="chain-filter" placeholder="Optional: dst port 443"></label>' +
     '<label>Instance <select id="chain-instancing"><option value="message">Per message</option><option value="flow">Per flow · both directions</option><option value="endpoint">Per endpoint</option></select></label>' +
@@ -101,6 +102,15 @@
     byId('chain-max-instances').disabled = byId('chain-idle').disabled = byId('chain-instancing').value === 'message';
   };
   byId('chain-instancing').onchange();
+  byId('chain-hook').onchange = () => {
+    if (byId('chain-hook').value === 'authentication') {
+      byId('chain-scope').value = 'all';
+      byId('chain-filter').value = '';
+      byId('chain-instancing').value = 'message';
+      byId('chain-instancing').onchange();
+    }
+  };
+
 
   function hasAddonDirective(source) {
     const firstLine = source.replace(/^\uFEFF/, '').split('\n', 1)[0].replace(/\r+$/, '');
@@ -227,6 +237,7 @@
       scope: byId('chain-scope').value, filter: byId('chain-filter').value,
       instancing: byId('chain-instancing').value, endpoint: byId('chain-endpoint').value,
       network_enabled: byId('chain-network').checked,
+      hook: byId('chain-hook').value,
       addon_options: addonDraftSelected() ? addonOptionSpecs() : [],
       timeout_ms: Number(byId('chain-timeout').value), error_limit: Number(byId('chain-error-limit').value),
       max_instances: Number(byId('chain-max-instances').value), idle_seconds: Number(byId('chain-idle').value)});
@@ -234,6 +245,7 @@
   byId('chain-target').onchange = () => {
     const target = state?.chain?.find(item => item.id === byId('chain-target').value);
     if (target) { byId('chain-scope').value = target.scope; byId('chain-filter').value = target.filter; }
+    byId('chain-hook').value = target?.hook || 'content';
     byId('chain-network').checked = target?.network_enabled === true;
     byId('chain-instancing').value = target?.instancing || 'message';
     byId('chain-endpoint').value = target?.endpoint || 'destination';
@@ -270,6 +282,7 @@
       row.classList.toggle('chain-suspended', !!item.suspended);
       const stats = document.createElement('small');
       stats.textContent = `${item.enabled ? 'Enabled' : 'Disabled'} · ${item.runs} runs · ${item.errors} errors\n` +
+        `Hook: ${item.hook || 'content'}\n` +
         `API: ${item.script_api || 'spider'}${item.script_api_source === 'shebang' ? ' (shebang)' : ''}\n` +
         `Traffic: ${item.scope} ${item.filter || ''}\nLast run: ${item.last_run_ms ? new Date(item.last_run_ms).toLocaleString() : 'never'}`;
       stats.textContent += `\nNetwork: ${item.network_enabled ? 'enabled' : 'disabled'}`;
