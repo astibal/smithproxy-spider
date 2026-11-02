@@ -2022,6 +2022,23 @@ def done():
         self.assertEqual(addon.active_flows, 0)
         self.assertEqual(adapter.active_connections, 0)
 
+    async def test_transport_setup_cannot_create_an_http_client_lifecycle(self):
+        addon = AddonGeneration('events = []\ndef client_connected(client):\n    events.append(client.id)',
+                                NativeAddonAdapter.HOOKS)
+        await addon.start()
+        adapter = NativeAddonAdapter(addon, max_connections=1)
+        parent = SimpleNamespace(
+            phase='setup', session_id='quic-parent', info={'scope': 'transport'},
+            instance=SimpleNamespace(mode='flow'),
+            connection=ApiConnection(phase='setup', instance_mode='flow'),
+        )
+        with self.assertRaisesRegex(AddonRuntimeError, 'dedicated protocol lifecycle adapter'):
+            adapter.setup(parent, None, None)
+        self.assertEqual(adapter.active_connections, 0)
+        self.assertEqual(addon.addon.module.events, [])
+        self.assertEqual(await adapter.stop('quic-parent'), ())
+        await adapter.close()
+
     async def test_native_adapter_shares_client_lifecycle_across_http_flows(self):
         reference = json.loads(
             (ROOT / 'tests/corpus/addon_connection_lifecycle_v12.json').read_text()

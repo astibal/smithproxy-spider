@@ -2793,3 +2793,32 @@ deployment. `socks5_auth` and `http_connect` can now veto real Smithproxy AAA
 results. No target lifecycle, rerouting or custom wire response is inferred
 from this exchange. See [AUTHENTICATION_HOOKS.md](AUTHENTICATION_HOOKS.md) for
 the contract and required future `new-AAA` merges into `main` and `master`.
+
+### Multiplexed transport setup boundary
+
+A native `connection-start` with `info.scope = "transport"` represents the
+physical QUIC parent, not an HTTP inspection flow. Native scripts may observe
+this setup. Content addons do not allocate an instance or emit client lifecycle
+hooks for it. The worker also rejects direct transport setup through the HTTP
+adapter, including previews.
+
+Logical streams retain their existing independent inspection lifetimes. Their
+setup, content and stop metadata carry `scope = "stream"`, `parent_id` (the
+parent envelope ID), and the downstream wire `stream_id`. A parent stop must
+not retire child inspection instances. Ordinary producers without these fields
+retain their existing behavior. Session display labels remain endpoint labels
+so existing deployment filters continue to work.
+
+This boundary prevents the newly introduced parent from fabricating an extra
+HTTP client lifecycle. It does not implement HTTP/3, QUIC TLS hooks, or a shared
+mitmproxy connection identity across H3 streams; those remain producer/adapter
+integration work. Subscriptions are deferred.
+
+Validation checkpoint (2026-11-02): companion Smithproxy commit
+`92bfb59d18276044fe779932199cfb51bb3ee8e9` passed all 43 standard full P3
+sections and 47 native CTest suites. Spider passed all 119 configured CTests;
+the final setup-only metadata guard was rebuilt and passed the three affected
+host/adapter suites. A real QUIC capture with one parent and ten streams passed
+host/packaged-worker replay, and live HTTP CONNECT/SOCKS5/PAM native and addon
+veto integration passed with the final production binaries. These checks do
+not promote the deferred QUIC/TLS/H3 hook capabilities to supported features.

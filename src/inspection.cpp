@@ -1153,6 +1153,9 @@ bool Inspection::authenticate(const nlohmann::json& event) {
 
 nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann::json& enrichments) {
     const bool setup = event.value("action", "") == "connection-start";
+    const bool transport_setup = setup &&
+        event.value("details", nlohmann::json::object())
+            .value("info", nlohmann::json::object()).value("scope", "") == "transport";
 
     if (event.value("action", "") == "connection-stop") {
         clear_flow(event.value("id", ""));
@@ -1249,6 +1252,11 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             [](const auto& item) { return item.value("enabled", false); }) == 1;
         for (const auto& item : chain) {
             if (!item.value("enabled", false)) continue;
+
+            // A multiplexed transport is not an HTTP inspection flow. Native
+            // scripts may observe its admission, but the HTTP addon adapter
+            // must not fabricate another client lifecycle for the parent.
+            if (transport_setup && item.value("script_api", "spider") == "mitmproxy") continue;
             if (!translate_active && item.value("scope", "rules") == "rules" &&
                 event.value("traffic_rule", nlohmann::json::object()).value("mode", "") != "inspect") continue;
             std::string error;

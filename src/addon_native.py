@@ -89,6 +89,9 @@ class NativeAddonAdapter:
             raise AddonRuntimeError('The addon generation is not running')
         if api.phase != 'setup':
             raise AddonRuntimeError('Register connections only during native setup')
+        if getattr(api, 'info', {}).get('scope') == 'transport':
+            raise AddonRuntimeError(
+                'Transport setup requires a dedicated protocol lifecycle adapter')
         identity = self._identity(api.session_id)
         if identity in self._connections:
             raise AddonRuntimeError('The addon connection is already registered')

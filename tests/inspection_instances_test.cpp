@@ -3,13 +3,14 @@
 #include <cassert>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <thread>
 #include <vector>
 #include <unistd.h>
 using nlohmann::json;
 
-int main() {
+int main(int argc, char** argv) {
     char directory[] = "/tmp/spider-instances-XXXXXX";
     assert(mkdtemp(directory));
     const auto root = std::filesystem::path(directory);
@@ -60,6 +61,42 @@ int main() {
     assert(reserved["ok"] == false && !reserved.value("rewrite_requested", false));
     deploy("flow", "api.connection.request_rewrite()", {{"filter", "dst port 80"}});
     assert(engine.automatic(setup, json::array()).is_null()); // Current destination is 443.
+    {
+        // The QUIC parent is visible to native scripts, but does not allocate
+        // an HTTP addon instance or synthesize a second client_connected hook.
+        auto parent = setup;
+        parent["id"] = "quic-parent";
+        parent["details"]["info"]["scope"] = "transport";
+        parent["details"]["info"]["protocol"] = "quic";
+        parent["details"]["info"]["session"] = "quic_[::1]:1234+quic_[::1]:443";
+        deploy("flow", "assert api.info['scope'] == 'transport'\napi.print('parent')",
+               {{"filter", "dst port 443"}});
+        assert(engine.automatic(parent, json::array())["logs"][0] == "parent");
+        engine.automatic({{"action", "connection-stop"}, {"id", "quic-parent"}}, json::array());
+        assert(engine.status()["chain"][0]["instances"] == 0);
+
+        deploy("flow", "#!mitmproxy\ndef client_connected(client):\n    print('client')\n"
+                       "def client_disconnected(client):\n    print('closed')\n");
+        assert(engine.automatic(parent, json::array()).is_null());
+        assert(engine.status()["chain"][0]["instances"] == 0);
+        for (const auto stream : {0, 4}) {
+            auto child = setup;
+            child["id"] = "quic-stream-" + std::to_string(stream);
+            child["details"]["info"]["scope"] = "stream";
+            child["details"]["info"]["parent_id"] = "quic-parent";
+            child["details"]["info"]["stream_id"] = stream;
+            assert(engine.automatic(child, json::array())["ok"] == true);
+        }
+        assert(engine.status()["chain"][0]["instances"] == 2);
+        engine.automatic({{"action", "connection-stop"}, {"id", "quic-parent"}}, json::array());
+        assert(engine.status()["chain"][0]["instances"] == 2);
+        for (const auto stream : {0, 4}) {
+            engine.automatic({{"action", "connection-stop"},
+                              {"id", "quic-stream-" + std::to_string(stream)}}, json::array());
+        }
+        assert(engine.status()["chain"][0]["instances"] == 0);
+    }
+
     deploy("message", counter);
     assert(run()["logs"][0] == "1" && run()["logs"][0] == "1");
     assert(engine.status()["chain"][0]["instances"] == 0);
@@ -417,6 +454,59 @@ def response(flow):
             engine.automatic(
                 {{"action", "connection-stop"}, {"id", identity}}, json::array());
         }
+    }
+
+    if (argc == 2) {
+        // Optional production capture: replay the real producer envelopes
+        // through the host and packaged workers, not hand-built setup values.
+        std::ifstream input(argv[1]);
+        assert(input.is_open());
+        std::vector<json> observations;
+        std::string line;
+        while (std::getline(input, line)) {
+            auto observation = json::parse(line);
+            const auto scope = observation.value("details", json::object())
+                .value("info", json::object()).value("scope", "");
+            if (scope == "transport" || scope == "stream")
+                observations.push_back(std::move(observation));
+        }
+        assert(!observations.empty());
+        deploy("flow", R"PY(
+if api.phase == 'setup':
+    api.state['scope'] = api.info['scope']
+    api.state['parent'] = api.info.get('parent_id')
+else:
+    assert api.state['scope'] == api.info['scope'] == 'stream'
+    assert api.state['parent'] == api.info['parent_id']
+)PY");
+        for (const auto& observation : observations) {
+            const auto action = observation.at("action");
+            if (action != "connection-start" && action != "connection-content" &&
+                action != "connection-stop") continue;
+            const auto result = engine.automatic(observation, json::array());
+            assert(action == "connection-stop" || result.at("ok") == true);
+        }
+        assert(engine.status()["chain"][0]["instances"] == 0);
+
+        // H3 content adaptation is not implemented. Replay only its inspection
+        // lifecycle to prove the physical parent adds no HTTP client callbacks.
+        deploy("flow", "#!mitmproxy\ndef client_connected(client):\n    print('client')\n");
+        unsigned int streams = 0;
+        for (const auto& observation : observations) {
+            const auto action = observation.at("action");
+            if (action != "connection-start" && action != "connection-stop") continue;
+            const auto result = engine.automatic(observation, json::array());
+            if (action == "connection-stop") continue;
+            if (observation["details"]["info"]["scope"] == "transport") {
+                assert(result.is_null());
+            } else {
+                assert(result.at("ok") == true);
+                ++streams;
+            }
+        }
+        assert(streams >= 4);
+        assert(engine.status()["chain"][0]["instances"] == 0);
+        std::cout << "PASS: captured QUIC parent/stream envelopes through Spider workers\n";
     }
 
     std::filesystem::remove_all(root);
