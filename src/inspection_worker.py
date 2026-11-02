@@ -198,6 +198,9 @@ class AddonWorkerRuntime:
                 self.loop.close()
 
         response['logs'] = shutdown_output.text.splitlines()
+        if authentication_worker:
+            response['logs'] = []
+            shutdown_output.text = ''
         if shutdown_output.text and not report:
             sys.stderr.write(shutdown_output.text)
         return response
@@ -351,6 +354,11 @@ def invoke_authentication(observation, compiled):
     namespace = {}
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            if selected_api == 'mitmproxy':
+                allowed = addon_worker.run(addon_worker.adapter.authenticate(observation))
+                return {'ok': True, 'replacement': None, 'logs': [],
+                        'auth_allowed': observation['status'] == 'accepted' and allowed}
+
             api = AuthenticationApi(observation)
             if native_lifecycle:
                 result = native_namespace['main'](api, native_state)
@@ -650,6 +658,7 @@ try:
         import logging
         from addon_runtime import AddonGeneration
         from addon_native import NativeAddonAdapter
+        from addon_authentication import AuthenticationAddonAdapter
         from addon_h1_events import H1AddonEvents
         from addon_h2_events import H2AddonEvents
         from addon_script import ConcurrentRunner, configure_concurrent_runner
@@ -731,9 +740,13 @@ try:
             contextlib.redirect_stdout(addon_worker.startup_output),
             contextlib.redirect_stderr(addon_worker.startup_output),
         ):
-            generation = AddonGeneration(source, NativeAddonAdapter.HOOKS)
-            addon_worker.adapter = NativeAddonAdapter(
-                generation, opaque_part_factory=RewritePart)
+            if request.get('hook', 'content') == 'authentication':
+                generation = AddonGeneration(source, AuthenticationAddonAdapter.HOOKS)
+                addon_worker.adapter = AuthenticationAddonAdapter(generation)
+            else:
+                generation = AddonGeneration(source, NativeAddonAdapter.HOOKS)
+                addon_worker.adapter = NativeAddonAdapter(
+                    generation, opaque_part_factory=RewritePart)
             option_specs = request.get('addon_options', [])
             if not isinstance(option_specs, list):
                 raise ValueError('Addon options must be a list')

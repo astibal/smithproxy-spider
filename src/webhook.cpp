@@ -68,6 +68,19 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
                 return {400, {{"error", "Invalid authentication event"}}};
             }
 
+            // CONNECT context is optional for older native-only producers.
+            // Addon execution requires it; reject malformed supplied context here.
+            if (auth.contains("http_connect")) {
+                const auto& context = auth["http_connect"];
+                if (auth["protocol"] != "http-connect" ||
+                    !text(context.at("host"), 255) || context["host"] == "" ||
+                    !context.at("port").is_number_integer() ||
+                    context["port"] < 1 || context["port"] > 65535 ||
+                    !text(context.at("request_base64"), 10924)) {
+                    return {400, {{"error", "Invalid CONNECT authentication context"}}};
+                }
+            }
+
             for (const auto& group : auth["groups"]) {
                 if (!text(group, 255)) return {400, {{"error", "Invalid authentication group"}}};
             }

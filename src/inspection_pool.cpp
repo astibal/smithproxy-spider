@@ -69,7 +69,7 @@ public:
     }
     std::string start(const std::string& source, const std::string& storage,
                       const std::string& script_api, const json& addon_options, bool network_enabled,
-                      Clock::time_point deadline) {
+                      const std::string& hook, Clock::time_point deadline) {
         int sockets[2];
         if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) != 0)
             throw std::runtime_error("Cannot create worker channel");
@@ -120,7 +120,7 @@ public:
         fd_ = sockets[0];
         fcntl(fd_, F_SETFL, fcntl(fd_, F_GETFL) | O_NONBLOCK);
         json initialization = {{"script", source}, {"storage_directory", storage},
-                               {"network_enabled", network_enabled}};
+                               {"network_enabled", network_enabled}, {"hook", hook}};
         if (script_api != "spider") {
             initialization["script_api"] = script_api;
         }
@@ -215,7 +215,7 @@ struct InspectionPool::Impl {
     mutable std::mutex mutex;
     std::condition_variable available;
     std::array<Slot, 2> slots;
-    std::string source, storage, script_api;
+    std::string source, storage, script_api, hook;
     json addon_options = json::array();
     Lifetime lifetime{Lifetime::Rotating};
     bool network_enabled{false};
@@ -243,13 +243,14 @@ struct InspectionPool::Impl {
     }
 };
 InspectionPool::InspectionPool(std::string source, std::string storage, Lifetime lifetime,
-                               std::string script_api, json addon_options, bool network_enabled)
+                               std::string script_api, json addon_options, bool network_enabled, std::string hook)
     : impl_(std::make_unique<Impl>()) {
     impl_->source = std::move(source); impl_->storage = std::move(storage);
     impl_->lifetime = lifetime;
     impl_->script_api = std::move(script_api);
     impl_->addon_options = std::move(addon_options);
     impl_->network_enabled = network_enabled;
+    impl_->hook = std::move(hook);
 }
 InspectionPool::~InspectionPool() {
     retire();
@@ -269,7 +270,7 @@ void InspectionPool::warm() {
         auto worker = std::make_unique<Worker>();
         const auto effective_api = worker->start(
             impl_->source, impl_->storage, impl_->script_api,
-            impl_->addon_options, impl_->network_enabled, deadline);
+            impl_->addon_options, impl_->network_enabled, impl_->hook, deadline);
         impl_->script_api = effective_api;
         slot.worker = std::move(worker);
         ++impl_->starts;
@@ -307,7 +308,7 @@ void InspectionPool::warm() {
                 replacement = std::make_unique<Worker>();
                 replacement->start(
                     state->source, state->storage, state->script_api,
-                    state->addon_options, state->network_enabled, Clock::now() + std::chrono::seconds(3));
+                    state->addon_options, state->network_enabled, state->hook, Clock::now() + std::chrono::seconds(3));
                 ++state->starts; ++state->restarts;
             } catch (const std::exception&) { replacement.reset(); }
             lock.lock();

@@ -52,3 +52,4 @@ addon_raw_events.py
 addon_dns_events.py
 addon_websocket_events.py
 addon_native.py
+addon_authentication.py

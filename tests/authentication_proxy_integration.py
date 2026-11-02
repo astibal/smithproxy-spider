@@ -225,6 +225,65 @@ with tempfile.TemporaryDirectory(prefix='auth-webhook-live-') as directory:
             socks(socks_port, target, False)
             target_connection(origin, False)
             deploy('pass')
+            # The same real proxy exchange now crosses the compatibility API.
+            # An assertion failure inside either hook must fail the wire test.
+            def deploy_addon(source):
+                configure({'operation': 'deploy', 'id': identity, 'name': 'Addon auth',
+                           'hook': 'authentication', 'scope': 'all', 'script_api': 'mitmproxy',
+                           'script': '#!mitmproxy\n' + source})
+
+            deploy_addon(f"""
+from mitmproxy import http
+def http_connect(flow):
+    assert flow.request.method == 'CONNECT'
+    assert flow.request.host == '127.0.0.1' and flow.request.port == {target}
+    assert flow.server_conn.address == ('127.0.0.1', {target})
+    assert flow.client_conn.peername[0] == '127.0.0.1'
+    if flow.metadata['smithproxy_auth']['status'] == 'accepted':
+        assert flow.response is None
+        assert 'proxy-authorization' not in flow.request.headers
+        assert flow.metadata['proxyauth'][0] == {USER!r}
+    else:
+        assert flow.response.status_code == 407
+        assert 'proxy-authorization' in flow.request.headers
+        flow.response = None
+def socks5_auth(data):
+    assert data.username == {USER!r}
+    assert data.client_conn.peername[0] == '127.0.0.1'
+    data.valid = True
+""")
+            http(http_port, target, 200)
+            target_connection(origin, True)
+            socks(socks_port, target, True)
+            target_connection(origin, True)
+            http(http_port, target, 407, 'wrong')
+            socks(socks_port, target, False, 'wrong')
+            target_connection(origin, False)
+
+            deploy_addon("""
+from mitmproxy import http
+def http_connect(flow):
+    flow.response = http.Response.make(403, b'policy veto')
+def socks5_auth(data):
+    data.valid = False
+""")
+            # The addon veto maps to the native protocol failure, not its body.
+            http(http_port, target, 407)
+            socks(socks_port, target, False)
+            target_connection(origin, False)
+
+            deploy_addon("""
+def http_connect(flow):
+    print(flow.metadata['proxyauth'][1])
+    raise ValueError(flow.metadata['proxyauth'][1])
+def socks5_auth(data):
+    print(data.password)
+    raise ValueError(data.password)
+""")
+            http(http_port, target, 407)
+            socks(socks_port, target, False)
+            target_connection(origin, False)
+            deploy_addon('def http_connect(flow): pass\ndef socks5_auth(data): pass')
             relay_mode = 'wrong-id'
             http(http_port, target, 503)
             socks(socks_port, target, False)
@@ -263,7 +322,7 @@ with tempfile.TemporaryDirectory(prefix='auth-webhook-live-') as directory:
             assert PASSWORD not in log.read()
         for log in root.glob('messages.*.log'):
             assert PASSWORD not in log.read_text(errors='replace')
-        print('PASS: real PAM/HTTP CONNECT/SOCKS5/Spider veto, rejected AAA, bad reply identity and unavailable hook')
+        print('PASS: real PAM/HTTP CONNECT/SOCKS5/native and addon veto, rejected AAA, bad reply identity and unavailable hook')
     except BaseException:
         print('Authentication observations:', observations, file=sys.stderr)
         for log in logs:

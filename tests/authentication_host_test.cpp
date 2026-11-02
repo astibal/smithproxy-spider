@@ -77,6 +77,26 @@ int main() {
         // A deliberate disable releases the policy; worker loss alone does not.
         configure({{"operation", "enable"}, {"id", id}, {"enabled", false}});
         assert(call().body["decision"] == "accept");
+
+        // Authentication addons use their own generation and do not require
+        // the content Translate owner's flow-instancing contract.
+        deploy("#!mitmproxy\ncalls = 0\ndef socks5_auth(data):\n"
+               "    global calls\n    calls += 1\n    data.valid = calls == 1\n", id);
+        configure({{"operation", "enable"}, {"id", id}, {"enabled", true}});
+        event["details"]["authentication"]["protocol"] = "socks5";
+        assert(call().body["decision"] == "accept");
+        assert(call().body["decision"] == "reject");
+        assert(!engine.has_enabled_scripts());
+
+        // An independent content addon can coexist with the auth policy.
+        const auto content = configure({{"operation", "deploy"}, {"name", "Content"},
+            {"script", "#!mitmproxy\ndef request(flow): pass"},
+            {"scope", "all"}, {"instancing", "flow"}, {"hook", "content"}});
+        const auto content_id = content["chain"].back()["id"];
+        configure({{"operation", "enable"}, {"id", content_id}, {"enabled", true}});
+        assert(engine.has_enabled_scripts());
+        assert(call().body["decision"] == "reject");
+        assert(store.revision() == revision);
     }
     std::filesystem::remove_all(root);
     std::cout << "authentication host boundary passed\n";

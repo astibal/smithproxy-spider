@@ -526,6 +526,9 @@ if(BUILD_TESTING)
     target_compile_options(authentication_host_tests PRIVATE -UNDEBUG)
     add_test(NAME authentication_host_tests COMMAND authentication_host_tests)
     set_tests_properties(authentication_host_tests PROPERTIES TIMEOUT 30)
+    add_test(NAME addon_authentication_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_authentication_test.py)
+    set_tests_properties(addon_authentication_tests PROPERTIES TIMEOUT 45)
     add_test(NAME authentication_worker_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/authentication_worker_test.py)
     set_tests_properties(authentication_worker_tests PROPERTIES TIMEOUT 30)

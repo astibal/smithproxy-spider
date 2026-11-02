@@ -52,7 +52,7 @@ discussion and approval.
 - HTTP CONNECT lifecycle;
 - WebSocket logical messages;
 - DNS complete messages over UDP and TCP;
-- SOCKS5 authentication decisions; and
+- unrestricted SOCKS5 authentication overrides (the implemented policy only permits AAA-result vetoes); and
 - TLS and QUIC lifecycle observations.
 
 The detailed contracts and acceptance gates are in the producer proposal files
@@ -74,6 +74,17 @@ Before merge into `fc-api`:
 
 Spider now has a host-owned `/v1/pap` Unix client and `--auth-check` diagnostic,
 with transport and optional real-PAM tests against Smithproxy `new-AAA`.
-See `AUTH_BROKER.md`. This does not close the SOCKS5/CONNECT producer gates:
-addon callback decisions are not yet delivered to waiting proxy connections,
-and worker socket permissions are unchanged.
+See `AUTH_BROKER.md`. That diagnostic foundation alone did not deliver addon
+decisions to waiting proxy connections. The scoped producer integration below
+now supplies that boundary; network access remains a separate deployment grant.
+
+## Authentication integration checkpoint (2026-11-02)
+
+The explicit `authentication` deployment hook connects native policies and
+mitmproxy `socks5_auth` / `http_connect` callbacks to the real proxy's AAA result.
+This closes the scoped policy-veto producer gap, not the complete CONNECT
+lifecycle gate. See [AUTHENTICATION_HOOKS.md](AUTHENTICATION_HOOKS.md).
+
+Release integration remains dependent on merging Smithproxy `new-AAA` into the
+intended `main` and `master` branches. The branch dependency is an explicit
+project commitment; passing tests on `new-AAA` is not evidence of those merges.

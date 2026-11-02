@@ -2786,3 +2786,10 @@ accepted callback runs exactly once and in publication order. This exercises
 the real full-pipe path and proves that the in-memory queue, rather than one
 wakeup byte per operation, owns delivery. The focused direct and CTest runs
 pass without increasing a timeout or adding a retry.
+
+Authentication policy integration (2026-11-02): the earlier dormant SOCKS5 and
+CONNECT checkpoints are superseded for the explicitly scoped authentication
+deployment. `socks5_auth` and `http_connect` can now veto real Smithproxy AAA
+results. No target lifecycle, rerouting or custom wire response is inferred
+from this exchange. See [AUTHENTICATION_HOOKS.md](AUTHENTICATION_HOOKS.md) for
+the contract and required future `new-AAA` merges into `main` and `master`.

@@ -233,10 +233,10 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             if (!validation.value("ok", false)) throw std::invalid_argument(validation.value("error", "Validation failed"));
             if (!id.empty() && item == next.end()) throw std::invalid_argument("Unknown deployment");
             const auto script_api = validation.value("script_api", "spider");
-            if (hook == "authentication" && (script_api != "spider" || instancing != "message" ||
+            if (hook == "authentication" && (instancing != "message" ||
                                                scope != "all" || !filter.empty())) {
                 throw std::invalid_argument(
-                    "Authentication requires native Spider API, message instancing, all scope and no traffic filter");
+                    "Authentication requires message instancing, all scope and no traffic filter");
             }
             if (script_api != "mitmproxy" && !addon_options.empty()) {
                 throw std::invalid_argument("Addon options require the mitmproxy script API");
@@ -298,6 +298,8 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             if (!entry.value("enabled", false) || entry.value("script_api", "spider") != "mitmproxy") {
                 continue;
             }
+            if (entry.value("hook", "content") == "authentication") continue;
+
             if (entry.value("instancing", "message") != "flow") {
                 throw std::invalid_argument("Addon execution requires flow instantiation");
             }
@@ -320,7 +322,8 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
                     InspectionPool::Lifetime::Rotating,
                     target->value("script_api", "spider"),
                     target->value("addon_options", nlohmann::json::array()),
-                    target->value("network_enabled", false));
+                    target->value("network_enabled", false),
+                    target->value("hook", "content"));
                 prepared->pool->warm();
                 prepared->addon = prepared->pool->status().value("script_api", "spider") == "mitmproxy";
             }
@@ -436,7 +439,8 @@ nlohmann::json Inspection::content_view(const nlohmann::json& request) {
         std::scoped_lock lock(mutex_);
         for (const auto& item : chain_) {
             if (!item.value("enabled", false) ||
-                item.value("script_api", "spider") != "mitmproxy") {
+                item.value("script_api", "spider") != "mitmproxy" ||
+                item.value("hook", "content") == "authentication") {
                 continue;
             }
             const auto candidate_id = item.value("id", "");

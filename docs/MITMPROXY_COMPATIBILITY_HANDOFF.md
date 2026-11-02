@@ -1,15 +1,26 @@
 # Spider mitmproxy compatibility development handoff
 
-Latest follow-up, 2026-11-01: native scripts now support optional
-`init(api, state)` / `exit(api, state)` around `main(api, state)`, with an opaque
-state object retained by one deployment generation. Network access is an explicit
-`network_enabled` deployment grant, off by default, including in editor previews.
-See [the lifecycle contract](../README.md#native-script-lifecycle) and
-[the RADIUS regression](../tests/native_lifecycle_test.py): a real `pyrad` client
-is created once in `init`, reused against an isolated UDP peer, and blocked by
-the default sandbox. This does not implement the Smithproxy authentication
-webhook or delegate its AAA decision to scripts. The checkpoint below records
-the earlier H1 milestone and its continuing project constraints.
+Latest follow-up, 2026-11-02: proxy authentication now has a synchronous
+Smithproxy AAA -> Spider veto boundary for HTTP CONNECT and SOCKS5. Native
+`main(api, state)` policies and authentication-only mitmproxy deployments share
+this boundary. The latter dispatch `http_connect(flow)` and `socks5_auth(data)`;
+this is not the full CONNECT transport lifecycle. See
+[the authentication contract](AUTHENTICATION_HOOKS.md) for setup, limitations,
+examples and validation.
+
+**Integration commitment:** the Smithproxy producer currently lives on
+`new-AAA`. It must be merged into the intended `main` and `master` release
+branches in the future before this feature is considered integrated there.
+Do not silently drop this dependency when merging Spider's `mitmproxy-api`.
+No such merge is part of this checkpoint.
+Before that merge, finish the code cleanup and broker executable behavior, and
+redesign authentication activation using authentication profiles. The current
+`--comm-auth` switch also requiring authentication globally is explicitly not
+the intended final design; broker connectivity and policy must be separated.
+
+Native scripts also support `init(api, state)` / `main(api, state)` /
+`exit(api, state)` with generation-local Python state and explicit, default-off
+`network_enabled`. The lifecycle and RADIUS regression remain in force.
 
 Checkpoint: 2026-11-01, implementation commit
 `777633b9a6da4fb8dfc5a211f0c3bf50beff92a1` on `mitmproxy-api`.
@@ -361,7 +372,7 @@ See `PROTOCOL_STATE_API_PROPOSAL.md` for receive/publication distinctions.
 | HTTP CONNECT | Dormant decision adapter and reference evidence exist; integrate only after approving the producer contract. |
 | WebSocket | Logical-message adapter/corpora exist; native framing/backpressure producer still required. Do not substitute raw TCP chunks. |
 | DNS | Complete-message model and extensive UDP/TCP corpora exist; do not infer DNS solely from port numbers. Producer integration remains open. |
-| SOCKS5 authentication | Decision adapter and reference behavior exist; producer integration is approval-gated. |
+| SOCKS5 authentication | Live AAA-result veto through an explicit authentication deployment; see AUTHENTICATION_HOOKS.md and the new-AAA merge dependency. |
 | TLS/QUIC observations | Need genuine native observations before lifecycle claims. |
 | Incremental HTTP streaming | Complete-message buffering is not streaming. Follow `STREAMING_API_PROPOSAL.md`; implementation needs approval. |
 | Destination changes | Native upstream-selection boundary is required; see `DESTINATION_ROUTING_API_PROPOSAL.md`. |
