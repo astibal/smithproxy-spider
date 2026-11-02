@@ -107,7 +107,9 @@ Spider CTests and all 5 selected native CTests passed, and the live integration
 completed successfully for native and addon policies. This is targeted
 regression evidence, not a new claim that every compatibility gate is closed.
 
-The native producer is developed on Smithproxy **`new-AAA`**. There is an explicit
+The external daemon is [Smithproxy Keyway](https://github.com/astibal/smithproxy-keyway),
+which must explicitly enable its PAM backend. The native producer remains on
+Smithproxy **`new-AAA`**. There is an explicit
 commitment to merge it into the intended **`main` and `master`** release branches
 in the future. Spider's `mitmproxy-api` integration must retain this dependency.
 Do not claim the feature is available on those release branches until the merges

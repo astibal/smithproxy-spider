@@ -139,7 +139,7 @@ class AuthBrokerTests(unittest.TestCase):
 
     def test_real_pam_group_account_and_daemon_restart(self):
         if not ARGS.broker or not ARGS.pam_module:
-            self.skipTest('requires the new-AAA broker build')
+            self.skipTest('requires a Keyway build with tests enabled')
 
         user = pwd.getpwuid(os.getuid())
         group = grp.getgrgid(user.pw_gid).gr_name
@@ -148,7 +148,7 @@ class AuthBrokerTests(unittest.TestCase):
 
         def start(allowed_group=group, account=''):
             service.write_text(f'auth required {ARGS.pam_module}\naccount required {ARGS.pam_module} {account}\n')
-            config.write_text(f'socket="{self.path}"; pam={{service="test-auth"; allowed_group="{allowed_group}"; config_directory="{self.root}";}};')
+            config.write_text(f'socket="{self.path}"; pam={{enabled=true; service="test-auth"; allowed_group="{allowed_group}"; config_directory="{self.root}";}};')
             process = subprocess.Popen([ARGS.broker, '--config', str(config)],
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             deadline = time.monotonic() + 3

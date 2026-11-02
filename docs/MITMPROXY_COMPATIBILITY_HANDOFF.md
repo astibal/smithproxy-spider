@@ -8,6 +8,13 @@ this is not the full CONNECT transport lifecycle. See
 [the authentication contract](AUTHENTICATION_HOOKS.md) for setup, limitations,
 examples and validation.
 
+Keyway extraction: the authentication daemon, PAM backend and daemon tests now
+live in `https://github.com/astibal/smithproxy-keyway` on `main`. The executable
+is `smithproxy-keyway`; PAM requires explicit opt-in. Smithproxy `new-AAA`
+retains the client and protocol integration but no longer builds or installs the
+daemon. Cross-project tests must point to the separately built Keyway binary
+and its test-only PAM module. No release-branch merge has occurred.
+
 **Integration commitment:** the Smithproxy producer currently lives on
 `new-AAA`. It must be merged into the intended `main` and `master` release
 branches in the future before this feature is considered integrated there.

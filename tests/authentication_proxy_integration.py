@@ -139,7 +139,7 @@ with tempfile.TemporaryDirectory(prefix='auth-webhook-live-') as directory:
     (root / 'test-auth').write_text(f'auth required {MODULE}\naccount required {MODULE}\n')
     auth_socket = root / 'auth.sock'
     broker_config = root / 'broker.cfg'
-    broker_config.write_text(f'socket="{auth_socket}"; pam={{service="test-auth"; allowed_group="{GROUP}"; config_directory="{root}";}};')
+    broker_config.write_text(f'socket="{auth_socket}"; pam={{enabled=true; service="test-auth"; allowed_group="{GROUP}"; config_directory="{root}";}};')
 
     relay = ThreadingHTTPServer(('127.0.0.1', 0), Relay)
     thread = threading.Thread(target=relay.serve_forever, daemon=True)

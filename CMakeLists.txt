@@ -602,8 +602,8 @@ if(BUILD_TESTING)
         --probe $<TARGET_FILE:auth_broker_probe>)
     set_tests_properties(auth_broker_tests PROPERTIES TIMEOUT 30)
 
-    set(SPIDER_AUTH_BROKER_EXECUTABLE "" CACHE FILEPATH "new-AAA PAM broker executable for integration tests")
-    set(SPIDER_AUTH_PAM_TEST_MODULE "" CACHE FILEPATH "new-AAA test-only PAM module")
+    set(SPIDER_AUTH_BROKER_EXECUTABLE "" CACHE FILEPATH "Keyway executable for integration tests")
+    set(SPIDER_AUTH_PAM_TEST_MODULE "" CACHE FILEPATH "Keyway test-only PAM module")
     if(SPIDER_AUTH_BROKER_EXECUTABLE AND SPIDER_AUTH_PAM_TEST_MODULE)
         add_test(NAME auth_broker_pam_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/auth_broker_test.py

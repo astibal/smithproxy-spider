@@ -87,8 +87,8 @@ both paths from a build of Smithproxy `new-AAA`:
 
 ```sh
 cmake -S . -B build \
-  -DSPIDER_AUTH_BROKER_EXECUTABLE=/path/to/build-auth/smithproxy-auth-broker \
-  -DSPIDER_AUTH_PAM_TEST_MODULE=/path/to/build-auth/auth_test_pam.so
+  -DSPIDER_AUTH_BROKER_EXECUTABLE=/path/to/keyway/build/smithproxy-keyway \
+  -DSPIDER_AUTH_PAM_TEST_MODULE=/path/to/keyway/build/keyway_test_pam.so
 cmake --build build -j2
 ctest --test-dir build -R '^auth_broker' --output-on-failure
 ```
@@ -109,3 +109,8 @@ and test module were built from unchanged Smithproxy `new-AAA` (`f1e93750`).
 Local focused transport and real-PAM suites also passed. No live service was
 reconfigured or deployed. This evidence covers the host client and diagnostic,
 not the still-open addon-to-proxy decision path.
+
+The daemon now lives in [Smithproxy Keyway](https://github.com/astibal/smithproxy-keyway).
+Its PAM backend requires explicit `pam.enabled = true`; no system service or
+PAM policy is installed automatically. Smithproxy retains only the broker client
+and proxy protocol integration.
