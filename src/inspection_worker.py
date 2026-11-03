@@ -198,7 +198,7 @@ class AddonWorkerRuntime:
                 self.loop.close()
 
         response['logs'] = shutdown_output.text.splitlines()
-        if authentication_worker:
+        if authentication_worker or connect_worker:
             response['logs'] = []
             shutdown_output.text = ''
         if shutdown_output.text and not report:
@@ -377,6 +377,34 @@ def invoke_authentication(observation, compiled):
         namespace.clear()
 
 
+def invoke_http_connect(observation):
+    global connect_worker
+    connect_worker = True
+    output = Output()
+
+    # Discard callback output: even rejected requests may carry credentials.
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            decision = addon_worker.run(
+                addon_worker.adapter.http_connect(observation)
+            )
+
+        return {
+            'ok': True,
+            'replacement': None,
+            'decision': decision,
+            'logs': [],
+        }
+    except BaseException:
+        # A traceback can expose the same credentials as explicit script output.
+        return {
+            'ok': False,
+            'replacement': None,
+            'logs': [],
+            'error': 'CONNECT callback failed',
+        }
+
+
 def compile_native(source):
     """Detect module-style hooks without executing administrator code."""
     import ast
@@ -417,6 +445,7 @@ native_namespace = {}
 native_state = None
 native_initialized = False
 authentication_worker = False
+connect_worker = False
 native_lifecycle = False
 native_output = Output()
 network_enabled = request.get('network_enabled', False)
@@ -630,6 +659,10 @@ def invoke_script(current, compiled):
     finally:
         namespace.clear()
     response['logs'] = output.text.splitlines()
+    if connect_worker and current.get('event', {}).get('action') == 'connection-stop':
+        response['logs'] = []
+        if not response['ok']:
+            response['error'] = 'CONNECT connection cleanup failed'
     return response
 
 
@@ -808,7 +841,9 @@ def serve_persistent():
             sys.stdout.flush()
             break
         current['storage_directory'] = storage_directory
-        if 'authentication' in current:
+        if 'http_connect' in current:
+            response = invoke_http_connect(current['http_connect'])
+        elif 'authentication' in current:
             response = invoke_authentication(current['authentication'], compiled)
         elif 'content_view_action' in current:
             response = invoke_content_view(current)

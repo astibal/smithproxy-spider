@@ -1,6 +1,15 @@
 # Spider mitmproxy compatibility development handoff
 
-Latest follow-up, 2026-11-02: proxy authentication now has a synchronous
+Approved implementation, 2026-11-04: regular HTTP/1 CONNECT is wired end to end in the
+Smithproxy and Spider `connect-hooks` branches. `http_connect`,
+`http_connected`, and `http_connect_error` share one flow and native descriptors.
+Callback transport failures are fail-open unless strict mode was already
+negotiated; AAA remains independently authoritative. Upstream-proxy and HTTP/2
+CONNECT are deferred. See `HTTP_CONNECT_PRODUCER_PROPOSAL.md` for the wire
+contract and tests. These changes are approved for publication on those branches; merging into
+release branches is a separate step.
+
+Previous follow-up, 2026-11-02: proxy authentication now has a synchronous
 Smithproxy AAA -> Spider veto boundary for HTTP CONNECT and SOCKS5. Native
 `main(api, state)` policies and authentication-only mitmproxy deployments share
 this boundary. The latter dispatch `http_connect(flow)` and `socks5_auth(data)`;
@@ -378,7 +387,7 @@ See `PROTOCOL_STATE_API_PROPOSAL.md` for receive/publication distinctions.
 | Idle resume | No spontaneous publication. Requires a separately agreed transport/control design. |
 | Raw TCP/UDP | Models and dormant adapter/corpora exist; native producer and datagram ownership still need integration approval. Raw suspension is not delivered. |
 | Server lifecycle | Need truthful target-selection, connected, failed and disconnected observations. Do not invent server events from client setup. |
-| HTTP CONNECT | Dormant decision adapter and reference evidence exist; integrate only after approving the producer contract. |
+| HTTP CONNECT | Regular HTTP/1 producer and worker bridge are approved with live wire tests; upstream-proxy and HTTP/2 CONNECT remain deferred. |
 | WebSocket | Logical-message adapter/corpora exist; native framing/backpressure producer still required. Do not substitute raw TCP chunks. |
 | DNS | Complete-message model and extensive UDP/TCP corpora exist; do not infer DNS solely from port numbers. Producer integration remains open. |
 | SOCKS5 authentication | Live AAA-result veto through an explicit authentication deployment; see AUTHENTICATION_HOOKS.md and the new-AAA merge dependency. |

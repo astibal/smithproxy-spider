@@ -46,6 +46,56 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
+    if(action == "http-connect") {
+        // CONNECT is a transient decision exchange. In particular, rejected
+        // Proxy-Authorization headers must never enter capture or GUI history.
+        try {
+            const auto& observation = event.at("details").at("http_connect");
+            const auto& envelope = observation.at("envelope");
+            const auto id = event.at("id").get<std::string>();
+            const auto phase = envelope.at("event").get<std::string>();
+
+            const bool valid = !id.empty() && id.size() <= 1024 && envelope.size() == 6 &&
+                envelope.at("version").is_number_integer() && envelope["version"] == 1 &&
+                envelope.at("delivery") == "http-connect" && envelope.at("connection_id") == id &&
+                envelope.at("exchange_id").is_number_integer() && envelope["exchange_id"] == 1 &&
+                envelope.at("mode") == "regular" &&
+                (phase == "request" || phase == "connected" || phase == "error" || phase == "abort");
+
+            if(!valid || observation.dump().size() > 370 * 1024) {
+                return {400, {{"error", "Invalid CONNECT observation"}}};
+            }
+
+            if(phase == "request") {
+                const auto& raw = observation.at("request_base64");
+                if(!raw.is_string() || raw.get_ref<const std::string&>().size() > 10924)
+                    return {400, {{"error", "Invalid CONNECT request"}}};
+            }
+
+            // Reuse setup rule selection without publishing a fake setup or
+            // asking the GUI for a payload decision. Pinning happens below.
+            auto selection = event;
+            selection["action"] = "connection-start";
+            (void)decisions.prepare(selection);
+            event["traffic_rule"] = selection.value("traffic_rule", nlohmann::json::object());
+            event["decision"] = selection.value("decision", nlohmann::json::object());
+
+            auto decision = inspection ? inspection->http_connect(event) : nlohmann::json(nullptr);
+            if(decision.is_null())
+                return {503, {{"error", "CONNECT callback unavailable"}}};
+
+            // Echo the original identity so the producer can reject stale replies.
+            return {200, {
+                {"action", action},
+                {"id", id},
+                {"envelope", envelope},
+                {"decision", std::move(decision)}
+            }};
+        } catch(const nlohmann::json::exception&) {
+            return {400, {{"error", "Invalid CONNECT observation"}}};
+        }
+    }
+
     if (action == "proxy-authentication") {
         // This is a transient control exchange, not a captured connection event.
         // Reject malformed metadata before any script sees credentials.

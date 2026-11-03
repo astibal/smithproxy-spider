@@ -1,10 +1,10 @@
 # HTTP CONNECT producer proposal
 
-Status: five independent mitmproxy 12.3.1 wire corpora define regular,
-upstream-proxy, authentication and control behavior. The public hook values and
-a dormant Spider lifecycle adapter are implemented with full branch coverage,
-but no live producer exists. Registration therefore remains fail-closed. This
-document does not authorize changes in Smithproxy or another project.
+Status: regular HTTP/1 CONNECT now has a native Smithproxy producer and a
+Spider worker bridge, approved together on 2026-11-04. The regular hooks are
+`http_connect`, `http_connected`, and `http_connect_error`. Upstream-proxy
+CONNECT remains a dormant adapter contract: `http_connect_upstream` is still
+rejected at deployment. HTTP/2 CONNECT is not part of this implementation.
 
 ## Goal
 
@@ -60,35 +60,53 @@ its native observations change across these hooks. Regular and upstream-proxy
 events must not be collapsed into one generic "CONNECT succeeded"
 notification.
 
-## Proposed native observations
+## Native observations
 
-Smithproxy would publish bounded structured observations tied to its native
-connection and CONNECT transaction identities:
+The synchronous webhook action is `http-connect`. The ordinary event `id`
+equals `details.http_connect.envelope.connection_id`. A regular transaction
+uses this envelope:
 
 ```json
 {
-  "http_connect": {
-    "version": 1,
-    "event": "request",
-    "connection_id": "...",
-    "transaction_id": "...",
-    "request": {
-      "authority": "example.test:443"
-    }
-  }
+  "version": 1,
+  "delivery": "http-connect",
+  "connection_id": "Proxy-example-SID-1",
+  "exchange_id": 1,
+  "event": "request",
+  "mode": "regular"
 }
 ```
 
-Later observations would use `target-connected`, `target-error`, and
-`upstream-connect` events. They carry only native facts required to update the
-existing flow and connection descriptors. Response objects are created from
-explicit native outcome fields, never guessed from timing or socket state in
-Spider.
+The surrounding `http_connect` object carries `target: [host, port]`,
+`request_base64` on the request, nullable `response_base64`, and a boolean
+`authenticated`. Accepted authentication removes `Proxy-Authorization` from
+the addon request view. Native socket observations supply `client_peername`,
+`client_sockname`, and, on success, server `peername` and `sockname`.
 
-Each observation is processed synchronously before the corresponding wire
-action. The generation that accepted `request` owns the complete CONNECT
-lifecycle; late results from a retired generation or closed connection are
-discarded.
+Events are `request`, `connected`, and `error`; `abort` releases retained state
+when the connection ends, including paths that never reach ordinary setup.
+The reply echoes the complete envelope and returns a `decision` object:
+
+- `continue` with `target`;
+- `local-response` with `response_base64`;
+- `kill` at the request boundary;
+- `send-response` with `response_base64` at an outcome boundary.
+
+Requests are bounded below 8 KiB; complete response decisions are bounded to
+256 KiB with headers below 8 KiB. Responses must have valid HTTP/1 final status,
+header syntax and complete framing. Chunked response decisions and duplicate
+or inconsistent Content-Length fields are rejected before native publication.
+
+Each observation completes before its corresponding native wire action.
+`http_connected` follows TCP connection completion, not TLS handshake completion:
+the client needs the CONNECT response before it can send ClientHello.
+
+Spider selects content-addon deployments at the request boundary using the
+requested target and existing scope/filter rules, before native DNS resolution.
+The accepting runtime generation owns later observations. A redeploy cannot
+adopt the old transaction or its subsequent content. The ordinary
+`connection-start` reuses the prelude's connection descriptors and does not
+repeat `client_connected`.
 
 ## Verified addon decisions
 
@@ -96,8 +114,8 @@ A second checked-in wire corpus establishes the ordinary HTTP/1 control
 semantics:
 
 - assigning a local response in `http_connect` prevents the target connection,
-  sends that response to the client and then invokes `http_connect_error` with
-  the same response;
+  invokes `http_connect_error` with the same response before publishing its
+  final bytes to the client;
 - `flow.kill()` in `http_connect` marks the flow dead, closes the client without
   a response and suppresses later CONNECT hooks;
 - changing `flow.request.host` or `flow.request.port` reroutes the actual target
@@ -158,9 +176,12 @@ late kill or response replacement succeeded.
 ## Failure and security rules
 
 - malformed or oversized observations are rejected before addon dispatch;
-- callback timeout, worker failure and generation retirement follow the
-  explicit deployment failure policy;
-- no timeout may accidentally open a target or acknowledge a tunnel;
+- unavailable, malformed or timed-out regular CONNECT callbacks are fail-open:
+  Smithproxy retains its native decision and native response;
+- a previously negotiated strict connection stays fail-closed on callback
+  failure; a valid addon kill or local response is honored;
+- AAA remains authoritative: neither fail-open nor a valid addon response may
+  upgrade rejected/unavailable authentication into admission;
 - authority and authentication material are bounded and never logged as raw
   secrets;
 - one connection cannot reuse another connection's transaction identity;
@@ -181,9 +202,9 @@ late kill or response replacement succeeded.
    - completed: dispatch callbacks synchronously and return only proven
      request, response and upstream-authority decisions;
    - completed: reproduce non-live late-hook behavior and late kill failure;
-   - pending: connect the adapter only after a native producer exists;
-   - keep registration fail-closed until end-to-end support exists.
-3. **Smithproxy producer** — separate cross-project approval required
+   - implemented: regular-proxy worker/native bridge and early connection prelude;
+   - upstream hook registration remains fail-closed.
+3. **Smithproxy producer** — implemented together with the regular Spider bridge
    - publish events at the actual parser, target-selection and connection
      boundaries;
    - await decisions before target connection and client/upstream replies;
@@ -204,5 +225,11 @@ late kill or response replacement succeeded.
 - packaged-worker, native-boundary and end-to-end wire tests;
 - a separately approved design for HTTP/2 CONNECT before enabling that path.
 
-Until every applicable gate passes, all `http_connect*` and `http_connected`
-callbacks must continue to fail deployment rather than load as inert hooks.
+The regular producer and Spider bridge must be deployed together. The live
+integration test is `tests/connect_proxy_integration.py`; packaged worker tests
+are in `tests/addon_connect_worker_test.py`. Keep upstream and HTTP/2 support
+disabled until their separate native producers and applicable gates exist.
+
+CONNECT observations, addon output and cleanup diagnostics bypass capture and
+inspection history because rejected requests may still carry credentials.
+Native webhook transport diagnostics suppress both request and reply bodies.

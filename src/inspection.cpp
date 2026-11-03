@@ -746,6 +746,7 @@ void Inspection::clear_flow(const std::string& id) {
     {
         std::scoped_lock lock(mutex_);
         translations_.erase(id);
+        connect_pins_.erase(id);
         closed_flows_.insert(id);
         if (closed_flows_.size() > 10000) closed_flows_.erase(closed_flows_.begin());
         owners = runtimes_;
@@ -1080,6 +1081,159 @@ bool Inspection::translation_required(const nlohmann::json& event) const {
     return translations_.contains(event.value("id", "")) || control.value("mode", "regular") == "strict";
 }
 
+nlohmann::json Inspection::http_connect(const nlohmann::json& event) {
+    const auto id = event.at("id").get<std::string>();
+    auto observation = event.at("details").at("http_connect");
+    const auto phase = observation.at("envelope").at("event").get<std::string>();
+
+    if(phase == "abort") {
+        clear_flow(id);
+        return {{"action", "aborted"}};
+    }
+
+    // Choose owners once. Later events keep the same deployment generations.
+    std::shared_ptr<ConnectPin> pin;
+    {
+        std::scoped_lock lock(mutex_);
+        const auto found = connect_pins_.find(id);
+
+        if(phase == "request") {
+            if(found != connect_pins_.end() || connect_pins_.size() >= 10000 || closed_flows_.contains(id))
+                return nullptr;
+
+            pin = std::make_shared<ConnectPin>();
+            const auto state = event.value("decision", nlohmann::json::object()).value("state", "");
+            const bool bypassed = state == "passed" || state == "forgotten" || state == "auto-accepted";
+
+            for(const auto& item : chain_) {
+                if(bypassed)
+                    break;
+                if(!item.value("enabled", false) || item.value("hook", "content") != "content")
+                    continue;
+
+                const auto owner = runtimes_.find(item.at("id").get<std::string>());
+                if(owner == runtimes_.end() || !owner->second->addon)
+                    continue;
+                if(item.value("scope", "rules") == "rules" &&
+                   event.value("traffic_rule", nlohmann::json::object()).value("mode", "") != "inspect")
+                    continue;
+
+                const auto filter = item.value("filter", "");
+                if(!filter.empty()) {
+                    std::string error;
+                    const auto compiled = SessionFilter::compile(filter, error);
+                    if(!compiled || !compiled->matches(event))
+                        continue;
+                }
+
+                pin->owners.push_back({owner->first, owner->second, item.value("timeout_ms", 1000)});
+            }
+
+            connect_pins_[id] = pin;
+        } else {
+            if(found == connect_pins_.end())
+                return nullptr;
+            pin = found->second;
+        }
+    }
+
+    // A connection's request and outcome cannot overtake each other. Each
+    // deployment also shares its ordinary serial boundary with content/setup.
+    std::unique_lock lifecycle(pin->serial, std::defer_lock);
+    if(!lifecycle.try_lock_for(std::chrono::milliseconds(250)))
+        return nullptr;
+
+    if(pin->failed || pin->finished || (phase != "request" && !pin->requested))
+        return nullptr;
+
+    pin->requested = true;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+
+    // No selected addon means preserving the native request or response.
+    nlohmann::json decision = phase == "request"
+        ? nlohmann::json{
+            {"action", "continue"},
+            {"target", observation.at("target")}
+        }
+        : nlohmann::json{
+            {"action", "send-response"},
+            {"response_base64", observation.at("response_base64")}
+        };
+
+    for(const auto& owner : pin->owners) {
+        auto& runtime = *owner.runtime;
+        std::unique_lock serial(runtime.serial, std::defer_lock);
+        if(!serial.try_lock_for(std::chrono::milliseconds(250))) {
+            pin->failed = true;
+            return nullptr;
+        }
+
+        // Redeployment must not let a replacement addon adopt an old exchange.
+        {
+            std::scoped_lock lock(mutex_);
+            const auto live = runtimes_.find(owner.deployment);
+            if(runtime.retired || live == runtimes_.end() || live->second != owner.runtime ||
+               closed_flows_.contains(id) || (phase == "request" && runtime.addon_connections.size() >= 128)) {
+                pin->failed = true;
+                return nullptr;
+            }
+        }
+
+        // All owners share one deadline; waiting cannot renew the budget.
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        if(remaining <= 0) {
+            pin->failed = true;
+            return nullptr;
+        }
+
+        if(running_.fetch_add(1) >= 4) {
+            --running_;
+            pin->failed = true;
+            return nullptr;
+        }
+
+        nlohmann::json result;
+        try {
+            result = runtime.pool->run({{"http_connect", observation}},
+                                      std::min<int>(static_cast<int>(remaining), owner.timeout_ms));
+        } catch(const std::exception&) {
+            result = nullptr;
+        }
+        --running_;
+
+        // CONNECT headers may contain rejected credentials. Never retain the
+        // observation, script output or exception source in inspection history.
+        std::scoped_lock lock(mutex_);
+        const auto live = runtimes_.find(owner.deployment);
+
+        // A callback can fail after allocating its prelude. Retain cleanup
+        // ownership even for a negative result, or when clear_flow is already
+        // waiting for this serial section. Stopping an absent prelude is safe.
+        runtime.addon_connections.insert(id);
+
+        if(!result.is_object() || !result.value("ok", false) || !result.contains("decision") ||
+           runtime.retired || live == runtimes_.end() || live->second != owner.runtime || closed_flows_.contains(id)) {
+            pin->failed = true;
+            return nullptr;
+        }
+
+        // Feed a valid mutation to the next owner in chain order.
+        decision = result.at("decision");
+        if(decision.at("action") == "kill")
+            break;
+
+        if(decision.contains("target"))
+            observation["target"] = decision["target"];
+
+        if(decision.contains("response_base64"))
+            observation["response_base64"] = decision["response_base64"];
+    }
+
+    pin->finished = phase != "request" || decision.at("action") == "kill";
+    return decision;
+}
+
 bool Inspection::authenticate(const nlohmann::json& event) {
     // Authentication never enters capture, traffic rules or instance state.
     // Snapshot the active owners, then release the control-plane lock before
@@ -1253,15 +1407,35 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         for (const auto& item : chain) {
             if (!item.value("enabled", false)) continue;
 
+            // Setup and content must follow the generation chosen by CONNECT.
+            bool connect_owner = false;
+            if(item.value("script_api", "spider") == "mitmproxy") {
+                std::scoped_lock lock(mutex_);
+                const auto prelude = connect_pins_.find(session);
+                if(prelude != connect_pins_.end()) {
+                    const auto runtime = runtimes_.find(item.at("id").get<std::string>());
+                    connect_owner = std::any_of(
+                        prelude->second->owners.begin(), prelude->second->owners.end(),
+                        [&](const auto& owner) {
+                            return owner.deployment == item.at("id").get<std::string>() &&
+                                   runtime != runtimes_.end() &&
+                                   owner.runtime == runtime->second && !owner.runtime->retired;
+                        });
+
+                    if(!connect_owner)
+                        continue;
+                }
+            }
+
             // A multiplexed transport is not an HTTP inspection flow. Native
             // scripts may observe its admission, but the HTTP addon adapter
             // must not fabricate another client lifecycle for the parent.
             if (transport_setup && item.value("script_api", "spider") == "mitmproxy") continue;
-            if (!translate_active && item.value("scope", "rules") == "rules" &&
+            if (!translate_active && !connect_owner && item.value("scope", "rules") == "rules" &&
                 event.value("traffic_rule", nlohmann::json::object()).value("mode", "") != "inspect") continue;
             std::string error;
             const auto filter = item.value("filter", "");
-            if (!translate_active && !filter.empty()) {
+            if (!translate_active && !connect_owner && !filter.empty()) {
                 auto compiled = SessionFilter::compile(filter, error);
                 if (!compiled || !compiled->matches(event)) continue;
             }

@@ -37,6 +37,7 @@ addon_http_message.py
 addon_flow.py
 addon_connection.py
 addon_connect_events.py
+addon_connect_native.py
 addon_certs.py
 addon_websocket.py
 addon_dns.py

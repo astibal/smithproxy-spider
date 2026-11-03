@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <vector>
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include "collection.hpp"
@@ -12,6 +13,7 @@ namespace spider {
 class InspectionPool;
 class Inspection {
 public:
+    nlohmann::json http_connect(const nlohmann::json& event);
     bool authenticate(const nlohmann::json& event);
     explicit Inspection(std::filesystem::path collection_root = {});
     nlohmann::json configure(const nlohmann::json& request);
@@ -65,6 +67,23 @@ private:
     void expire_instances(Runtime& runtime, int idle_seconds) const;
     void clear_flow(const std::string& id);
     void record_shutdown(const std::string& id, const std::shared_ptr<InspectionPool>& pool);
+
+    // Keep the deployment generation alive until its CONNECT exchange ends.
+    struct ConnectOwner {
+        std::string deployment;
+        std::shared_ptr<Runtime> runtime;
+        int timeout_ms;
+    };
+
+    struct ConnectPin {
+        std::timed_mutex serial;
+        std::vector<ConnectOwner> owners;
+        bool requested = false;
+        bool finished = false;
+        bool failed = false;
+    };
+
+    std::map<std::string, std::shared_ptr<ConnectPin>> connect_pins_; // guarded by mutex_
     std::map<std::string, std::shared_ptr<Runtime>> runtimes_;
     std::shared_ptr<InspectionPool> legacy_pool_;
     std::filesystem::path storage_root_;

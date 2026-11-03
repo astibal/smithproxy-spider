@@ -64,19 +64,11 @@
   against the mitmproxy 12.3.1 reference corpus. Do not synthesize these events
   from connection setup in the meantime. The detailed integration contract is
   recorded in `docs/ADDON_COMPATIBILITY.md`.
-- **HTTP CONNECT producer (cross-project approval required):** review
-  `HTTP_CONNECT_PRODUCER_PROPOSAL.md`. Separate mitmproxy 12.3.1 wire corpora
-  now fix regular success/failure, the lazy upstream-proxy lifecycle and
-  ordinary local-response/kill/reroute/outcome-mutation behavior. A fourth
-  corpus fixes built-in proxy-authentication ordering and request sanitization.
-  A fifth fixes the late, non-live upstream hook: only authority mutation is
-  transport-effective, while kill raises and local response replacement is too
-  late. The reference lifecycle evidence is complete. A dormant Spider adapter
-  now preserves flow/server identity, validates sequence and returns only the
-  proven decisions with full branch coverage; native producer integration
-  remains implementation work. Until its wire gates pass,
-  recognized `http_connect*` and `http_connected` hooks must fail deployment
-  rather than load as inert callbacks.
+- **HTTP CONNECT producer (approved):** regular HTTP/1 request, connected
+  and error hooks now have a native producer and worker bridge. The two production patches were approved together on 2026-11-04; see `HTTP_CONNECT_PRODUCER_PROPOSAL.md` for the
+  fail-open/strict policy, authoritative AAA boundary and live test coverage.
+  `http_connect_upstream` remains rejected at deployment; upstream-proxy and
+  HTTP/2 CONNECT require separate integration work.
 - **Raw TCP/UDP producer (cross-project approval required):** review
   `RAW_TRANSPORT_PRODUCER_PROPOSAL.md`. The basic transport corpora and the new
   control corpus fix message history, mutation, empty TCP-chunk suppression,

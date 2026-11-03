@@ -19,6 +19,13 @@ implementation sources must not be used to implement this adapter.
 implemented behavior from approval-gated native operations and producer work;
 this longer document records the supporting design and test evidence.
 
+Approved CONNECT implementation (2026-11-04): regular HTTP/1 `http_connect`,
+`http_connected`, and `http_connect_error` are now wired to Smithproxy in the
+`connect-hooks` branches. The older dormant checkpoints below are historical evidence,
+not the current regular-mode registration gate. Upstream CONNECT remains
+rejected. See `HTTP_CONNECT_PRODUCER_PROPOSAL.md` for the current boundary and
+validation; this does not claim complete addon or protocol compatibility.
+
 ## Read the status by layer
 
 The public `mitmproxy.http.Message` base type is exported alongside Request and

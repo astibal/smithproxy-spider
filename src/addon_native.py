@@ -9,6 +9,13 @@ import time
 
 from addon_connection import Client, ConnectionState, Server
 from addon_flow import Error
+from addon_connect_events import HTTPConnectAddonEvents, HTTPConnectEvent
+from addon_connect_native import (
+    address as connect_address,
+    dispatch as dispatch_connect,
+    request_value as connect_request_value,
+    response_value as connect_response_value,
+)
 from addon_h1_events import H1AddonEvents
 from addon_h2_events import H2AddonEvents
 from addon_raw_events import RawAddonEvents, RawTransportError, RawTransportSetup
@@ -33,14 +40,21 @@ class NativeAddonAdapter:
     # through the deprecated add_log event. The event is delivered only when an
     # addon explicitly triggers AddLogHook through the public addon manager.
     PASSIVE_HOOKS = frozenset({'add_log'})
+    CONNECT_HOOKS = frozenset({
+        'http_connect',
+        'http_connected',
+        'http_connect_error',
+    })
     HOOKS = (H2AddonEvents.HOOKS | RawAddonEvents.HOOKS |
-             CONNECTION_HOOKS | PASSIVE_HOOKS)
+             CONNECTION_HOOKS | PASSIVE_HOOKS | CONNECT_HOOKS)
 
     def __init__(self, generation, *, max_connections=128, body_limit=256 * 1024,
                  opaque_part_factory=None):
         if type(max_connections) is not int or not 1 <= max_connections <= 1024:
             raise ValueError('Connection limit must be between 1 and 1024')
         self.generation = generation
+        self.connect = HTTPConnectAddonEvents(generation)
+        self._connect_preludes = set()
         self.http1 = H1AddonEvents(generation)
         self.http2 = H2AddonEvents(generation, body_limit=body_limit)
         self.raw = RawAddonEvents(generation, opaque_part_factory)
@@ -77,8 +91,11 @@ class NativeAddonAdapter:
         if isinstance(registered.client, Client):
             registered.client.state = ConnectionState.CLOSED
             registered.client.timestamp_end = timestamp
-        if (registered.raw_setup is not None and
-                isinstance(registered.server, Server)):
+
+        # CONNECT can open the shared server descriptor before ordinary setup.
+        if (isinstance(registered.server, Server) and
+                (registered.raw_setup is not None or
+                 registered.server.state != ConnectionState.CLOSED)):
             registered.server.state = ConnectionState.CLOSED
             if registered.server.timestamp_end is None:
                 registered.server.timestamp_end = timestamp
@@ -93,6 +110,19 @@ class NativeAddonAdapter:
             raise AddonRuntimeError(
                 'Transport setup requires a dedicated protocol lifecycle adapter')
         identity = self._identity(api.session_id)
+        if identity in self._connect_preludes:
+            # CONNECT begins before target setup. Reuse its descriptors without
+            # delivering a second client_connected or resetting server state.
+            if api.instance.mode != 'flow':
+                raise AddonRuntimeError('Addon execution requires native flow instantiation')
+            if getattr(api, 'info', {}).get('raw_transport') is not None:
+                raise AddonRuntimeError('CONNECT cannot change into a raw transport')
+
+            api.connection.request_rewrite()
+            api.connection.track_states()
+            self._connect_preludes.remove(identity)
+            return None
+
         if identity in self._connections:
             raise AddonRuntimeError('The addon connection is already registered')
         if len(self._connections) >= self.max_connections:
@@ -117,6 +147,53 @@ class NativeAddonAdapter:
         self._connections[identity] = _NativeConnection(
             setup.kind, setup.client, setup.server, setup)
         return self._start_raw(identity, setup)
+
+    async def http_connect(self, observation):
+        """Start the client lifecycle before the later connection-start setup."""
+        if self.generation.state != 'running':
+            raise AddonRuntimeError('The addon generation is not running')
+
+        envelope = observation['envelope']
+        event = HTTPConnectEvent.parse(envelope, envelope.get('event'))
+        identity = self._identity(event.connection_id)
+        if event.mode != 'regular' or event.event not in ('request', 'connected', 'error'):
+            raise AddonRuntimeError('Unsupported native CONNECT lifecycle')
+
+        # Validate complete wire observations before any administrator callback,
+        # including client_connected, can see a partially initialized request.
+        request = None
+        if event.event == 'request':
+            request = connect_request_value(observation)
+        response = connect_response_value(observation.get('response_base64'))
+
+        if event.event == 'request':
+            if identity in self._connections:
+                raise AddonRuntimeError('The addon connection is already registered')
+            if len(self._connections) >= self.max_connections:
+                raise AddonRuntimeError('Addon connection limit reached')
+
+            client = Client(
+                peername=connect_address(observation['client_peername']),
+                sockname=connect_address(
+                    observation.get('client_sockname'), nullable=True,
+                ),
+            )
+            client, server = self._http_descriptors(client, Server(address=None))
+            self._connections[identity] = _NativeConnection('http', client, server)
+            self._connect_preludes.add(identity)
+
+            failures = await self._start_http(identity, client)
+            if failures:
+                raise AddonRuntimeError('Client connection callback failed')
+        elif identity not in self._connections:
+            raise AddonRuntimeError('CONNECT outcome arrived without client setup')
+
+        try:
+            return await dispatch_connect(self, observation, request, response)
+        except BaseException:
+            self.connect.abort_connection(identity)
+            self.generation.invalidate()
+            raise
 
     async def _start_http(self, identity, client):
         try:
@@ -215,6 +292,8 @@ class NativeAddonAdapter:
                         failures.extend(await self.raw.stop(
                             identity, registered.raw_setup, raw_value))
                 else:
+                    # An aborted CONNECT is not an ordinary HTTP error event.
+                    self.connect.abort_connection(identity)
                     for flow in self.generation.connection_flows(identity):
                         flow.error = Error('Connection closed before HTTP exchange completed')
                         failures.extend(await self.generation.dispatch('error', flow))
@@ -228,6 +307,8 @@ class NativeAddonAdapter:
             self.generation.invalidate()
             raise
         finally:
+            self.connect.abort_connection(identity)
+            self._connect_preludes.discard(identity)
             if registered.raw_setup is None:
                 self.http1.release_connection(identity)
                 self.http2.release_connection(identity)
@@ -260,4 +341,5 @@ class NativeAddonAdapter:
                 self.http2.release_connection(identity)
                 self.raw.release_connection(identity)
             self._connections.clear()
+            self._connect_preludes.clear()
         return tuple(failures)
