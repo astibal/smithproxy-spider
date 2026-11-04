@@ -56,3 +56,4 @@ addon_native.py
 addon_authentication.py
 addon_server_native.py
 addon_tls_native.py
+addon_clienthello_native.py

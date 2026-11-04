@@ -78,3 +78,20 @@ reroute and invalid ordering. Live CONNECT integration checks transport/hook
 ordering, native veto, same-object identity, exactly-once terminal delivery and
 preservation of the existing CONNECT/AAA scenarios. Test counts and the final
 Rhino regression evidence are recorded with the review patches.
+
+## Closed implementation checkpoint
+
+The agreed TCP scope was approved and pushed to `proxy-hooks`: native auth
+extraction `b8a42c00`, native producer `bfee15f9`, Spider bridge `7d00a03`.
+This closes that implementation scope, not all connection/TLS compatibility.
+These branches have not yet been merged into native master / Spider mitmproxy-api.
+
+Final evidence: native build and 20 live CONNECT/server scenarios passed;
+real PAM HTTP/SOCKS authentication passed. Native CTest initially passed 45/46:
+the PCAP logger temporary-directory cleanup failed, then the isolated full
+unit.core rerun passed. Unchanged Spider code passed all 122 CTest entries,
+including seven lifecycle adapter cases. No Full P3 rerun is claimed for the
+final removal of reconnect integration.
+
+Next: `TLS_HOOKS_INVENTORY.md`. Reconnect work is explicitly deferred beyond
+the near-term plan.

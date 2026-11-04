@@ -208,6 +208,14 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
 
             const bool network_enabled = request.value("network_enabled",
                 item != next.end() && item->value("network_enabled", false));
+
+            if(request.contains("tls_clienthello") && !request["tls_clienthello"].is_boolean()) {
+                throw std::invalid_argument("tls_clienthello must be a boolean");
+            }
+
+            const bool tls_clienthello = request.value("tls_clienthello",
+                item != next.end() && item->value("tls_clienthello", false));
+
             auto addon_options = item == next.end()
                 ? nlohmann::json::array()
                 : item->value("addon_options", nlohmann::json::array());
@@ -241,6 +249,10 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             if (script_api != "mitmproxy" && !addon_options.empty()) {
                 throw std::invalid_argument("Addon options require the mitmproxy script API");
             }
+            if(tls_clienthello && (script_api != "mitmproxy" || hook != "content")) {
+                throw std::invalid_argument("ClientHello requires a content addon deployment");
+            }
+
             if (item == next.end()) {
                 if (next.size() >= 16) throw std::invalid_argument("Maximum 16 deployed scripts");
                 next.push_back({{"id", "script-" + std::to_string(++next_script_id_)},
@@ -257,6 +269,7 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             (*item)["script_api_source"] = validation.value("script_api_source", "selection");
             (*item)["addon_options"] = std::move(addon_options);
             (*item)["network_enabled"] = network_enabled;
+            (*item)["tls_clienthello"] = tls_clienthello;
             (*item)["hook"] = hook;
             (*item)["timeout_ms"] = timeout; (*item)["error_limit"] = error_limit;
             (*item)["max_instances"] = max_instances; (*item)["idle_seconds"] = idle_seconds;
@@ -904,6 +917,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         runtime->addon_connections.insert(event.value("id", ""));
         result["server_lifecycle"] = true;
         result["tls_lifecycle"] = true;
+        result["tls_clienthello"] = item.value("tls_clienthello", false);
     }
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     result["duration_ms"] = elapsed;
@@ -1094,8 +1108,9 @@ nlohmann::json Inspection::tls_lifecycle(const nlohmann::json& event) {
 nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool tls) {
 
     const auto id = event.at("id").get<std::string>();
-    const auto& observation = event.at("details").at(tls ? "tls" : "server");
+    auto observation = event.at("details").at(tls ? "tls" : "server");
     const auto operation = tls ? "tls_lifecycle" : "server_lifecycle";
+    const bool client_hello = tls && observation.at("envelope").at("event") == "client-hello";
     std::vector<ConnectOwner> owners;
     {
         std::scoped_lock lock(mutex_);
@@ -1108,6 +1123,13 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool
             if(!item.value("enabled", false) || found == runtimes_.end() || !found->second->addon) {
                 continue;
             }
+
+            // Subscription belongs to the deployment, including hooks added
+            // dynamically after setup. Other addons do not receive this event.
+            if(client_hello && !item.value("tls_clienthello", false)) {
+                continue;
+            }
+
             owners.push_back({found->first, found->second, item.value("timeout_ms", 1000)});
         }
     }
@@ -1116,6 +1138,7 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool
     // cannot adopt an old native connection, even if its filter now matches.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
     bool delivered = false;
+    bool ignore_connection = false;
     for(const auto& owner : owners) {
         auto& runtime = *owner.runtime;
         std::unique_lock serial(runtime.serial, std::defer_lock);
@@ -1165,9 +1188,23 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool
         if(!decision.contains("proceed") || !decision["proceed"].is_boolean()) {
             return nullptr;
         }
+
+        if(client_hello) {
+            if(!decision.contains("ignore_connection") || !decision["ignore_connection"].is_boolean()) {
+                return nullptr;
+            }
+            ignore_connection = ignore_connection || decision["ignore_connection"].get<bool>();
+
+            // Keep deployment order: later owners see the accepted offer from
+            // earlier owners. Native code receives it only after all succeed.
+            if(decision.contains("upstream")) {
+                observation["upstream"] = decision["upstream"];
+            }
+        }
+
         delivered = true;
         if(!decision["proceed"].get<bool>()) {
-            return {{"proceed", false}};
+            return {{"proceed", false}, {"ignore_connection", false}};
         }
     }
 
@@ -1175,6 +1212,13 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool
     // restart or redeployment is unavailability, not a successful observation.
     if(!delivered) {
         return nullptr;
+    }
+    if(client_hello) {
+        nlohmann::json decision = {{"proceed", true}, {"ignore_connection", ignore_connection}};
+        if(!ignore_connection && observation.contains("upstream")) {
+            decision["upstream"] = observation["upstream"];
+        }
+        return decision;
     }
     return {{"proceed", true}};
 }
@@ -1496,6 +1540,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         bool rewrite_requested = false;
         bool server_lifecycle = false;
         bool tls_lifecycle = false;
+        bool tls_clienthello = false;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         std::string last_enabled;
         for (const auto& entry : chain)
@@ -1587,6 +1632,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             rewrite_requested = rewrite_requested || result.value("rewrite_requested", false);
             server_lifecycle = server_lifecycle || result.value("server_lifecycle", false);
             tls_lifecycle = tls_lifecycle || result.value("tls_lifecycle", false);
+            tls_clienthello = tls_clienthello || result.value("tls_clienthello", false);
             if (result.contains("connection_close")) {
                 // Closing the transport is terminal for this callback chain.
                 // No later deployment may observe or replace bytes which the
@@ -1614,6 +1660,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
                 result["rewrite_requested"] = rewrite_requested;
                 result["server_lifecycle"] = server_lifecycle;
                 result["tls_lifecycle"] = tls_lifecycle;
+                result["tls_clienthello"] = tls_clienthello;
             }
         }
         return result;

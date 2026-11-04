@@ -21,6 +21,7 @@ from addon_h2_events import H2AddonEvents
 from addon_raw_events import RawAddonEvents, RawTransportError, RawTransportSetup
 from addon_runtime import AddonRuntimeError
 from addon_server_native import HOOKS as SERVER_HOOKS, dispatch as dispatch_server
+from addon_clienthello_native import dispatch as dispatch_clienthello
 from addon_tls_native import HOOKS as TLS_HOOKS, dispatch as dispatch_tls
 
 
@@ -48,7 +49,8 @@ class NativeAddonAdapter:
         'http_connect_error',
     })
     HOOKS = (H2AddonEvents.HOOKS | RawAddonEvents.HOOKS |
-             CONNECTION_HOOKS | PASSIVE_HOOKS | CONNECT_HOOKS | SERVER_HOOKS | TLS_HOOKS)
+             CONNECTION_HOOKS | PASSIVE_HOOKS | CONNECT_HOOKS | SERVER_HOOKS |
+             TLS_HOOKS | {'tls_clienthello'})
 
     def __init__(self, generation, *, max_connections=128, body_limit=256 * 1024,
                  opaque_part_factory=None):
@@ -64,6 +66,7 @@ class NativeAddonAdapter:
         self._connections = {}
         self._servers = {}
         self._tls = {}
+        self._tls_hellos = {}
 
     @staticmethod
     def _identity(session_id):
@@ -214,6 +217,8 @@ class NativeAddonAdapter:
             raise AddonRuntimeError('The addon generation is not running')
 
         try:
+            if observation.get('envelope', {}).get('event') == 'client-hello':
+                return await dispatch_clienthello(self, observation)
             return await dispatch_tls(self, observation)
         except BaseException:
             self.generation.invalidate()
@@ -339,6 +344,7 @@ class NativeAddonAdapter:
             else:
                 self.raw.release_connection(identity)
             self._servers.pop(identity, None)
+            self._tls_hellos.pop(identity, None)
             self._tls.pop((identity, 'client'), None)
             self._tls.pop((identity, 'server'), None)
             del self._connections[identity]

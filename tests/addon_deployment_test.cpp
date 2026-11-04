@@ -22,6 +22,39 @@ int main() {
         "    global count\n    await asyncio.sleep(.1)\n    count += 1\n"
         "    print('request', count)\n"
         "def error(flow):\n    print('closed', flow.request.path)\n";
+    // Subscription is an explicit, persistent deployment option. Presence of
+    // a hook alone must not enable native interception of ClientHello.
+    {
+        spider::Inspection subscriptions;
+        auto update = [&](json request) {
+            request["revision"] = subscriptions.status()["revision"];
+            return subscriptions.configure(request);
+        };
+        json request = {{"operation", "deploy"}, {"name", "ClientHello"},
+            {"script", "#!mitmproxy\ndef tls_clienthello(data): pass\n"},
+            {"scope", "all"}, {"instancing", "flow"}};
+
+        auto configured = update(request);
+        assert(configured["chain"][0]["tls_clienthello"] == false);
+        request["id"] = configured["chain"][0]["id"];
+        request["tls_clienthello"] = true;
+        configured = update(request);
+        assert(configured["chain"][0]["tls_clienthello"] == true);
+
+        request.erase("tls_clienthello");
+        configured = update(request);
+        assert(configured["chain"][0]["tls_clienthello"] == true);
+
+        request["tls_clienthello"] = "true";
+        bool rejected = false;
+        try {
+            update(request);
+        } catch(const std::invalid_argument&) {
+            rejected = true;
+        }
+        assert(rejected);
+    }
+
     auto state = configure({{"operation", "deploy"}, {"name", "Addon"}, {"script", source},
                             {"scope", "all"}, {"instancing", "flow"},
                             {"idle_seconds", 1}, {"max_instances", 1},

@@ -12,10 +12,29 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 from addon_loader import compatibility_imports
 from addon_modules import compatibility_modules
-from addon_tls_contract import collect
+from addon_tls_contract import collect, tls_client_hello, dtls_client_hello
+from addon_tls import ClientHello
 
 
 class TLSAddonTests(unittest.TestCase):
+    def test_raw_bytes_can_omit_record(self):
+        body = tls_client_hello()
+        hello = ClientHello(body)
+        record = bytes.fromhex('160303') + (len(body) + 4).to_bytes(2, 'big')
+        record += bytes([1]) + len(body).to_bytes(3, 'big') + body
+
+        self.assertEqual(hello.raw_bytes(), record)
+        self.assertEqual(hello.raw_bytes(wrap_in_record=True), record)
+        self.assertEqual(hello.raw_bytes(False), body)
+        self.assertEqual(hello.raw_bytes(wrap_in_record=False), body)
+
+    def test_dtls_raw_bytes_remains_unsupported(self):
+        hello = ClientHello(dtls_client_hello(), dtls=True)
+        for wrap in (False, True):
+            with self.subTest(wrap=wrap):
+                with self.assertRaises(NotImplementedError):
+                    hello.raw_bytes(wrap_in_record=wrap)
+
     def test_public_contract_matches_reference(self):
         expected = json.loads(
             (ROOT / "tests/corpus/addon_tls_v12.json").read_text()

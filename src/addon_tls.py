@@ -73,9 +73,13 @@ class ClientHello:
                 payload = extensions.read(extensions.uint16())
                 self._extensions.append((extension_type, payload))
 
-    def raw_bytes(self):
+    def raw_bytes(self, wrap_in_record: bool = True):
         if self._dtls:
             raise NotImplementedError
+
+        if not wrap_in_record:
+            return self._raw_bytes
+
         handshake = b"\x01" + len(self._raw_bytes).to_bytes(3, "big")
         handshake += self._raw_bytes
         return b"\x16\x03\x03" + len(handshake).to_bytes(2, "big") + handshake

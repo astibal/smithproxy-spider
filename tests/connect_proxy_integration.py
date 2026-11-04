@@ -78,6 +78,10 @@ def main():
                     # separate integration coverage and is not negotiated here.
                     result = {'action': 'info-response',
                               'protocols': {'connection-content': ['json-base64']}}
+                elif (event['action'] == 'tls-lifecycle' and mode in ('invalid-hello', 'strict-hello')
+                      and event['details']['tls']['envelope']['event'] == 'client-hello'):
+                    result = {'action': 'tls-lifecycle', 'id': 'wrong',
+                              'proceed': True, 'ignore_connection': True}
                 elif event['action'] == 'server-lifecycle' and mode in ('invalid-server', 'strict-server'):
                     result = {'action': 'server-lifecycle', 'id': 'wrong'}
                 elif invalid:
@@ -88,8 +92,12 @@ def main():
                     except HTTPError as error:
                         status = error.code
                         result = json.load(error)
-                if event['action'] == 'connection-start' and mode in ('strict-outcome', 'strict-server', 'hold-server'):
+                if event['action'] == 'connection-start' and mode in ('strict-outcome', 'strict-server', 'hold-server', 'strict-hello'):
                     result.setdefault('control', {})['mode'] = 'strict'
+                if (event['action'] == 'tls-lifecycle' and mode == 'invalid-upstream'
+                        and event['details']['tls']['envelope']['event'] == 'client-hello'):
+                    # A valid SNI change must not survive an invalid ALPN offer.
+                    result['upstream']['alpn_base64'] = base64.b64encode(bytes([2]) + b'h3').decode()
                 if (event['action'] == 'http-connect' and mode == 'hold-request' and
                         event['details']['http_connect']['envelope']['event'] == 'request'):
                     request_held.set()
@@ -150,11 +158,11 @@ def main():
 
         deployment = None
 
-        def deploy(source):
+        def deploy(source, tls_clienthello=False):
             nonlocal deployment
             value = {'operation': 'deploy', 'name': 'CONNECT test', 'hook': 'content',
                      'scope': 'all', 'instancing': 'flow', 'script_api': 'mitmproxy',
-                     'script': '#!mitmproxy\n' + source}
+                     'script': '#!mitmproxy\n' + source, 'tls_clienthello': tls_clienthello}
             if deployment:
                 value['id'] = deployment
             state = configure(value)
@@ -208,7 +216,7 @@ def main():
             config.write_text(content)
             base_config_text = content
 
-            def start_tls_proxy(target):
+            def start_tls_proxy(target, verify_identity=False):
                 # Use the transparent listener and policy DNAT. The fixture
                 # needs no host firewall changes and does not alter CONNECT behavior.
                 port = free_port()
@@ -217,7 +225,8 @@ def main():
                     'accept_tproxy': 'TRUE', 'accept_redirect': 'FALSE', 'accept_http_connect': 'FALSE',
                     'ssl_port': f'"{port}"', 'ssl_workers': '1',
                     'plaintext_workers': '-1', 'udp_workers': '-1',
-                    'allow_untrusted_issuers': 'TRUE', 'allow_invalid_certs': 'TRUE',
+                    'allow_untrusted_issuers': 'TRUE',
+                    'allow_invalid_certs': 'FALSE' if verify_identity else 'TRUE',
                     'allow_self_signed': 'TRUE',
                     'port': str(free_port()), 'log_console': 'TRUE', 'log_level': '8',
                 }
@@ -261,9 +270,14 @@ def main():
                     time.sleep(.02)
                 return port, tls_process
 
+            def tls_relay_mode(value):
+                nonlocal mode
+                mode = value
+
             from tls_proxy_cases import run_tls_cases, run_tls_failure_cases
-            run_tls_cases(deploy, start_tls_proxy, certificates, exchanges)
-            run_tls_failure_cases(deploy, start_tls_proxy, certificates, exchanges)
+            run_tls_cases(deploy, start_tls_proxy, certificates, exchanges, tls_relay_mode)
+            run_tls_failure_cases(deploy, start_tls_proxy, certificates, exchanges, tls_relay_mode)
+            mode = 'forward'
 
             proxy = launch([args.proxy, '--config-file', config, '--debug'], process_env(root))
             wait_for_listener(proxy, proxy_port)

@@ -47,19 +47,22 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
 
     const auto action = event.value("action", "");
     if(action == "tls-lifecycle") {
-        // Transient TLS outcomes follow the same pinned setup ownership as TCP.
+        // TLS events follow the same pinned setup ownership as TCP.
         try {
             const auto& observation = event.at("details").at("tls");
             const auto& envelope = observation.at("envelope");
             const auto id = event.at("id").get<std::string>();
             const auto phase = envelope.at("event").get<std::string>();
             const auto side = envelope.at("side").get<std::string>();
+            const auto observation_limit = (phase == "client-hello" ? 512 : 256) * 1024;
+
             if(id.empty() || id.size() > 1024 || envelope.size() != 5 ||
                !envelope.at("version").is_number_integer() || envelope.at("version") != 1 ||
                envelope.at("connection_id") != id ||
                !envelope.at("attempt").is_number_unsigned() || envelope.at("attempt") == 0 ||
-               (phase != "established" && phase != "failed") ||
-               (side != "client" && side != "server") || observation.dump().size() > 256 * 1024) {
+               (phase != "established" && phase != "failed" && phase != "client-hello") ||
+               (phase == "client-hello" && side != "client") ||
+               (side != "client" && side != "server") || observation.dump().size() > observation_limit) {
                 return {400, {{"error", "Invalid TLS observation"}}};
             }
 
@@ -68,12 +71,20 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
                 return {503, {{"error", "TLS callback unavailable"}}};
             }
 
-            return {200, {
+            nlohmann::json reply = {
                 {"action", action},
                 {"id", id},
                 {"envelope", envelope},
                 {"proceed", decision.at("proceed")}
-            }};
+            };
+            if(phase == "client-hello") {
+                reply["ignore_connection"] = decision.at("ignore_connection");
+                if(decision.contains("upstream")) {
+                    reply["upstream"] = decision["upstream"];
+                }
+            }
+
+            return {200, std::move(reply)};
         } catch(const nlohmann::json::exception&) {
             return {400, {{"error", "Invalid TLS observation"}}};
         }
@@ -310,6 +321,9 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             }
             if(script_result.value("ok", false) && script_result.value("tls_lifecycle", false)) {
                 control["tls_lifecycle"] = 1;
+            }
+            if(script_result.value("ok", false) && script_result.value("tls_clienthello", false)) {
+                control["tls_clienthello"] = 1;
             }
 
             return {200, {{"action", "accept"}, {"control", std::move(control)}}};

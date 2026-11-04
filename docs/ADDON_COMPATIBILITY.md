@@ -624,11 +624,12 @@ mitmproxy 12.3.1 corpus fixes this ordering and identity contract. The packaged
 worker repeats the contract through the production JSON boundary.
 
 Server lifecycle hooks are driven by native TCP observations, never synthesized
-from client setup. The review producer dispatches `server_connect`,
+from client setup. The approved producer on `proxy-hooks` dispatches `server_connect`,
 `server_connected`, `server_connect_error` and `server_disconnected` synchronously,
 with one Server identity per upstream attempt. TCP completion does not imply TLS
-readiness. The native client-closed observation preserves the reference teardown
-state ordering.
+readiness. Physical client closure and logical session retirement are reported
+separately; the existing native teardown path owns socket shutdown. Legacy
+reconnects are unchanged and outside this producer contract.
 
 See `SERVER_LIFECYCLE_PRODUCER.md` for the envelope, CONNECT ordering, native
 error-veto semantics, tests and limits. General destination mutation and

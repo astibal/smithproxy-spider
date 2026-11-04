@@ -56,11 +56,18 @@
   deferred; do not add a Smithproxy timer, management API endpoint or persistent
   channel as part of the callback-driven implementation.
 
-- **mitmproxy server lifecycle (review):** the TCP producer and worker bridge
+- **mitmproxy server lifecycle (closed for the agreed TCP scope):** the TCP producer and worker bridge
   now map ordered attempt, completion, failure and closure observations to the
-  four server hooks. Review `SERVER_LIFECYCLE_PRODUCER.md` for ownership,
-  reconnects, fail-open/strict behavior and the explicit routing limitation.
+  four server hooks. Approved and pushed on `proxy-hooks` in both repositories
+  (native `bfee15f9`, Spider `7d00a03`). See `SERVER_LIFECYCLE_PRODUCER.md`
+  for ownership, fail-open/strict behavior and routing limits. Legacy reconnects
+  remain unchanged and outside the near-term plan.
   TLS/QUIC observations and general destination mutation remain separate work.
+- **TLS lifecycle inventory:** see `TLS_HOOKS_INVENTORY.md` for native insertion
+  points, ordering constraints and the SSL-object compatibility boundary.
+  TCP TLS outcomes and opt-in ClientHello decisions are implemented on `proxy-hooks`,
+  including bounded upstream SNI/ALPN changes. QUIC and live SSL-context control
+  remain open; see `CLIENTHELLO_PRODUCER.md` and `TLS_UPSTREAM_OPTIONS.md`.
 - **HTTP CONNECT producer (approved):** regular HTTP/1 request, connected
   and error hooks now have a native producer and worker bridge. The two production patches were approved together on 2026-11-04; see `HTTP_CONNECT_PRODUCER_PROPOSAL.md` for the
   fail-open/strict policy, authoritative AAA boundary and live test coverage.

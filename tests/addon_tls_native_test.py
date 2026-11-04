@@ -2,6 +2,7 @@
 
 import base64
 import json
+import ssl
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -31,6 +32,21 @@ def observation(side='server', event='established', attempt=1):
     }
 
 
+def client_hello():
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.set_alpn_protocols(['http/1.1'])
+    outgoing = ssl.MemoryBIO()
+    client = context.wrap_bio(ssl.MemoryBIO(), outgoing, server_hostname='probe.invalid')
+    try:
+        client.do_handshake()
+    except ssl.SSLWantReadError:
+        pass
+
+    message = observation('client', 'client-hello')
+    message['client_hello_base64'] = base64.b64encode(outgoing.read()[9:]).decode()
+    return message
+
+
 class TlsTests(unittest.IsolatedAsyncioTestCase):
     async def start(self, source):
         generation = AddonGeneration(source, NativeAddonAdapter.HOOKS)
@@ -48,6 +64,189 @@ class TlsTests(unittest.IsolatedAsyncioTestCase):
         if pending is not None:
             await pending
         return generation, adapter
+
+    async def test_clienthello_dynamic_registration_and_shared_context(self):
+        generation, adapter = await self.start('''from mitmproxy import ctx
+seen = []
+class Dynamic:
+    def tls_clienthello(self, data):
+        assert data.client_hello.sni == 'probe.invalid'
+        assert data.client_hello.alpn_protocols == [b'http/1.1']
+        assert data.context.client.sni == 'probe.invalid'
+        assert tuple(data.context.client.alpn_offers) == (b'http/1.1',)
+        seen.append(data)
+def client_connected(client):
+    ctx.master.addons.add(Dynamic())
+''')
+        decision = await adapter.tls_lifecycle(client_hello())
+
+        self.assertEqual(decision, {'proceed': True, 'ignore_connection': False})
+        self.assertIs(generation.addon.module.seen[0].context.client,
+                      adapter._connections['session'].client)
+        await adapter.stop('session')
+        self.assertFalse(adapter._tls_hellos)
+
+    async def test_clienthello_bypass_and_termination(self):
+        for statement, expected in (
+            ('data.ignore_connection = True', {'proceed': True, 'ignore_connection': True}),
+            ("data.context.client.error = 'denied'", {'proceed': False, 'ignore_connection': False}),
+        ):
+            with self.subTest(statement=statement):
+                _, adapter = await self.start('def tls_clienthello(data):\n    ' + statement)
+                self.assertEqual(await adapter.tls_lifecycle(client_hello()), expected)
+
+    async def test_clienthello_rejects_unsupported_changes(self):
+        for statement in (
+            'data.establish_server_tls_first = True',
+            'data.ignore_connection = 1',
+            'data.client_hello = None',
+            "data.context.server.address = ('other.invalid', 443)",
+        ):
+            with self.subTest(statement=statement):
+                generation, adapter = await self.start('def tls_clienthello(data):\n    ' + statement)
+                with self.assertRaises(AddonRuntimeError):
+                    await adapter.tls_lifecycle(client_hello())
+                self.assertNotEqual(generation.state, 'running')
+
+    async def test_clienthello_rejects_tls_settings_on_both_sides(self):
+        changes = {
+            'tls': 'True',
+            'sni': "'other.invalid'",
+            'alpn': "b'h2'",
+            'alpn_offers': "[b'h2']",
+            'cipher': "'TEST-CIPHER'",
+            'cipher_list': "['TEST-CIPHER']",
+            'tls_version': "'TLSv1.2'",
+        }
+        for side in ('client', 'server'):
+            for field, value in changes.items():
+                with self.subTest(side=side, field=field):
+                    source = f'def tls_clienthello(data):\n    data.context.{side}.{field} = {value}'
+                    generation, adapter = await self.start(source)
+                    connection = getattr(adapter._connections['session'], side)
+                    previous = getattr(connection, field)
+                    if side == 'client' and field == 'sni':
+                        previous = 'probe.invalid'
+                    elif side == 'client' and field == 'alpn_offers':
+                        previous = (b'http/1.1',)
+
+                    with self.assertRaisesRegex(AddonRuntimeError, side + r'\.' + field):
+                        await adapter.tls_lifecycle(client_hello())
+
+                    self.assertEqual(getattr(connection, field), previous)
+                    self.assertNotEqual(generation.state, 'running')
+
+    async def test_clienthello_restores_lists_and_both_sides_after_exception(self):
+        _, adapter = await self.start('''def tls_clienthello(data):
+    data.context.client.sni = 'changed.invalid'
+    data.context.server.cipher_list.append('ADDED')
+    raise RuntimeError('callback failure')
+''')
+        server = adapter._connections['session'].server
+        server.cipher_list = ['ORIGINAL']
+
+        with self.assertRaises(AddonRuntimeError):
+            await adapter.tls_lifecycle(client_hello())
+
+        self.assertEqual(adapter._connections['session'].client.sni, 'probe.invalid')
+        self.assertEqual(tuple(server.cipher_list), ('ORIGINAL',))
+
+    async def test_clienthello_raw_body_and_default_record(self):
+        generation, adapter = await self.start('''records = []
+def tls_clienthello(data):
+    hello = data.client_hello
+    records.extend([hello.raw_bytes(), hello.raw_bytes(True),
+                    hello.raw_bytes(False), hello.raw_bytes(wrap_in_record=False)])
+''')
+        message = client_hello()
+        body = base64.b64decode(message['client_hello_base64'])
+        expected = b'\x16\x03\x03' + (len(body) + 4).to_bytes(2, 'big')
+        expected += b'\x01' + len(body).to_bytes(3, 'big') + body
+
+        await adapter.tls_lifecycle(message)
+
+        self.assertEqual(generation.addon.module.records, [expected, expected, body, body])
+
+    async def test_clienthello_upstream_sni_and_alpn(self):
+        _, adapter = await self.start('''def tls_clienthello(data):
+    assert data.context.server.sni == 'native.invalid'
+    assert data.context.server.alpn_offers == (b'h2', b'http/1.1')
+    data.context.server.sni = 'upstream.invalid'
+    data.context.server.alpn_offers = [b'http/1.1']
+''')
+        message = client_hello()
+        message['upstream'] = {
+            'sni': 'native.invalid',
+            'alpn_base64': base64.b64encode(bytes([2]) + b'h2' + bytes([8]) + b'http/1.1').decode(),
+        }
+
+        decision = await adapter.tls_lifecycle(message)
+
+        self.assertEqual(decision['upstream'], {
+            'sni': 'upstream.invalid',
+            'alpn_base64': base64.b64encode(bytes([8]) + b'http/1.1').decode(),
+        })
+        self.assertEqual(adapter._connections['session'].client.sni, 'probe.invalid')
+
+    async def test_clienthello_upstream_rejects_invalid_options(self):
+        for change in (
+            "sni = '127.0.0.1'",
+            "sni = 'bad..name'",
+            "sni = '-bad.invalid'",
+            "sni = 123",
+            "alpn_offers = [b'h2']",
+            "alpn_offers = [b'']",
+            "alpn_offers = ['http/1.1']",
+            "alpn_offers = None",
+            "cipher_list = ['OTHER']",
+        ):
+            with self.subTest(change=change):
+                source = 'def tls_clienthello(data):\n    data.context.server.' + change
+                _, adapter = await self.start(source)
+                message = client_hello()
+                message['upstream'] = {
+                    'sni': 'native.invalid',
+                    'alpn_base64': base64.b64encode(bytes([8]) + b'http/1.1').decode(),
+                }
+
+                with self.assertRaises(AddonRuntimeError):
+                    await adapter.tls_lifecycle(message)
+
+    async def test_clienthello_upstream_cannot_enable_blocked_alpn(self):
+        source = "def tls_clienthello(data):\n    data.context.server.alpn_offers = [b'http/1.1']"
+        _, adapter = await self.start(source)
+        message = client_hello()
+        message['upstream'] = {'sni': 'native.invalid', 'alpn_base64': ''}
+        message['upstream_alpn_blocked'] = True
+
+        with self.assertRaisesRegex(AddonRuntimeError, 'native offer'):
+            await adapter.tls_lifecycle(message)
+
+    async def test_clienthello_upstream_defaults_and_idna(self):
+        for sni, expected in ((None, 'native.invalid'), ('', ''), ('täst.invalid', 'xn--tst-qla.invalid')):
+            with self.subTest(sni=sni):
+                source = (
+                    f'def tls_clienthello(data):\n'
+                    f'    data.context.server.sni = {sni!r}\n'
+                    f'    data.context.server.alpn_offers = []'
+                )
+                _, adapter = await self.start(source)
+                message = client_hello()
+                message['upstream'] = {
+                    'sni': 'native.invalid',
+                    'alpn_base64': base64.b64encode(bytes([8]) + b'http/1.1').decode(),
+                }
+
+                decision = await adapter.tls_lifecycle(message)
+
+                self.assertEqual(decision['upstream']['sni'], expected)
+                self.assertEqual(decision['upstream']['alpn_base64'], message['upstream']['alpn_base64'])
+
+    async def test_clienthello_cannot_replay(self):
+        _, adapter = await self.start('def tls_clienthello(data): pass')
+        await adapter.tls_lifecycle(client_hello())
+        with self.assertRaises(AddonRuntimeError):
+            await adapter.tls_lifecycle(client_hello())
 
     async def test_established_metadata_and_shared_descriptors(self):
         generation, adapter = await self.start('''events = []

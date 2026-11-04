@@ -386,12 +386,12 @@ See `PROTOCOL_STATE_API_PROPOSAL.md` for receive/publication distinctions.
 | --- | --- |
 | Idle resume | No spontaneous publication. Requires a separately agreed transport/control design. |
 | Raw TCP/UDP | Models and dormant adapter/corpora exist; native producer and datagram ownership still need integration approval. Raw suspension is not delivered. |
-| Server lifecycle | TCP producer/worker bridge in review on `proxy-hooks`; see `SERVER_LIFECYCLE_PRODUCER.md`. Native attempts drive events; TLS/QUIC and destination mutation remain separate. |
+| Server lifecycle | TCP producer/worker bridge approved and pushed on `proxy-hooks` (native `bfee15f9`, Spider `7d00a03`); see `SERVER_LIFECYCLE_PRODUCER.md`. Native attempts drive events; TLS/QUIC and destination mutation remain separate. |
 | HTTP CONNECT | Regular HTTP/1 producer and worker bridge are approved with live wire tests; upstream-proxy and HTTP/2 CONNECT remain deferred. |
 | WebSocket | Logical-message adapter/corpora exist; native framing/backpressure producer still required. Do not substitute raw TCP chunks. |
 | DNS | Complete-message model and extensive UDP/TCP corpora exist; do not infer DNS solely from port numbers. Producer integration remains open. |
 | SOCKS5 authentication | Live AAA-result veto through an explicit authentication deployment; see AUTHENTICATION_HOOKS.md and the new-AAA merge dependency. |
-| TLS/QUIC observations | Need genuine native observations before lifecycle claims. |
+| TLS/QUIC observations | TCP TLS outcome observations and explicitly subscribed ClientHello decisions are implemented on `proxy-hooks`; see `CLIENTHELLO_PRODUCER.md` and `TLS_UPSTREAM_OPTIONS.md`. QUIC remains separate. |
 | Incremental HTTP streaming | Complete-message buffering is not streaming. Follow `STREAMING_API_PROPOSAL.md`; implementation needs approval. |
 | Destination changes | Native upstream-selection boundary is required; see `DESTINATION_ROUTING_API_PROPOSAL.md`. |
 | Replay/shutdown | Public detached helpers do not imply live proxy replay or shutdown authority. See `HOST_CONTROL_PROPOSAL.md`. |
