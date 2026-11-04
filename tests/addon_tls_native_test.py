@@ -304,6 +304,56 @@ def tls_established_client(data):
         event['alpn_base64'] = ''
         await adapter.tls_lifecycle(event)
 
+    async def test_failure_outcomes_match_pinned_reference(self):
+        corpus = Path(__file__).parent / 'corpus/addon_tls_failures_v12.json'
+        reference = json.loads(corpus.read_text())
+
+        # Compare only outcome callbacks: start callbacks require live SSL
+        # control and are deliberately outside this native adapter contract.
+        source = '''events = []
+def record(hook, data):
+    conn = data.conn
+    events.append({
+        'hook': hook, 'connection': type(conn).__name__,
+        'transport': conn.transport_protocol, 'sni': conn.sni,
+        'tls': conn.tls, 'tls_established': conn.tls_established,
+        'tls_version': conn.tls_version,
+        'alpn': None if conn.alpn is None else conn.alpn.decode('latin-1'),
+    })
+def tls_established_server(data):
+    record('tls_established_server', data)
+def tls_established_client(data):
+    record('tls_established_client', data)
+def tls_failed_server(data):
+    record('tls_failed_server', data)
+def tls_failed_client(data):
+    record('tls_failed_client', data)
+'''
+
+        for failed_side in ('server', 'client'):
+            with self.subTest(failed_side=failed_side):
+                generation, adapter = await self.start(source)
+
+                # A failure on one leg does not invent a failure on the other.
+                # Replay both genuine outcomes in upstream-then-client order.
+                for attempt, side in enumerate(('server', 'client'), start=1):
+                    failed = side == failed_side
+                    event = observation(side, 'failed' if failed else 'established', attempt)
+                    event.update({
+                        'sni': 'localhost',
+                        'alpn_base64': None if failed else '',
+                        'tls_version': None if failed else 'TLSv1.3',
+                        'cipher': None if failed else 'TLS_AES_256_GCM_SHA384',
+                    })
+
+                    self.assertEqual(await adapter.tls_lifecycle(event), {'proceed': True})
+
+                expected = [
+                    entry for entry in reference['cases'][failed_side]
+                    if entry['hook'].startswith(('tls_established_', 'tls_failed_'))
+                ]
+                self.assertEqual(generation.addon.module.events, expected)
+
     async def test_live_ssl_replacement_is_rejected(self):
         _, adapter = await self.start('''def tls_established_server(data):
     data.ssl_conn = None

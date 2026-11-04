@@ -573,7 +573,9 @@ if(BUILD_TESTING)
     target_link_libraries(capture_library_tests PRIVATE spider_core)
     target_compile_options(capture_library_tests PRIVATE -UNDEBUG)
     add_test(NAME capture_library_tests COMMAND capture_library_tests)
-    set_tests_properties(inspection_instances_tests PROPERTIES TIMEOUT 45)
+    # This suite starts many isolated Python workers; a clean baseline takes
+    # about 51 seconds on the current test host, before any deliberate load.
+    set_tests_properties(inspection_instances_tests PROPERTIES TIMEOUT 90)
     # This integration test intentionally exercises repeated worker startup and
     # teardown. Debug builds are close to 15 seconds on normal developer hosts,
     # so leave scheduling headroom without weakening any internal deadline.
