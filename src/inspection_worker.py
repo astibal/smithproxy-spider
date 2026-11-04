@@ -405,13 +405,13 @@ def invoke_http_connect(observation):
         }
 
 
-def invoke_server_lifecycle(observation):
+def invoke_lifecycle(observation, *, tls=False):
     output = Output()
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-            decision = addon_worker.run(
-                addon_worker.adapter.server_lifecycle(observation)
-            )
+            adapter = addon_worker.adapter
+            callback = adapter.tls_lifecycle if tls else adapter.server_lifecycle
+            decision = addon_worker.run(callback(observation))
 
         return {
             'ok': True,
@@ -424,7 +424,7 @@ def invoke_server_lifecycle(observation):
             'ok': False,
             'replacement': None,
             'logs': [],
-            'error': 'Server lifecycle callback failed',
+            'error': 'TLS lifecycle callback failed' if tls else 'Server lifecycle callback failed',
         }
 
 
@@ -864,8 +864,10 @@ def serve_persistent():
             sys.stdout.flush()
             break
         current['storage_directory'] = storage_directory
-        if 'server_lifecycle' in current:
-            response = invoke_server_lifecycle(current['server_lifecycle'])
+        if 'tls_lifecycle' in current:
+            response = invoke_lifecycle(current['tls_lifecycle'], tls=True)
+        elif 'server_lifecycle' in current:
+            response = invoke_lifecycle(current['server_lifecycle'])
         elif 'http_connect' in current:
             response = invoke_http_connect(current['http_connect'])
         elif 'authentication' in current:

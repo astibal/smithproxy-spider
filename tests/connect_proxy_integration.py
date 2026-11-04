@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import re
 import subprocess
 import sys
 import tempfile
@@ -93,7 +94,7 @@ def main():
                         event['details']['http_connect']['envelope']['event'] == 'request'):
                     request_held.set()
                     assert release_request.wait(8), 'test did not release held request'
-                if event['action'] in ('http-connect', 'server-lifecycle', 'connection-start', 'connection-stop', 'connection-content'):
+                if event['action'] in ('http-connect', 'server-lifecycle', 'tls-lifecycle', 'connection-start', 'connection-stop', 'connection-content'):
                     exchanges.append((event, result, status))
             else:
                 result = {}
@@ -205,6 +206,65 @@ def main():
             content = content.replace('        write_payload = FALSE;',
                 '        write_payload = FALSE; webhook_enable = TRUE; webhook_lock_traffic = FALSE;', 1)
             config.write_text(content)
+            base_config_text = content
+
+            def start_tls_proxy(target):
+                # Use the transparent listener and policy DNAT. The fixture
+                # needs no host firewall changes and does not alter CONNECT behavior.
+                port = free_port()
+                text = base_config_text.replace('nat = "none";', 'nat = "auto";')
+                settings = {
+                    'accept_tproxy': 'TRUE', 'accept_redirect': 'FALSE', 'accept_http_connect': 'FALSE',
+                    'ssl_port': f'"{port}"', 'ssl_workers': '1',
+                    'plaintext_workers': '-1', 'udp_workers': '-1',
+                    'allow_untrusted_issuers': 'TRUE', 'allow_invalid_certs': 'TRUE',
+                    'allow_self_signed': 'TRUE',
+                    'port': str(free_port()), 'log_console': 'TRUE', 'log_level': '8',
+                }
+                for name, value in settings.items():
+                    text, count = re.subn(r'(\b' + name + r'\s*=\s*)[^;]+;',
+                                         lambda match: match[1] + value + ';', text, count=1)
+                    assert count == 1, name
+
+                text = re.sub(r'(tls_profiles\s*=\s*\{\s*default\s*=\s*\{)',
+                              r'\1 ct_enable = FALSE;', text, count=1)
+                text = text.replace('address_objects = {',
+                    'address_objects = { tls_origin = { type=0; cidr="127.0.0.1/32"; };', 1)
+                text = text.replace('port_objects = {',
+                    f'port_objects = {{ tls_origin = {{start={target}; end={target};}};', 1)
+                text, count = re.subn(r'routing\s*=\s*\{\s*\}',
+                    'routing = { tls_test = { dnat_address=["tls_origin"]; '
+                    'dnat_port=["tls_origin"]; dnat_lb_method="round-robin"; '
+                    'rewrite_sni=""; rewrite_sni_to=""; }; }', text, count=1)
+                assert count == 1
+                position = text.rfind('routing = "none";')
+                assert position >= 0
+                text = text[:position] + text[position:].replace('routing = "none";',
+                    'routing = "tls_test";', 1)
+
+                tls_config = root / f'tls-{target}.cfg'
+                tls_config.write_text(text)
+                tls_process = launch([args.proxy, '--config-file', tls_config, '--debug'],
+                    process_env(root, f'tls-{target}.pid'))
+                # A TCP readiness probe would itself create an upstream TLS
+                # session and consume the one-shot origin. Inspect LISTEN only.
+                deadline = time.monotonic() + 10
+                while True:
+                    sockets = []
+                    for table in ('/proc/net/tcp', '/proc/net/tcp6'):
+                        sockets.extend(Path(table).read_text().splitlines()[1:])
+                    if any(line.split()[1].endswith(f':{port:04X}') and
+                           line.split()[3] == '0A' for line in sockets):
+                        break
+                    assert tls_process.poll() is None, 'TLS proxy exited during startup'
+                    assert time.monotonic() < deadline, 'TLS listener did not open'
+                    time.sleep(.02)
+                return port, tls_process
+
+            from tls_proxy_cases import run_tls_cases, run_tls_failure_cases
+            run_tls_cases(deploy, start_tls_proxy, certificates, exchanges)
+            run_tls_failure_cases(deploy, start_tls_proxy, certificates, exchanges)
+
             proxy = launch([args.proxy, '--config-file', config, '--debug'], process_env(root))
             wait_for_listener(proxy, proxy_port)
 
@@ -621,10 +681,14 @@ def http_connected(flow):
                     print('PASS: failed prelude without setup still receives one native cleanup')
 
         except BaseException:
+            if os.environ.get('TLS_TEST_DIAGNOSTICS'):
+                shutil.copytree(root, os.environ['TLS_TEST_DIAGNOSTICS'], dirs_exist_ok=True)
             for log in logs:
                 log.flush()
                 log.seek(0)
                 print(log.read()[-16000:], file=sys.stderr)
+            for native_log in root.glob('messages*'):
+                print(native_log.read_text(errors='replace')[-18000:], file=sys.stderr)
             print(json.dumps(exchanges[-12:], indent=2), file=sys.stderr)
             if 'origin_errors' in locals():
                 print('Origin errors:', origin_errors, file=sys.stderr)

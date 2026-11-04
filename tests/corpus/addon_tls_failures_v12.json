@@ -1,0 +1,103 @@
+{
+  "reference": "mitmproxy 12.3.1",
+  "cases": {
+    "server": [
+      {
+        "hook": "tls_clienthello",
+        "sni": "localhost",
+        "alpn_offers": [],
+        "ignore_connection": false,
+        "establish_server_tls_first": false
+      },
+      {
+        "hook": "tls_start_server",
+        "connection": "Server",
+        "transport": "tcp",
+        "sni": null,
+        "tls": true,
+        "tls_established": false,
+        "tls_version": null,
+        "alpn": null
+      },
+      {
+        "hook": "tls_failed_server",
+        "connection": "Server",
+        "transport": "tcp",
+        "sni": "localhost",
+        "tls": true,
+        "tls_established": false,
+        "tls_version": null,
+        "alpn": null
+      },
+      {
+        "hook": "tls_start_client",
+        "connection": "Client",
+        "transport": "tcp",
+        "sni": "localhost",
+        "tls": true,
+        "tls_established": false,
+        "tls_version": null,
+        "alpn": null
+      },
+      {
+        "hook": "tls_established_client",
+        "connection": "Client",
+        "transport": "tcp",
+        "sni": "localhost",
+        "tls": true,
+        "tls_established": true,
+        "tls_version": "TLSv1.3",
+        "alpn": ""
+      }
+    ],
+    "client": [
+      {
+        "hook": "tls_clienthello",
+        "sni": "localhost",
+        "alpn_offers": [],
+        "ignore_connection": false,
+        "establish_server_tls_first": false
+      },
+      {
+        "hook": "tls_start_server",
+        "connection": "Server",
+        "transport": "tcp",
+        "sni": null,
+        "tls": true,
+        "tls_established": false,
+        "tls_version": null,
+        "alpn": null
+      },
+      {
+        "hook": "tls_established_server",
+        "connection": "Server",
+        "transport": "tcp",
+        "sni": "localhost",
+        "tls": true,
+        "tls_established": true,
+        "tls_version": "TLSv1.3",
+        "alpn": ""
+      },
+      {
+        "hook": "tls_start_client",
+        "connection": "Client",
+        "transport": "tcp",
+        "sni": "localhost",
+        "tls": true,
+        "tls_established": false,
+        "tls_version": null,
+        "alpn": null
+      },
+      {
+        "hook": "tls_failed_client",
+        "connection": "Client",
+        "transport": "tcp",
+        "sni": "localhost",
+        "tls": true,
+        "tls_established": false,
+        "tls_version": null,
+        "alpn": null
+      }
+    ]
+  }
+}

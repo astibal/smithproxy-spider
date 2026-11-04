@@ -903,6 +903,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     if (runtime->addon && result.value("ok", false) && event.value("action", "") == "connection-start") {
         runtime->addon_connections.insert(event.value("id", ""));
         result["server_lifecycle"] = true;
+        result["tls_lifecycle"] = true;
     }
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     result["duration_ms"] = elapsed;
@@ -1083,9 +1084,18 @@ bool Inspection::translation_required(const nlohmann::json& event) const {
 }
 
 nlohmann::json Inspection::server_lifecycle(const nlohmann::json& event) {
+    return transport_lifecycle(event, false);
+}
+
+nlohmann::json Inspection::tls_lifecycle(const nlohmann::json& event) {
+    return transport_lifecycle(event, true);
+}
+
+nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool tls) {
 
     const auto id = event.at("id").get<std::string>();
-    const auto& observation = event.at("details").at("server");
+    const auto& observation = event.at("details").at(tls ? "tls" : "server");
+    const auto operation = tls ? "tls_lifecycle" : "server_lifecycle";
     std::vector<ConnectOwner> owners;
     {
         std::scoped_lock lock(mutex_);
@@ -1137,7 +1147,7 @@ nlohmann::json Inspection::server_lifecycle(const nlohmann::json& event) {
 
         nlohmann::json result;
         try {
-            result = runtime.pool->run({{"server_lifecycle", observation}},
+            result = runtime.pool->run({{operation, observation}},
                 std::min<int>(static_cast<int>(remaining), owner.timeout_ms));
         } catch(const std::exception&) {
             result = nullptr;
@@ -1485,6 +1495,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         nlohmann::json replacement = nullptr;
         bool rewrite_requested = false;
         bool server_lifecycle = false;
+        bool tls_lifecycle = false;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         std::string last_enabled;
         for (const auto& entry : chain)
@@ -1575,6 +1586,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             if (!result.value("ok", false)) { result["replacement"] = nullptr; result["steps"] = steps; return result; }
             rewrite_requested = rewrite_requested || result.value("rewrite_requested", false);
             server_lifecycle = server_lifecycle || result.value("server_lifecycle", false);
+            tls_lifecycle = tls_lifecycle || result.value("tls_lifecycle", false);
             if (result.contains("connection_close")) {
                 // Closing the transport is terminal for this callback chain.
                 // No later deployment may observe or replace bytes which the
@@ -1601,6 +1613,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             if (setup) {
                 result["rewrite_requested"] = rewrite_requested;
                 result["server_lifecycle"] = server_lifecycle;
+                result["tls_lifecycle"] = tls_lifecycle;
             }
         }
         return result;

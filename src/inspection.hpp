@@ -13,6 +13,7 @@ namespace spider {
 class InspectionPool;
 class Inspection {
 public:
+    nlohmann::json tls_lifecycle(const nlohmann::json& event);
     nlohmann::json server_lifecycle(const nlohmann::json& event);
     nlohmann::json http_connect(const nlohmann::json& event);
     bool authenticate(const nlohmann::json& event);
@@ -34,6 +35,7 @@ public:
     bool translation_required(const nlohmann::json& event) const;
     Collection collection;
 private:
+    nlohmann::json transport_lifecycle(const nlohmann::json& event, bool tls);
     struct Instance {
         nlohmann::json state = nlohmann::json::object();
         std::chrono::steady_clock::time_point used = std::chrono::steady_clock::now();

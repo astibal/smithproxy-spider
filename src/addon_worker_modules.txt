@@ -55,3 +55,4 @@ addon_websocket_events.py
 addon_native.py
 addon_authentication.py
 addon_server_native.py
+addon_tls_native.py

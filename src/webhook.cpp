@@ -46,6 +46,39 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
+    if(action == "tls-lifecycle") {
+        // Transient TLS outcomes follow the same pinned setup ownership as TCP.
+        try {
+            const auto& observation = event.at("details").at("tls");
+            const auto& envelope = observation.at("envelope");
+            const auto id = event.at("id").get<std::string>();
+            const auto phase = envelope.at("event").get<std::string>();
+            const auto side = envelope.at("side").get<std::string>();
+            if(id.empty() || id.size() > 1024 || envelope.size() != 5 ||
+               !envelope.at("version").is_number_integer() || envelope.at("version") != 1 ||
+               envelope.at("connection_id") != id ||
+               !envelope.at("attempt").is_number_unsigned() || envelope.at("attempt") == 0 ||
+               (phase != "established" && phase != "failed") ||
+               (side != "client" && side != "server") || observation.dump().size() > 256 * 1024) {
+                return {400, {{"error", "Invalid TLS observation"}}};
+            }
+
+            const auto decision = inspection ? inspection->tls_lifecycle(event) : nlohmann::json(nullptr);
+            if(decision.is_null()) {
+                return {503, {{"error", "TLS callback unavailable"}}};
+            }
+
+            return {200, {
+                {"action", action},
+                {"id", id},
+                {"envelope", envelope},
+                {"proceed", decision.at("proceed")}
+            }};
+        } catch(const nlohmann::json::exception&) {
+            return {400, {{"error", "Invalid TLS observation"}}};
+        }
+    }
+
     if(action == "server-lifecycle") {
         // Ordered transport observations are transient; dispatch only to addon
         // generations that already own the connection's setup.
@@ -274,6 +307,9 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             nlohmann::json control = {{"rewrite", rewrite}};
             if(script_result.value("ok", false) && script_result.value("server_lifecycle", false)) {
                 control["server_lifecycle"] = 1;
+            }
+            if(script_result.value("ok", false) && script_result.value("tls_lifecycle", false)) {
+                control["tls_lifecycle"] = 1;
             }
 
             return {200, {{"action", "accept"}, {"control", std::move(control)}}};
