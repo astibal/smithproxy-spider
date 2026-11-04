@@ -20,12 +20,14 @@ def tls_settings(connection):
     return settings
 
 
-def reject_tls_changes(snapshots, allow_upstream=False):
+def reject_tls_changes(snapshots, allow_upstream=False, allow_ciphers=False):
     changed = []
     for side, connection, previous in snapshots:
         current = tls_settings(connection)
         for name, value in previous.items():
             if allow_upstream and side == 'server' and name in ('sni', 'alpn_offers'):
+                continue
+            if allow_ciphers and side == 'server' and name == 'cipher_list':
                 continue
             if current[name] != value:
                 setattr(connection, name, value)
@@ -103,6 +105,21 @@ def upstream_reply(server, original):
     return {'sni': sni, 'alpn_base64': base64.b64encode(wire).decode('ascii')}
 
 
+def cipher_reply(value):
+    # mitmproxy's TCP TLS configuration treats an empty list as unspecified.
+    # Nonempty lists are joined verbatim: OpenSSL owns expression semantics.
+    if value is None or value == [] or value == ():
+        return None
+    if not isinstance(value, (list, tuple)) or any(not isinstance(item, str) for item in value):
+        raise AddonRuntimeError('Upstream cipher_list must be a list or tuple of strings')
+
+    expression = ':'.join(value)
+    if '\0' in expression or len(expression.encode('utf-8')) > 65535:
+        raise AddonRuntimeError('Invalid OpenSSL cipher expression')
+
+    return expression
+
+
 async def dispatch(adapter, observation):
     envelope = observation['envelope']
     identity = adapter._identity(envelope['connection_id'])
@@ -138,6 +155,17 @@ async def dispatch(adapter, observation):
     if upstream is not None:
         registered.server.sni, registered.server.alpn_offers = upstream
 
+    native_settings = observation.get('upstream') or {}
+    allow_ciphers = 'openssl_cipher_list' in native_settings
+    if allow_ciphers:
+        expression = native_settings['openssl_cipher_list']
+        if expression is not None and not isinstance(expression, str):
+            raise AddonRuntimeError('Invalid native OpenSSL cipher expression')
+
+        # Carry earlier deployments' accepted settings into this addon.
+        if expression is not None:
+            registered.server.cipher_list = expression.split(':')
+
     snapshots = (
         ('client', registered.client, tls_settings(registered.client)),
         ('server', registered.server, tls_settings(registered.server)),
@@ -154,7 +182,7 @@ async def dispatch(adapter, observation):
     try:
         failures = await adapter.generation.dispatch('tls_clienthello', data)
     finally:
-        reject_tls_changes(snapshots, allow_upstream=upstream is not None)
+        reject_tls_changes(snapshots, allow_upstream=upstream is not None, allow_ciphers=allow_ciphers)
 
     if failures:
         raise AddonRuntimeError('ClientHello callback failed')
@@ -181,5 +209,7 @@ async def dispatch(adapter, observation):
     }
     if upstream is not None and decision['proceed'] and not data.ignore_connection:
         decision['upstream'] = upstream_reply(registered.server, upstream)
+        if allow_ciphers:
+            decision['upstream']['openssl_cipher_list'] = cipher_reply(registered.server.cipher_list)
 
     return decision

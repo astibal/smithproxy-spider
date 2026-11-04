@@ -242,6 +242,73 @@ def tls_clienthello(data):
                 self.assertEqual(decision['upstream']['sni'], expected)
                 self.assertEqual(decision['upstream']['alpn_base64'], message['upstream']['alpn_base64'])
 
+    async def test_upstream_cipher_expression_and_defaults(self):
+        cases = (
+            (['ECDHE-RSA-AES128-GCM-SHA256', '@SECLEVEL=0'],
+             'ECDHE-RSA-AES128-GCM-SHA256:@SECLEVEL=0'),
+            (['ALL:!aNULL'], 'ALL:!aNULL'),
+            (['UNKNOWN-CIPHER'], 'UNKNOWN-CIPHER'),
+            (['TLS_AES_256_GCM_SHA384'], 'TLS_AES_256_GCM_SHA384'),
+            ([''], ''),
+            ([], None),
+            (None, None),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                _, adapter = await self.start(
+                    f'def tls_clienthello(data):\n'
+                    f'    data.context.server.cipher_list = {value!r}'
+                )
+                message = client_hello()
+                message['upstream'] = {
+                    'sni': 'probe.invalid', 'alpn_base64': '',
+                    'openssl_cipher_list': None,
+                }
+
+                decision = await adapter.tls_lifecycle(message)
+
+                self.assertEqual(decision['upstream']['openssl_cipher_list'], expected)
+
+    async def test_absent_upstream_settings_keep_legacy_contract(self):
+        _, adapter = await self.start('def tls_clienthello(data): pass')
+        message = client_hello()
+        message['upstream'] = None
+
+        decision = await adapter.tls_lifecycle(message)
+
+        self.assertEqual(decision, {'proceed': True, 'ignore_connection': False})
+
+    async def test_upstream_cipher_format_errors(self):
+        for expression in ("'ALL'", '[3]', r"['ALL\0!aNULL']", "['A' * 65536]"):
+            with self.subTest(expression=expression):
+                _, adapter = await self.start(
+                    f'def tls_clienthello(data):\n'
+                    f'    data.context.server.cipher_list = {expression}'
+                )
+                message = client_hello()
+                message['upstream'] = {
+                    'sni': 'probe.invalid', 'alpn_base64': '',
+                    'openssl_cipher_list': None,
+                }
+
+                with self.assertRaises(AddonRuntimeError):
+                    await adapter.tls_lifecycle(message)
+
+    async def test_upstream_cipher_settings_from_earlier_deployment(self):
+        _, adapter = await self.start('''def tls_clienthello(data):
+    assert data.context.server.cipher_list == ['ALL', '!aNULL']
+    data.context.server.cipher_list.append('@SECLEVEL=0')
+''')
+        message = client_hello()
+        message['upstream'] = {
+            'sni': 'probe.invalid', 'alpn_base64': '',
+            'openssl_cipher_list': 'ALL:!aNULL',
+        }
+
+        decision = await adapter.tls_lifecycle(message)
+
+        self.assertEqual(decision['upstream']['openssl_cipher_list'], 'ALL:!aNULL:@SECLEVEL=0')
+
     async def test_clienthello_cannot_replay(self):
         _, adapter = await self.start('def tls_clienthello(data): pass')
         await adapter.tls_lifecycle(client_hello())
