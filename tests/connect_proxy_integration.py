@@ -263,12 +263,27 @@ def server_disconnected(data):
                     lifecycle = [item for item in exchanges[offset:]
                                  if item[0]['id'] == identity and item[0]['action'] == 'server-lifecycle']
                     phases = [item[0]['details']['server']['envelope']['event'] for item in lifecycle]
-                    if phases == ['connect', 'connected', 'disconnected']:
+                    stopped = any(item[0]['id'] == identity and item[0]['action'] == 'connection-stop'
+                                  for item in exchanges[offset:])
+                    if phases == ['connect', 'connected', 'disconnected'] and stopped:
                         break
                     assert time.monotonic() < deadline, phases
                     time.sleep(0.02)
                 assert all(item[2] == 200 for item in lifecycle), lifecycle
                 assert len({item[0]['details']['server']['envelope']['attempt'] for item in lifecycle}) == 1
+                # Session teardown must not release the addon before its final server callback.
+                terminal_events = []
+                for event, _, status in exchanges[offset:]:
+                    if event['id'] != identity:
+                        continue
+
+                    if event['action'] == 'server-lifecycle':
+                        if event['details']['server']['envelope']['event'] == 'disconnected':
+                            terminal_events.append(('disconnected', status))
+                    elif event['action'] == 'connection-stop':
+                        terminal_events.append(('stop', status))
+
+                assert terminal_events == [('disconnected', 200), ('stop', 200)], terminal_events
                 print('PASS: ordered server lifecycle shares CONNECT descriptors and terminates once')
 
                 deploy("""events = []
