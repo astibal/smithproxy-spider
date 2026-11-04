@@ -386,7 +386,7 @@ See `PROTOCOL_STATE_API_PROPOSAL.md` for receive/publication distinctions.
 | --- | --- |
 | Idle resume | No spontaneous publication. Requires a separately agreed transport/control design. |
 | Raw TCP/UDP | Models and dormant adapter/corpora exist; native producer and datagram ownership still need integration approval. Raw suspension is not delivered. |
-| Server lifecycle | Need truthful target-selection, connected, failed and disconnected observations. Do not invent server events from client setup. |
+| Server lifecycle | TCP producer/worker bridge in review on `proxy-hooks`; see `SERVER_LIFECYCLE_PRODUCER.md`. Native attempts drive events; TLS/QUIC and destination mutation remain separate. |
 | HTTP CONNECT | Regular HTTP/1 producer and worker bridge are approved with live wire tests; upstream-proxy and HTTP/2 CONNECT remain deferred. |
 | WebSocket | Logical-message adapter/corpora exist; native framing/backpressure producer still required. Do not substitute raw TCP chunks. |
 | DNS | Complete-message model and extensive UDP/TCP corpora exist; do not infer DNS solely from port numbers. Producer integration remains open. |

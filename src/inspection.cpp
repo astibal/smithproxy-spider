@@ -902,6 +902,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
     }
     if (runtime->addon && result.value("ok", false) && event.value("action", "") == "connection-start") {
         runtime->addon_connections.insert(event.value("id", ""));
+        result["server_lifecycle"] = true;
     }
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     result["duration_ms"] = elapsed;
@@ -1079,6 +1080,93 @@ bool Inspection::translation_required(const nlohmann::json& event) const {
         .value("info", nlohmann::json::object()).value("webhook_control", nlohmann::json::object());
     std::scoped_lock lock(mutex_);
     return translations_.contains(event.value("id", "")) || control.value("mode", "regular") == "strict";
+}
+
+nlohmann::json Inspection::server_lifecycle(const nlohmann::json& event) {
+
+    const auto id = event.at("id").get<std::string>();
+    const auto& observation = event.at("details").at("server");
+    std::vector<ConnectOwner> owners;
+    {
+        std::scoped_lock lock(mutex_);
+        if(closed_flows_.contains(id)) {
+            return nullptr;
+        }
+
+        for(const auto& item : chain_) {
+            const auto found = runtimes_.find(item.at("id").get<std::string>());
+            if(!item.value("enabled", false) || found == runtimes_.end() || !found->second->addon) {
+                continue;
+            }
+            owners.push_back({found->first, found->second, item.value("timeout_ms", 1000)});
+        }
+    }
+
+    // Only an existing setup owner may observe its server. A new deployment
+    // cannot adopt an old native connection, even if its filter now matches.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+    bool delivered = false;
+    for(const auto& owner : owners) {
+        auto& runtime = *owner.runtime;
+        std::unique_lock serial(runtime.serial, std::defer_lock);
+        if(!serial.try_lock_for(std::chrono::milliseconds(250))) {
+            return nullptr;
+        }
+        if(!runtime.addon_connections.contains(id)) {
+            continue;
+        }
+
+        {
+            std::scoped_lock lock(mutex_);
+            const auto live = runtimes_.find(owner.deployment);
+            if(runtime.retired || live == runtimes_.end() || live->second != owner.runtime ||
+               closed_flows_.contains(id)) {
+                return nullptr;
+            }
+        }
+
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        if(remaining <= 0) {
+            return nullptr;
+        }
+        if(running_.fetch_add(1) >= 4) {
+            --running_;
+            return nullptr;
+        }
+
+        nlohmann::json result;
+        try {
+            result = runtime.pool->run({{"server_lifecycle", observation}},
+                std::min<int>(static_cast<int>(remaining), owner.timeout_ms));
+        } catch(const std::exception&) {
+            result = nullptr;
+        }
+        --running_;
+
+        std::scoped_lock lock(mutex_);
+        const auto live = runtimes_.find(owner.deployment);
+        if(runtime.retired || live == runtimes_.end() || live->second != owner.runtime ||
+           closed_flows_.contains(id) || !result.is_object() || !result.value("ok", false)) {
+            return nullptr;
+        }
+
+        const auto decision = result.value("decision", nlohmann::json::object());
+        if(!decision.contains("proceed") || !decision["proceed"].is_boolean()) {
+            return nullptr;
+        }
+        delivered = true;
+        if(!decision["proceed"].get<bool>()) {
+            return {{"proceed", false}};
+        }
+    }
+
+    // Capability negotiation promised a setup owner. Losing it through a
+    // restart or redeployment is unavailability, not a successful observation.
+    if(!delivered) {
+        return nullptr;
+    }
+    return {{"proceed", true}};
 }
 
 nlohmann::json Inspection::http_connect(const nlohmann::json& event) {
@@ -1396,6 +1484,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         auto steps = nlohmann::json::array();
         nlohmann::json replacement = nullptr;
         bool rewrite_requested = false;
+        bool server_lifecycle = false;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         std::string last_enabled;
         for (const auto& entry : chain)
@@ -1485,6 +1574,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             // Fail open with the ORIGINAL payload, never a partially applied chain.
             if (!result.value("ok", false)) { result["replacement"] = nullptr; result["steps"] = steps; return result; }
             rewrite_requested = rewrite_requested || result.value("rewrite_requested", false);
+            server_lifecycle = server_lifecycle || result.value("server_lifecycle", false);
             if (result.contains("connection_close")) {
                 // Closing the transport is terminal for this callback chain.
                 // No later deployment may observe or replace bytes which the
@@ -1508,7 +1598,10 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
                 result["replacement"] = replacement;
             }
             result["steps"] = steps;
-            if (setup) result["rewrite_requested"] = rewrite_requested;
+            if (setup) {
+                result["rewrite_requested"] = rewrite_requested;
+                result["server_lifecycle"] = server_lifecycle;
+            }
         }
         return result;
     }

@@ -46,6 +46,39 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
+    if(action == "server-lifecycle") {
+        // Ordered transport observations are transient; dispatch only to addon
+        // generations that already own the connection's setup.
+        try {
+            const auto& observation = event.at("details").at("server");
+            const auto& envelope = observation.at("envelope");
+            const auto id = event.at("id").get<std::string>();
+            const auto phase = envelope.at("event").get<std::string>();
+            if(id.empty() || id.size() > 1024 || envelope.size() != 4 ||
+               !envelope.at("version").is_number_integer() || envelope.at("version") != 1 ||
+               envelope.at("connection_id") != id ||
+               !envelope.at("attempt").is_number_unsigned() || envelope.at("attempt") == 0 ||
+               (phase != "connect" && phase != "connected" && phase != "error" && phase != "disconnected") ||
+               observation.dump().size() > 8192) {
+                return {400, {{"error", "Invalid server observation"}}};
+            }
+
+            const auto decision = inspection ? inspection->server_lifecycle(event) : nlohmann::json(nullptr);
+            if(decision.is_null()) {
+                return {503, {{"error", "Server callback unavailable"}}};
+            }
+
+            return {200, {
+                {"action", action},
+                {"id", id},
+                {"envelope", envelope},
+                {"proceed", decision.at("proceed")}
+            }};
+        } catch(const nlohmann::json::exception&) {
+            return {400, {{"error", "Invalid server observation"}}};
+        }
+    }
+
     if(action == "http-connect") {
         // CONNECT is a transient decision exchange. In particular, rejected
         // Proxy-Authorization headers must never enter capture or GUI history.
@@ -238,7 +271,12 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
         if (action == "connection-start") {
             const bool rewrite = script_result.value("ok", false) &&
                                  script_result.value("rewrite_requested", false);
-            return {200, {{"action", "accept"}, {"control", {{"rewrite", rewrite}}}}};
+            nlohmann::json control = {{"rewrite", rewrite}};
+            if(script_result.value("ok", false) && script_result.value("server_lifecycle", false)) {
+                control["server_lifecycle"] = 1;
+            }
+
+            return {200, {{"action", "accept"}, {"control", std::move(control)}}};
         }
 
         if (script_result.value("translate_failed", false))

@@ -20,6 +20,7 @@ from addon_h1_events import H1AddonEvents
 from addon_h2_events import H2AddonEvents
 from addon_raw_events import RawAddonEvents, RawTransportError, RawTransportSetup
 from addon_runtime import AddonRuntimeError
+from addon_server_native import HOOKS as SERVER_HOOKS, dispatch as dispatch_server
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ class NativeAddonAdapter:
         'http_connect_error',
     })
     HOOKS = (H2AddonEvents.HOOKS | RawAddonEvents.HOOKS |
-             CONNECTION_HOOKS | PASSIVE_HOOKS | CONNECT_HOOKS)
+             CONNECTION_HOOKS | PASSIVE_HOOKS | CONNECT_HOOKS | SERVER_HOOKS)
 
     def __init__(self, generation, *, max_connections=128, body_limit=256 * 1024,
                  opaque_part_factory=None):
@@ -60,6 +61,7 @@ class NativeAddonAdapter:
         self.raw = RawAddonEvents(generation, opaque_part_factory)
         self.max_connections = max_connections
         self._connections = {}
+        self._servers = {}
 
     @staticmethod
     def _identity(session_id):
@@ -195,6 +197,16 @@ class NativeAddonAdapter:
             self.generation.invalidate()
             raise
 
+    async def server_lifecycle(self, observation):
+        if self.generation.state != 'running':
+            raise AddonRuntimeError('The addon generation is not running')
+
+        try:
+            return await dispatch_server(self, observation)
+        except BaseException:
+            self.generation.invalidate()
+            raise
+
     async def _start_http(self, identity, client):
         try:
             return await self.generation.dispatch('client_connected', client)
@@ -314,6 +326,7 @@ class NativeAddonAdapter:
                 self.http2.release_connection(identity)
             else:
                 self.raw.release_connection(identity)
+            self._servers.pop(identity, None)
             del self._connections[identity]
         return tuple(failures)
 

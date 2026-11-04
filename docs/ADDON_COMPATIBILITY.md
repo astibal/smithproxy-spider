@@ -608,11 +608,12 @@ the native-script idle-expiry setting does not independently discard half of
 its state. Instance and memory quotas still apply, and closing the connection
 releases its instance slot. The UI disables idle expiry for addon deployments.
 
-The production worker does not yet receive HTTP endpoint or TLS observations.
-The adapter creates one typed Client/Server descriptor pair at connection setup
-and shares those exact objects with every HTTP flow on that connection. Unknown
-fields remain `None`; scripts requiring real addresses or TLS metadata are not
-yet supported. Do not synthesize plausible-looking endpoint data from labels.
+The CONNECT and TCP server lifecycle producers supply actual socket endpoints.
+The adapter shares the descriptor pair with HTTP flows on that connection;
+unknown fields remain `None` until a native observation supplies them. Ordinary
+client setup without a CONNECT prelude still lacks endpoint metadata at
+`client_connected`; the later server observation fills those fields. TLS
+lifecycle metadata remains separate work. Never infer endpoints from labels.
 
 `client_connected` is awaited after native `connection-start` and before the
 first HTTP, TCP or UDP hook. `client_disconnected` is awaited after pending
@@ -622,27 +623,16 @@ and CLOSED with `timestamp_end` populated in the second. A checked-in black-box
 mitmproxy 12.3.1 corpus fixes this ordering and identity contract. The packaged
 worker repeats the contract through the production JSON boundary.
 
-Server lifecycle hooks are deliberately not synthesized at connection setup.
-The reference emits `server_connect` only after the target is known,
-`server_connected` after the upstream socket opens, and `server_disconnected`
-when that socket closes. Spider needs corresponding producer observations before
-it can expose those hooks without lying about state or ordering.
+Server lifecycle hooks are driven by native TCP observations, never synthesized
+from client setup. The review producer dispatches `server_connect`,
+`server_connected`, `server_connect_error` and `server_disconnected` synchronously,
+with one Server identity per upstream attempt. TCP completion does not imply TLS
+readiness. The native client-closed observation preserves the reference teardown
+state ordering.
 
-### Deferred producer integration TODO
-
-- Treat these hooks as deferred compatibility work, not as permanently
-  unsupported API. Complete them after the current HTTP lifecycle work.
-- Smithproxy must emit ordered target-selected, upstream-connected and
-  upstream-disconnected observations for the current native connection.
-- The connection-start observation should include real client peer/local
-  endpoints so Spider can populate the existing Client descriptor.
-- Spider will map those observations to `server_connect`, `server_connected`
-  and `server_disconnected`, preserving one Server identity and awaiting each
-  addon hook before the next transport event.
-- Differential tests must compare success, connect-error, reconnect and clean
-  teardown ordering with the checked mitmproxy 12.3.1 lifecycle corpus.
-
-This is intentionally deferred; no synthetic server event is emitted meanwhile.
+See `SERVER_LIFECYCLE_PRODUCER.md` for the envelope, CONNECT ordering, native
+error-veto semantics, tests and limits. General destination mutation and
+TLS/QUIC lifecycle integration remain separate work.
 
 `addon_connection.py` now contains the initial Connection/Client/Server data model:
 state flags, endpoint/TLS fields, identity equality, detached copies, legacy

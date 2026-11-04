@@ -56,14 +56,11 @@
   deferred; do not add a Smithproxy timer, management API endpoint or persistent
   channel as part of the callback-driven implementation.
 
-- **mitmproxy server lifecycle:** add truthful `server_connect`,
-  `server_connected`, `server_connect_error` and `server_disconnected` hooks once
-  Smithproxy publishes ordered target-selected, upstream-connected,
-  upstream-connect-failed and upstream-disconnected observations. Preserve one
-  Server object per upstream connection and verify synchronous hook ordering
-  against the mitmproxy 12.3.1 reference corpus. Do not synthesize these events
-  from connection setup in the meantime. The detailed integration contract is
-  recorded in `docs/ADDON_COMPATIBILITY.md`.
+- **mitmproxy server lifecycle (review):** the TCP producer and worker bridge
+  now map ordered attempt, completion, failure and closure observations to the
+  four server hooks. Review `SERVER_LIFECYCLE_PRODUCER.md` for ownership,
+  reconnects, fail-open/strict behavior and the explicit routing limitation.
+  TLS/QUIC observations and general destination mutation remain separate work.
 - **HTTP CONNECT producer (approved):** regular HTTP/1 request, connected
   and error hooks now have a native producer and worker bridge. The two production patches were approved together on 2026-11-04; see `HTTP_CONNECT_PRODUCER_PROPOSAL.md` for the
   fail-open/strict policy, authoritative AAA boundary and live test coverage.

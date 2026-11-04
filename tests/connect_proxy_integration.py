@@ -64,6 +64,11 @@ def main():
                 callback = event['params']['url']
                 result = {'lease_id': 'test', 'expires_at': int(time.time()) + 60}
             elif self.path == '/relay':
+                if (event['action'] == 'server-lifecycle' and mode == 'hold-server' and
+                        event['details']['server']['envelope']['event'] == 'connect'):
+                    request_held.set()
+                    assert release_request.wait(8), 'test did not release held server hook'
+
                 invalid = event['action'] == 'http-connect' and (
                     mode == 'invalid' or (mode == 'strict-outcome' and
                     event['details']['http_connect']['envelope']['event'] == 'connected'))
@@ -72,6 +77,8 @@ def main():
                     # separate integration coverage and is not negotiated here.
                     result = {'action': 'info-response',
                               'protocols': {'connection-content': ['json-base64']}}
+                elif event['action'] == 'server-lifecycle' and mode in ('invalid-server', 'strict-server'):
+                    result = {'action': 'server-lifecycle', 'id': 'wrong'}
                 elif invalid:
                     result = {'action': 'http-connect', 'id': 'wrong'}
                 else:
@@ -80,13 +87,13 @@ def main():
                     except HTTPError as error:
                         status = error.code
                         result = json.load(error)
-                if event['action'] == 'connection-start' and mode == 'strict-outcome':
+                if event['action'] == 'connection-start' and mode in ('strict-outcome', 'strict-server', 'hold-server'):
                     result.setdefault('control', {})['mode'] = 'strict'
                 if (event['action'] == 'http-connect' and mode == 'hold-request' and
                         event['details']['http_connect']['envelope']['event'] == 'request'):
                     request_held.set()
                     assert release_request.wait(8), 'test did not release held request'
-                if event['action'] in ('http-connect', 'connection-start', 'connection-stop', 'connection-content'):
+                if event['action'] in ('http-connect', 'server-lifecycle', 'connection-start', 'connection-stop', 'connection-content'):
                     exchanges.append((event, result, status))
             else:
                 result = {}
@@ -221,6 +228,135 @@ def http_connected(flow):
                 connection, _ = origin.accept()
                 connection.close()
                 print('PASS: fragmented request, shared flow/descriptors, connected response mutation')
+
+                deploy("""events = []
+server = None
+def http_connect(flow):
+    global server
+    server = flow.server_conn
+    events.append('http_connect')
+def server_connect(data):
+    assert data.server is server
+    assert data.server.timestamp_start is None
+    assert data.server.peername is None
+    events.append('server_connect')
+def server_connected(data):
+    assert data.server is server
+    assert data.server.peername is not None
+    assert data.server.sockname is not None
+    events.append('server_connected')
+def http_connected(flow):
+    assert events == ['http_connect', 'server_connect', 'server_connected']
+    assert flow.server_conn is server
+    flow.response.status_code = 298
+def server_disconnected(data):
+    assert data.server is server
+    assert data.server.timestamp_end is not None
+""")
+                offset = len(exchanges)
+                events = exchange(target, 298)
+                identity = events[0][0]['id']
+                connection, _ = origin.accept()
+                connection.close()
+                deadline = time.monotonic() + 8
+                while True:
+                    lifecycle = [item for item in exchanges[offset:]
+                                 if item[0]['id'] == identity and item[0]['action'] == 'server-lifecycle']
+                    phases = [item[0]['details']['server']['envelope']['event'] for item in lifecycle]
+                    if phases == ['connect', 'connected', 'disconnected']:
+                        break
+                    assert time.monotonic() < deadline, phases
+                    time.sleep(0.02)
+                assert all(item[2] == 200 for item in lifecycle), lifecycle
+                assert len({item[0]['details']['server']['envelope']['attempt'] for item in lifecycle}) == 1
+                print('PASS: ordered server lifecycle shares CONNECT descriptors and terminates once')
+
+                deploy("""events = []
+def server_connect(data):
+    events.append('connect')
+def server_connect_error(data):
+    assert data.server.error
+    events.append('error')
+def http_connect_error(flow):
+    assert events == ['connect', 'error']
+    flow.response.status_code = 597
+""")
+                exchange(free_port(), 597)
+                print('PASS: server_connect_error precedes HTTP CONNECT failure')
+
+                deploy("""def server_connect(data):
+    data.server.error = 'Test veto'
+""")
+                offset = len(exchanges)
+                exchange(target, 502)
+                origin.settimeout(0.1)
+                try:
+                    connection, _ = origin.accept()
+                    connection.close()
+                    raise AssertionError('Server veto contacted target')
+                except socket.timeout:
+                    pass
+                finally:
+                    origin.settimeout(2)
+                lifecycle = [item for item in exchanges[offset:] if item[0]['action'] == 'server-lifecycle']
+                assert [item[0]['details']['server']['envelope']['event'] for item in lifecycle] == ['connect', 'error']
+                print('PASS: server_connect veto prevents the upstream socket attempt')
+
+                deploy("""def http_connected(flow):
+    flow.response.status_code = 296
+""")
+                mode = 'invalid-server'
+                exchange(target, 296)
+                connection, _ = origin.accept()
+                connection.close()
+                print('PASS: invalid server observer reply is fail-open in regular mode')
+
+                mode = 'strict-server'
+                exchange(target, 502)
+                origin.settimeout(0.1)
+                try:
+                    connection, _ = origin.accept()
+                    connection.close()
+                    raise AssertionError('Strict server observer failure contacted target')
+                except socket.timeout:
+                    pass
+                finally:
+                    origin.settimeout(2)
+                    mode = 'forward'
+                print('PASS: negotiated strict server observer failure prevents target contact')
+
+                deploy('def http_connect(flow): pass')
+                request_held.clear()
+                release_request.clear()
+                mode = 'hold-server'
+                server_errors = []
+
+                def pending_server():
+                    try:
+                        exchange(target, None)
+                    except BaseException as error:
+                        server_errors.append(error)
+
+                pending = threading.Thread(target=pending_server)
+                pending.start()
+                assert request_held.wait(5), 'server hook did not reach the relay'
+                deploy('def server_connect(data): raise AssertionError("new generation adopted old connection")')
+                mode = 'forward'
+                release_request.set()
+                pending.join(8)
+                assert not pending.is_alive() and not server_errors, server_errors
+                origin.settimeout(0.1)
+                try:
+                    connection, _ = origin.accept()
+                    connection.close()
+                    raise AssertionError('Retired strict setup owner contacted target')
+                except socket.timeout:
+                    pass
+                finally:
+                    origin.settimeout(2)
+                request_held.clear()
+                release_request.clear()
+                print('PASS: redeploy during a strict server hook cannot adopt or connect the old flow')
 
                 deploy('''from mitmproxy import http
 def http_connect(flow):

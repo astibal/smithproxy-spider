@@ -405,6 +405,29 @@ def invoke_http_connect(observation):
         }
 
 
+def invoke_server_lifecycle(observation):
+    output = Output()
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            decision = addon_worker.run(
+                addon_worker.adapter.server_lifecycle(observation)
+            )
+
+        return {
+            'ok': True,
+            'replacement': None,
+            'decision': decision,
+            'logs': [],
+        }
+    except BaseException:
+        return {
+            'ok': False,
+            'replacement': None,
+            'logs': [],
+            'error': 'Server lifecycle callback failed',
+        }
+
+
 def compile_native(source):
     """Detect module-style hooks without executing administrator code."""
     import ast
@@ -841,7 +864,9 @@ def serve_persistent():
             sys.stdout.flush()
             break
         current['storage_directory'] = storage_directory
-        if 'http_connect' in current:
+        if 'server_lifecycle' in current:
+            response = invoke_server_lifecycle(current['server_lifecycle'])
+        elif 'http_connect' in current:
             response = invoke_http_connect(current['http_connect'])
         elif 'authentication' in current:
             response = invoke_authentication(current['authentication'], compiled)

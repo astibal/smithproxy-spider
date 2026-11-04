@@ -13,6 +13,7 @@ namespace spider {
 class InspectionPool;
 class Inspection {
 public:
+    nlohmann::json server_lifecycle(const nlohmann::json& event);
     nlohmann::json http_connect(const nlohmann::json& event);
     bool authenticate(const nlohmann::json& event);
     explicit Inspection(std::filesystem::path collection_root = {});
