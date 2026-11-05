@@ -62,7 +62,6 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
                !envelope.at("attempt").is_number_unsigned() || envelope.at("attempt") == 0 ||
                (phase != "established" && phase != "failed" && phase != "client-hello" && phase != "start") ||
                (phase == "client-hello" && side != "client") ||
-               (phase == "start" && side != "server") ||
                (side != "client" && side != "server") || observation.dump().size() > observation_limit) {
                 return {400, {{"error", "Invalid TLS observation"}}};
             }
@@ -325,6 +324,9 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             }
             if(script_result.value("ok", false) && script_result.value("tls_start_server", false)) {
                 control["tls_start_server"] = 1;
+            }
+            if(script_result.value("ok", false) && script_result.value("tls_start_client", false)) {
+                control["tls_start_client"] = 1;
             }
             if(script_result.value("ok", false) && script_result.value("tls_clienthello", false)) {
                 control["tls_clienthello"] = 1;

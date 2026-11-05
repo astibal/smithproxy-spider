@@ -96,3 +96,25 @@ Changes apply only to the connection's SSL object. A changed offer clears the
 session previously selected for resumption; unchanged offers preserve it.
 Shared SSL contexts, protocol bounds, verification policy and TLS 1.3 suites
 are unchanged. Certificate verification uses the accepted upstream identity.
+
+## Client-facing start interception
+
+A content addon deployment may independently enable `tls_start_client: true`.
+It defaults to false and includes hooks registered dynamically after setup.
+Smithproxy uses the existing Socle callback immediately before the first
+`SSL_accept`, without changing TCP readiness, certificate selection or native
+handshake scheduling. DTLS and QUIC remain outside this subscription.
+
+The hook receives `TlsData` with the shared client descriptor, both sides in
+`context`, and the same unsupported-operation `ssl_conn` sentinel as upstream
+start. Available SNI is an observation; negotiated values and the establishment
+timestamp still belong to the later outcome. Setting `data.conn.error` vetoes
+the handshake through the existing native termination path and warning.
+Changes to TLS parameters on either descriptor, live SSL operations, replacement
+of the SSL sentinel, and rerouting are rejected explicitly. This hook does not
+configure a certificate or replace the native SSL context.
+
+Each side reserves its own start attempt and shares that identity with its later
+outcome. Native nesting can deliver client start before the upstream established
+observation is sampled. This bridge preserves that native order; it does not
+reschedule either handshake to reproduce a universal cross-side ordering.

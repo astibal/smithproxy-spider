@@ -142,6 +142,9 @@ def run_tls_cases(deploy, start_proxy, certificates, exchanges, set_relay_mode):
         (ssl.TLSVersion.TLSv1_3, False, 'start-cipher'),
         (ssl.TLSVersion.TLSv1_3, False, 'start-upstream'),
         (ssl.TLSVersion.TLSv1_3, False, 'start-disabled'),
+        (ssl.TLSVersion.TLSv1_2, False, 'client-start'),
+        (ssl.TLSVersion.TLSv1_3, True, 'client-start'),
+        (ssl.TLSVersion.TLSv1_3, False, 'client-start-disabled'),
     )
     for version, fragmented, mode in cases:
         hello_hook = """
@@ -205,11 +208,29 @@ def tls_start_server(data):
     data.conn.error = 'An unsubscribed hook must not run'
 """
 
+        if mode.startswith('client-start'):
+            source = ADDON + """
+started_client = None
+def tls_start_client(data):
+    global started_client
+    assert data.conn is data.context.client
+    assert data.conn.tls and data.conn.timestamp_tls_setup is None
+    started_client = data.conn
+"""
+            if mode == 'client-start':
+                source = source.replace(
+                    "    client = data.conn",
+                    "    assert data.conn is started_client\n    client = data.conn",
+                )
+            else:
+                source += "    data.conn.error = 'Unsubscribed client start must not run'\n"
+
         set_relay_mode('invalid-hello' if mode == 'unavailable' else 'forward')
         if mode == 'upstream-invalid':
             set_relay_mode('invalid-upstream')
-        deploy(source, tls_clienthello=mode != 'disabled' and not mode.startswith('start-'),
-               tls_start_server=mode.startswith('start-') and mode != 'start-disabled')
+        deploy(source, tls_clienthello=mode != 'disabled' and not mode.startswith(('start-', 'client-start')),
+               tls_start_server=mode.startswith('start-') and mode != 'start-disabled',
+               tls_start_client=mode == 'client-start')
         offset = len(exchanges)
         errors = []
         requests = []
@@ -303,6 +324,14 @@ def tls_start_server(data):
         elif mode == 'bypass':
             expected = [('client', 'client-hello')]
 
+        if mode == 'client-start':
+            starts = [e for e in outcomes if e['event'] == 'start']
+            assert len(starts) == 1 and starts[0]['side'] == 'client', outcomes
+            established = next(e for e in outcomes if e['side'] == 'client' and e['event'] == 'established')
+            assert starts[0]['attempt'] == established['attempt'], outcomes
+            assert outcomes.index(starts[0]) < outcomes.index(established), outcomes
+            outcomes = [e for e in outcomes if e['event'] != 'start']
+
         assert [(e['side'], e['event']) for e in outcomes] == expected, outcomes
         if mode in ('observe', 'upstream', 'upstream-invalid', 'cipher', 'cipher-default'):
             assert outcomes[0]['attempt'] == outcomes[-1]['attempt'], outcomes
@@ -315,12 +344,14 @@ def run_tls_failure_cases(deploy, start_proxy, certificates, exchanges, set_rela
     failures = (
         'server', 'client', 'hello', 'strict-hello',
         'cipher-invalid', 'cipher-empty', 'cipher-tls13-name',
-        'start-veto', 'start-invalid',
+        'start-veto', 'start-invalid', 'client-start-veto',
     )
     for failure in failures:
         source = ADDON
         if failure == 'hello':
             source += "\ndef tls_clienthello(data):\n    data.context.client.error = 'denied by addon'\n"
+        if failure == 'client-start-veto':
+            source += "\ndef tls_start_client(data):\n    data.conn.error = 'denied by addon'\n"
         if failure == 'start-veto':
             source += "\ndef tls_start_server(data):\n    data.conn.error = 'denied by addon'\n"
         elif failure == 'start-invalid':
@@ -332,7 +363,8 @@ def run_tls_failure_cases(deploy, start_proxy, certificates, exchanges, set_rela
             source += f'\ndef tls_clienthello(data):\n    data.context.server.cipher_list = [{value!r}]\n'
         set_relay_mode('strict-hello' if failure == 'strict-hello' else 'forward')
         deploy(source, tls_clienthello=failure in ('hello', 'strict-hello') or failure.startswith('cipher-'),
-               tls_start_server=failure.startswith('start-'))
+               tls_start_server=failure.startswith('start-'),
+               tls_start_client=failure == 'client-start-veto')
         offset = len(exchanges)
         listener = socket.socket()
         listener.bind(('127.0.0.1', 0))
@@ -386,7 +418,7 @@ def run_tls_failure_cases(deploy, start_proxy, certificates, exchanges, set_rela
         thread.start()
         proxy_port, process = start_proxy(target)
         client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        if failure in ('server', 'hello', 'strict-hello') or failure.startswith(('cipher-', 'start-')):
+        if failure in ('server', 'hello', 'strict-hello', 'client-start-veto') or failure.startswith(('cipher-', 'start-')):
             client.check_hostname = False
             client.verify_mode = ssl.CERT_NONE
         # For the client failure, keep verification enabled with no trusted CA.
@@ -399,7 +431,7 @@ def run_tls_failure_cases(deploy, start_proxy, certificates, exchanges, set_rela
         except (ssl.SSLError, ConnectionError):
             pass
 
-        failed_side = 'client' if failure in ('client', 'hello', 'strict-hello') else 'server'
+        failed_side = 'client' if failure in ('client', 'hello', 'strict-hello', 'client-start-veto') else 'server'
         deadline = time.monotonic() + 8
         while True:
             events = [entry for entry in exchanges[offset:] if entry[0]['action'] == 'tls-lifecycle']

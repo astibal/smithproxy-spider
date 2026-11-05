@@ -51,7 +51,7 @@ class NativeAddonAdapter:
     })
     HOOKS = (H2AddonEvents.HOOKS | RawAddonEvents.HOOKS |
              CONNECTION_HOOKS | PASSIVE_HOOKS | CONNECT_HOOKS | SERVER_HOOKS |
-             TLS_HOOKS | {'tls_clienthello', 'tls_start_server'})
+             TLS_HOOKS | {'tls_clienthello', 'tls_start_server', 'tls_start_client'})
 
     def __init__(self, generation, *, max_connections=128, body_limit=256 * 1024,
                  opaque_part_factory=None):
@@ -349,7 +349,8 @@ class NativeAddonAdapter:
                 self.raw.release_connection(identity)
             self._servers.pop(identity, None)
             self._tls_hellos.pop(identity, None)
-            self._tls_starts.pop(identity, None)
+            self._tls_starts.pop((identity, 'client'), None)
+            self._tls_starts.pop((identity, 'server'), None)
             self._tls.pop((identity, 'client'), None)
             self._tls.pop((identity, 'server'), None)
             del self._connections[identity]

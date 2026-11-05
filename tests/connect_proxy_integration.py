@@ -158,12 +158,12 @@ def main():
 
         deployment = None
 
-        def deploy(source, tls_clienthello=False, tls_start_server=False):
+        def deploy(source, tls_clienthello=False, tls_start_server=False, tls_start_client=False):
             nonlocal deployment
             value = {'operation': 'deploy', 'name': 'CONNECT test', 'hook': 'content',
                      'scope': 'all', 'instancing': 'flow', 'script_api': 'mitmproxy',
                      'script': '#!mitmproxy\n' + source, 'tls_clienthello': tls_clienthello,
-                     'tls_start_server': tls_start_server}
+                     'tls_start_server': tls_start_server, 'tls_start_client': tls_start_client}
             if deployment:
                 value['id'] = deployment
             state = configure(value)
