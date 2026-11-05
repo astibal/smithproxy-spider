@@ -5,6 +5,8 @@ adapter. A green object-model or corpus test is not treated as evidence that a
 live native producer exists. The adapter must not be described as a complete
 drop-in replacement while any required gate below remains open.
 
+Current validation and merge dependencies: [HOOKS_INTEGRATION_CHECKPOINT.md](HOOKS_INTEGRATION_CHECKPOINT.md).
+
 ## Foundation
 
 | Requirement | State | Evidence |
@@ -40,20 +42,23 @@ objective's approval rules prohibit implementing them implicitly.
 | Request destination changes | Reference reroute corpus and contract exist; incompatible mutation fails closed | Approve `DESTINATION_ROUTING_API_PROPOSAL.md` and the Smithproxy routing boundary. |
 | Host shutdown and live replay | Detached `load_flow()` is supported; proxy-owned actions are absent rather than simulated | Choose and approve a scope in `HOST_CONTROL_PROPOSAL.md`. |
 
-## Open producer integrations
+## Native producer integrations
 
-Spider already has bounded dormant adapters and black-box behavior for these
-areas. They are not live features until Smithproxy emits the corresponding
-native observations or decisions. Every Smithproxy change requires separate
-discussion and approval.
+The `proxy-hooks` checkpoint wires the following producers. Support is scoped
+by the linked contracts; public hook names do not imply live SSL ownership or
+arbitrary transport control.
 
-- truthful upstream server lifecycle and endpoint/TLS metadata;
-- raw TCP and UDP messages;
-- HTTP CONNECT lifecycle;
-- WebSocket logical messages;
-- DNS complete messages over UDP and TCP;
-- unrestricted SOCKS5 authentication overrides (the implemented policy only permits AAA-result vetoes); and
-- TLS and QUIC lifecycle observations.
+| Producer | Implemented boundary | Remaining limits |
+| --- | --- | --- |
+| HTTP CONNECT | Regular HTTP/1 `http_connect`, `http_connected`, `http_connect_error`; shared flow and native decisions | Upstream-proxy and HTTP/2 CONNECT remain deferred. |
+| Server lifecycle | Native connect/connected/failure/disconnection observations, endpoint metadata and retirement | No reconnect redesign; transport scheduling remains native. |
+| TCP TLS | ClientHello, both start hooks, established/failed observations; upstream SNI/ALPN and legacy cipher expressions | No live SSL object, certificate/context replacement, forced handshake ordering, or TLS 1.3 cipher selection through the legacy cipher-list field. |
+| QUIC | Opt-in parent `quic_start_server`, both-side TLS outcomes, upstream SNI/single ALPN/TLS 1.3 suites and veto | No `quic_start_client`, QUIC ClientHello interception, early failures before parent setup, or certificate/trust replacement. Parent/stream models remain separate. |
+| Authentication | Smithproxy AAA result plus Spider veto for HTTP CONNECT/SOCKS5 | An addon cannot turn a rejected AAA result into acceptance. |
+
+The following producers remain open: raw TCP/UDP messages, WebSocket logical
+messages, and complete DNS messages over UDP/TCP. Detached model/corpus tests
+must not be presented as live native coverage.
 
 The detailed contracts and acceptance gates are in the producer proposal files
 linked from `TODO.md` and `ADDON_COMPATIBILITY.md`.

@@ -1,0 +1,25 @@
+--- a/tests/patch-runner/harness/lab-test.sh
++++ b/tests/patch-runner/harness/lab-test.sh
+@@ -564,6 +564,13 @@
+     python3 "$ROOT/runner/tests/quic-webhook-contract.py" verify \
+         "$ROOT/results/quic-webhooks.jsonl"
+ 
++    # Freeze baseline capture bytes before the additional hook scenarios append
++    # new sessions to the shared local capture file outside the GRE window.
++    mkdir -p "$ROOT/results/quic-baseline-captures"
++    cp "$ROOT/data/$CAPTURE_PREFIX"*.pcapng "$ROOT/results/quic-baseline-captures/"
++    python3 "$ROOT/runner/tests/quic-webhook-contract.py" exercise \
++        "$ROOT/results/quic-webhooks.jsonl"
++
+ fi
+ fi
+ if [[ $SESSION_LIST_STRESS_TEST == 1 ]]; then
+@@ -1195,7 +1202,7 @@
+     [[ -s "$ROOT/results/quic-downstream.keys" ]]
+     grep -Eq '_(HANDSHAKE|TRAFFIC)_SECRET ' "$ROOT/results/quic-downstream.keys"
+     python3 "$ROOT/runner/tests/verify-quic-observability.py" \
+-        --data-dir "$ROOT/data" --prefix "$CAPTURE_PREFIX" \
++        --data-dir "$ROOT/results/quic-baseline-captures" --prefix "$CAPTURE_PREFIX" \
+         --gre "$ROOT/results/quic-observability/gre.pcap" \
+         --native "$ROOT/results/quic-observability/downstream-native.pcapng" \
+         --keylog "$ROOT/results/quic-downstream.keys" \

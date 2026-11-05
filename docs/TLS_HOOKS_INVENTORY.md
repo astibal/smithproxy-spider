@@ -1,6 +1,12 @@
 # TLS hook inventory and proposed next cut
 
-Status: investigation only. No production code or deployment capabilities changed.
+Current checkpoint (2026-11-05): the TCP TLS hooks described below are now
+implemented within the limits in `TLS_LIFECYCLE_PRODUCER.md`,
+`CLIENTHELLO_PRODUCER.md`, and `TLS_UPSTREAM_OPTIONS.md`. QUIC has its separate
+scoped producer in `QUIC_TLS_HOOKS.md`. The investigation below is retained as
+historical design rationale, not a current unsupported-hook inventory.
+
+Original status: investigation only. No production capabilities changed at that point.
 Baseline: native `bfee15f9`, Spider `7d00a03`, Socle `90f3ca5`.
 Reference: mitmproxy 12.3.1, not an unpinned current API.
 

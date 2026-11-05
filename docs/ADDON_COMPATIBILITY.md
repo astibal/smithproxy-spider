@@ -1,5 +1,11 @@
 # Addon compatibility: implementation inventory
 
+Current native hook status (2026-11-05) is summarized in
+[HOOKS_INTEGRATION_CHECKPOINT.md](HOOKS_INTEGRATION_CHECKPOINT.md).
+The dated checkpoints below retain historical implementation limits; they do
+not override the current CONNECT/server/TCP TLS/scoped QUIC producer contracts.
+
+
 Status: development, not a full compatibility release. Audited 2026-10-31.
 Target: mitmproxy addon API major **12**. Behavioral reference: **12.3.1**.
 

@@ -1,5 +1,10 @@
 # Spider mitmproxy compatibility development handoff
 
+Current checkpoint (2026-11-05): see [HOOKS_INTEGRATION_CHECKPOINT.md](HOOKS_INTEGRATION_CHECKPOINT.md)
+for the published proxy-hooks commits, live validation, scoped TLS/QUIC parity
+and release-merge dependencies. The older checkpoints below are historical;
+their branch names and pending-work statements are not the current inventory.
+
 Approved implementation, 2026-11-04: regular HTTP/1 CONNECT is wired end to end in the
 Smithproxy and Spider `connect-hooks` branches. `http_connect`,
 `http_connected`, and `http_connect_error` share one flow and native descriptors.
