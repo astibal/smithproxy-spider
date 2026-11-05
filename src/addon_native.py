@@ -310,6 +310,18 @@ class NativeAddonAdapter:
                 raise RawTransportError(
                     'HTTP connection cannot change into a raw transport')
 
+            # A lifecycle-only addon can observe STARTTLS over non-HTTP plaintext.
+            # Do not turn an opaque greeting into an H2 translation attempt. Check
+            # current registrations each time so dynamic hooks remain visible.
+            has_http_parts = any(part.type.startswith(('http1.', 'http2.'))
+                                 for part in api.message.parts)
+
+            if not has_http_parts:
+                observes_content = any(self.generation.observes(hook)
+                                       for hook in H2AddonEvents.HOOKS | RawAddonEvents.HOOKS)
+                if not observes_content:
+                    return None
+
             is_http1 = any(part.type == 'http1.header'
                            for part in api.message.parts)
             if is_http1:

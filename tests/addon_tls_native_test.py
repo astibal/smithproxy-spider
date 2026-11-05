@@ -65,6 +65,33 @@ class TlsTests(unittest.IsolatedAsyncioTestCase):
             await pending
         return generation, adapter
 
+    async def test_starttls_plaintext_keeps_lifecycle_generation_alive(self):
+        generation, adapter = await self.start("def tls_start_server(data): pass")
+        api = SimpleNamespace(
+            phase='content', session_id='session', info={}, side='L',
+            message=SimpleNamespace(parts=[SimpleNamespace(type='opaque')]),
+        )
+
+        # No HTTP/raw producer exists for this greeting. Lifecycle observation
+        # must survive it without asking for a translation transaction.
+        self.assertIsNone(await adapter.content(api))
+        self.assertEqual(generation.state, 'running')
+
+        # Re-evaluate dynamic registration; do not cache "lifecycle only" at setup.
+        class ContentAddon:
+            def request(self, flow):
+                pass
+
+        generation.master.addons.add(ContentAddon())
+        self.assertTrue(generation.observes('request'))
+        def require_http_producer(mode):
+            raise RuntimeError('HTTP producer required')
+
+        api.connection = SimpleNamespace(set_mode=require_http_producer)
+        with self.assertRaisesRegex(RuntimeError, 'HTTP producer required'):
+            await adapter.content(api)
+        self.assertEqual(generation.state, 'failed')
+
     async def test_start_server_changes_offer_and_preserves_identity(self):
         generation, adapter = await self.start("""
 seen = []
