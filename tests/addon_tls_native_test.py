@@ -65,6 +65,63 @@ class TlsTests(unittest.IsolatedAsyncioTestCase):
             await pending
         return generation, adapter
 
+    async def test_start_server_changes_offer_and_preserves_identity(self):
+        generation, adapter = await self.start("""
+seen = []
+def tls_start_server(data):
+    assert data.conn is data.context.server
+    assert data.conn.tls and data.conn.timestamp_tls_setup is None
+    assert not data.conn.connected
+    assert data.conn.timestamp_tcp_setup is None
+    data.conn.sni = 'other.test'
+    data.conn.alpn_offers = [b'http/1.1']
+    data.conn.cipher_list = ['ALL', '!aNULL']
+    seen.append(data.conn)
+def tls_established_server(data):
+    assert data.conn is seen[0]
+""")
+        message = observation('server', 'start')
+        message['upstream'] = {
+            'sni': 'probe.invalid',
+            'alpn_base64': base64.b64encode(b'\x02h2\x08http/1.1').decode(),
+            'openssl_cipher_list': 'DEFAULT',
+        }
+
+        decision = await adapter.tls_lifecycle(message)
+
+        self.assertTrue(decision['proceed'])
+        self.assertEqual(decision['upstream']['sni'], 'other.test')
+        self.assertEqual(decision['upstream']['openssl_cipher_list'], 'ALL:!aNULL')
+        await adapter.tls_lifecycle(observation())
+        await adapter.stop('session')
+        self.assertFalse(adapter._tls_starts)
+
+    async def test_start_server_rejects_ssl_operations_and_replacement(self):
+        for statement in (
+            'data.ssl_conn.get_cipher_name()',
+            'data.ssl_conn = None',
+            'data.conn = None',
+        ):
+            with self.subTest(statement=statement):
+                _, adapter = await self.start('def tls_start_server(data):\n    ' + statement)
+                message = observation('server', 'start')
+                message['upstream'] = {
+                    'sni': '', 'alpn_base64': '', 'openssl_cipher_list': 'DEFAULT',
+                }
+                with self.assertRaises(AddonRuntimeError):
+                    await adapter.tls_lifecycle(message)
+
+    async def test_start_server_veto_and_duplicate(self):
+        _, adapter = await self.start("def tls_start_server(data): data.conn.error = 'denied'")
+        message = observation('server', 'start')
+        message['upstream'] = {
+            'sni': '', 'alpn_base64': '', 'openssl_cipher_list': 'DEFAULT',
+        }
+
+        self.assertEqual(await adapter.tls_lifecycle(message), {'proceed': False})
+        with self.assertRaisesRegex(AddonRuntimeError, 'Duplicate'):
+            await adapter.tls_lifecycle(message)
+
     async def test_clienthello_dynamic_registration_and_shared_context(self):
         generation, adapter = await self.start('''from mitmproxy import ctx
 seen = []

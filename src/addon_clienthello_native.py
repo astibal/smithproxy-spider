@@ -36,7 +36,7 @@ def reject_tls_changes(snapshots, allow_upstream=False, allow_ciphers=False):
     # Restore both descriptors before reporting any unsupported change.
     # These values are observations until the native bridge can apply them.
     if changed:
-        raise AddonRuntimeError('Native ClientHello cannot change ' + ', '.join(changed))
+        raise AddonRuntimeError('Native TLS interception cannot change ' + ', '.join(changed))
 
 
 def read_upstream(observation):

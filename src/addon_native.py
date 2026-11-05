@@ -22,6 +22,7 @@ from addon_raw_events import RawAddonEvents, RawTransportError, RawTransportSetu
 from addon_runtime import AddonRuntimeError
 from addon_server_native import HOOKS as SERVER_HOOKS, dispatch as dispatch_server
 from addon_clienthello_native import dispatch as dispatch_clienthello
+from addon_tls_start_native import dispatch as dispatch_tls_start
 from addon_tls_native import HOOKS as TLS_HOOKS, dispatch as dispatch_tls
 
 
@@ -50,7 +51,7 @@ class NativeAddonAdapter:
     })
     HOOKS = (H2AddonEvents.HOOKS | RawAddonEvents.HOOKS |
              CONNECTION_HOOKS | PASSIVE_HOOKS | CONNECT_HOOKS | SERVER_HOOKS |
-             TLS_HOOKS | {'tls_clienthello'})
+             TLS_HOOKS | {'tls_clienthello', 'tls_start_server'})
 
     def __init__(self, generation, *, max_connections=128, body_limit=256 * 1024,
                  opaque_part_factory=None):
@@ -67,6 +68,7 @@ class NativeAddonAdapter:
         self._servers = {}
         self._tls = {}
         self._tls_hellos = {}
+        self._tls_starts = {}
 
     @staticmethod
     def _identity(session_id):
@@ -219,6 +221,8 @@ class NativeAddonAdapter:
         try:
             if observation.get('envelope', {}).get('event') == 'client-hello':
                 return await dispatch_clienthello(self, observation)
+            if observation.get('envelope', {}).get('event') == 'start':
+                return await dispatch_tls_start(self, observation)
             return await dispatch_tls(self, observation)
         except BaseException:
             self.generation.invalidate()
@@ -345,6 +349,7 @@ class NativeAddonAdapter:
                 self.raw.release_connection(identity)
             self._servers.pop(identity, None)
             self._tls_hellos.pop(identity, None)
+            self._tls_starts.pop(identity, None)
             self._tls.pop((identity, 'client'), None)
             self._tls.pop((identity, 'server'), None)
             del self._connections[identity]

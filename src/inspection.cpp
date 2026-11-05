@@ -216,6 +216,13 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             const bool tls_clienthello = request.value("tls_clienthello",
                 item != next.end() && item->value("tls_clienthello", false));
 
+            if(request.contains("tls_start_server") && !request["tls_start_server"].is_boolean()) {
+                throw std::invalid_argument("tls_start_server must be a boolean");
+            }
+
+            const bool tls_start_server = request.value("tls_start_server",
+                item != next.end() && item->value("tls_start_server", false));
+
             auto addon_options = item == next.end()
                 ? nlohmann::json::array()
                 : item->value("addon_options", nlohmann::json::array());
@@ -249,8 +256,8 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             if (script_api != "mitmproxy" && !addon_options.empty()) {
                 throw std::invalid_argument("Addon options require the mitmproxy script API");
             }
-            if(tls_clienthello && (script_api != "mitmproxy" || hook != "content")) {
-                throw std::invalid_argument("ClientHello requires a content addon deployment");
+            if((tls_clienthello || tls_start_server) && (script_api != "mitmproxy" || hook != "content")) {
+                throw std::invalid_argument("TLS interception requires a content addon deployment");
             }
 
             if (item == next.end()) {
@@ -270,6 +277,7 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             (*item)["addon_options"] = std::move(addon_options);
             (*item)["network_enabled"] = network_enabled;
             (*item)["tls_clienthello"] = tls_clienthello;
+            (*item)["tls_start_server"] = tls_start_server;
             (*item)["hook"] = hook;
             (*item)["timeout_ms"] = timeout; (*item)["error_limit"] = error_limit;
             (*item)["max_instances"] = max_instances; (*item)["idle_seconds"] = idle_seconds;
@@ -918,6 +926,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         result["server_lifecycle"] = true;
         result["tls_lifecycle"] = true;
         result["tls_clienthello"] = item.value("tls_clienthello", false);
+        result["tls_start_server"] = item.value("tls_start_server", false);
     }
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     result["duration_ms"] = elapsed;
@@ -1111,6 +1120,7 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool
     auto observation = event.at("details").at(tls ? "tls" : "server");
     const auto operation = tls ? "tls_lifecycle" : "server_lifecycle";
     const bool client_hello = tls && observation.at("envelope").at("event") == "client-hello";
+    const bool server_start = tls && observation.at("envelope").at("event") == "start";
     std::vector<ConnectOwner> owners;
     {
         std::scoped_lock lock(mutex_);
@@ -1126,7 +1136,8 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool
 
             // Subscription belongs to the deployment, including hooks added
             // dynamically after setup. Other addons do not receive this event.
-            if(client_hello && !item.value("tls_clienthello", false)) {
+            if((client_hello && !item.value("tls_clienthello", false)) ||
+               (server_start && !item.value("tls_start_server", false))) {
                 continue;
             }
 
@@ -1194,7 +1205,9 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool
                 return nullptr;
             }
             ignore_connection = ignore_connection || decision["ignore_connection"].get<bool>();
+        }
 
+        if(client_hello || server_start) {
             // Keep deployment order: later owners see the accepted offer from
             // earlier owners. Native code receives it only after all succeed.
             if(decision.contains("upstream")) {
@@ -1213,7 +1226,7 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool
     if(!delivered) {
         return nullptr;
     }
-    if(client_hello) {
+    if(client_hello || server_start) {
         nlohmann::json decision = {{"proceed", true}, {"ignore_connection", ignore_connection}};
         if(!ignore_connection && observation.contains("upstream")) {
             decision["upstream"] = observation["upstream"];
@@ -1541,6 +1554,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         bool server_lifecycle = false;
         bool tls_lifecycle = false;
         bool tls_clienthello = false;
+        bool tls_start_server = false;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         std::string last_enabled;
         for (const auto& entry : chain)
@@ -1633,6 +1647,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             server_lifecycle = server_lifecycle || result.value("server_lifecycle", false);
             tls_lifecycle = tls_lifecycle || result.value("tls_lifecycle", false);
             tls_clienthello = tls_clienthello || result.value("tls_clienthello", false);
+            tls_start_server = tls_start_server || result.value("tls_start_server", false);
             if (result.contains("connection_close")) {
                 // Closing the transport is terminal for this callback chain.
                 // No later deployment may observe or replace bytes which the
@@ -1661,6 +1676,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
                 result["server_lifecycle"] = server_lifecycle;
                 result["tls_lifecycle"] = tls_lifecycle;
                 result["tls_clienthello"] = tls_clienthello;
+                result["tls_start_server"] = tls_start_server;
             }
         }
         return result;

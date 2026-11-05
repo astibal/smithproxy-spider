@@ -138,6 +138,10 @@ def run_tls_cases(deploy, start_proxy, certificates, exchanges, set_relay_mode):
         (ssl.TLSVersion.TLSv1_2, False, 'cipher'),
         (ssl.TLSVersion.TLSv1_3, False, 'cipher'),
         (ssl.TLSVersion.TLSv1_2, False, 'cipher-default'),
+        (ssl.TLSVersion.TLSv1_2, False, 'start-cipher'),
+        (ssl.TLSVersion.TLSv1_3, False, 'start-cipher'),
+        (ssl.TLSVersion.TLSv1_3, False, 'start-upstream'),
+        (ssl.TLSVersion.TLSv1_3, False, 'start-disabled'),
     )
     for version, fragmented, mode in cases:
         hello_hook = """
@@ -152,7 +156,7 @@ def tls_clienthello(data):
         elif mode == 'bypass':
             source += "    data.ignore_connection = True\n"
 
-        if mode in ('upstream', 'upstream-invalid'):
+        if mode in ('upstream', 'upstream-invalid', 'start-upstream'):
             source = source.replace(
                 "data.client_hello.alpn_protocols == [b'http/1.1']",
                 "data.client_hello.alpn_protocols == [b'h2', b'http/1.1']",
@@ -163,15 +167,49 @@ def tls_clienthello(data):
                 "    data.context.server.alpn_offers = [b'http/1.1']\n"
             )
 
-        if mode == 'cipher':
+        if mode in ('cipher', 'start-cipher'):
             source += "    data.context.server.cipher_list = ['ECDHE-RSA-AES128-GCM-SHA256']\n"
         elif mode == 'cipher-default':
             source += "    data.context.server.cipher_list = []\n"
 
+        if mode == 'start-cipher':
+            source = ADDON + """
+def tls_start_server(data):
+    assert data.conn is data.context.server
+    assert events == ['connected'], events
+    assert data.conn.connected
+    assert data.conn.timestamp_tcp_setup is not None
+    events.append('start')
+    assert data.conn.timestamp_tls_setup is None
+    data.conn.cipher_list = ['ECDHE-RSA-AES128-GCM-SHA256']
+
+def server_connected(data):
+    assert data.server.connected
+    events.append('connected')
+"""
+            source = source.replace(
+                "events == ['server', 'client']",
+                "events == ['connected', 'start', 'server', 'client']",
+            )
+
+        if mode == 'start-upstream':
+            source = ADDON + """
+def tls_start_server(data):
+    data.conn.sni = 'upstream.test'
+    data.conn.alpn_offers = [b'http/1.1']
+"""
+
+        if mode == 'start-disabled':
+            source = ADDON + """
+def tls_start_server(data):
+    data.conn.error = 'An unsubscribed hook must not run'
+"""
+
         set_relay_mode('invalid-hello' if mode == 'unavailable' else 'forward')
         if mode == 'upstream-invalid':
             set_relay_mode('invalid-upstream')
-        deploy(source, tls_clienthello=mode != 'disabled')
+        deploy(source, tls_clienthello=mode != 'disabled' and not mode.startswith('start-'),
+               tls_start_server=mode.startswith('start-') and mode != 'start-disabled')
         offset = len(exchanges)
         errors = []
         requests = []
@@ -184,11 +222,11 @@ def tls_clienthello(data):
         context.minimum_version = context.maximum_version = version
         context.load_cert_chain(certificates / 'origin-cert.pem', certificates / 'origin-key.pem')
         context.set_alpn_protocols(['http/1.1'])
-        if mode == 'upstream':
+        if mode in ('upstream', 'start-upstream'):
             context.load_cert_chain(certificates / 'upstream-cert.pem', certificates / 'upstream-key.pem')
             context.set_alpn_protocols(['h2', 'http/1.1'])
         negotiated_ciphers = []
-        if mode == 'cipher':
+        if mode in ('cipher', 'start-cipher'):
             context.set_ciphers('ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256')
         server_names = []
         context.set_servername_callback(lambda connection, name, context: server_names.append(name))
@@ -208,7 +246,7 @@ def tls_clienthello(data):
         thread = threading.Thread(target=serve, daemon=True)
         thread.start()
         target = listener.getsockname()[1]
-        proxy_port, process = start_proxy(target, verify_identity=mode == 'upstream')
+        proxy_port, process = start_proxy(target, verify_identity=mode in ('upstream', 'start-upstream'))
         with socket.create_connection(('127.0.0.1', proxy_port), timeout=10) as raw:
 
             client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -216,12 +254,12 @@ def tls_clienthello(data):
             client.verify_mode = ssl.CERT_NONE
             client.minimum_version = client.maximum_version = version
             client.set_alpn_protocols(['http/1.1'])
-            if mode in ('upstream', 'upstream-invalid'):
+            if mode in ('upstream', 'upstream-invalid', 'start-upstream'):
                 client.set_alpn_protocols(['h2', 'http/1.1'])
             stream = (FragmentedTlsClient(client, raw) if fragmented else
                       client.wrap_socket(raw, server_hostname='localhost'))
             with stream as tls:
-                if mode == 'upstream':
+                if mode in ('upstream', 'start-upstream'):
                     assert tls.selected_alpn_protocol() == 'http/1.1'
                 if mode == 'bypass':
                     expected = ssl.PEM_cert_to_DER_cert((certificates / 'origin-cert.pem').read_text())
@@ -239,11 +277,11 @@ def tls_clienthello(data):
         thread.join(12)
         assert not thread.is_alive(), 'TLS origin did not finish'
         assert not errors, errors
-        if mode == 'cipher' and version == ssl.TLSVersion.TLSv1_2:
+        if mode in ('cipher', 'start-cipher') and version == ssl.TLSVersion.TLSv1_2:
             assert negotiated_ciphers == ['ECDHE-RSA-AES128-GCM-SHA256'], negotiated_ciphers
-        if mode == 'cipher' and version == ssl.TLSVersion.TLSv1_3:
+        if mode in ('cipher', 'start-cipher') and version == ssl.TLSVersion.TLSv1_3:
             assert negotiated_ciphers[0].startswith('TLS_'), negotiated_ciphers
-        if mode == 'upstream':
+        if mode in ('upstream', 'start-upstream'):
             assert server_names == ['upstream.test'], server_names
         if mode == 'upstream-invalid':
             assert server_names == ['localhost'], server_names
@@ -260,6 +298,8 @@ def tls_clienthello(data):
         expected = [('server', 'established'), ('client', 'established')]
         if mode in ('observe', 'unavailable', 'upstream', 'upstream-invalid', 'cipher', 'cipher-default'):
             expected.insert(0, ('client', 'client-hello'))
+        elif mode.startswith('start-') and mode != 'start-disabled':
+            expected.insert(0, ('server', 'start'))
         elif mode == 'bypass':
             expected = [('client', 'client-hello')]
 
@@ -272,16 +312,27 @@ def tls_clienthello(data):
 
 
 def run_tls_failure_cases(deploy, start_proxy, certificates, exchanges, set_relay_mode):
-    for failure in ('server', 'client', 'hello', 'strict-hello', 'cipher-invalid', 'cipher-empty', 'cipher-tls13-name'):
+    failures = (
+        'server', 'client', 'hello', 'strict-hello',
+        'cipher-invalid', 'cipher-empty', 'cipher-tls13-name',
+        'start-veto', 'start-invalid',
+    )
+    for failure in failures:
         source = ADDON
         if failure == 'hello':
             source += "\ndef tls_clienthello(data):\n    data.context.client.error = 'denied by addon'\n"
+        if failure == 'start-veto':
+            source += "\ndef tls_start_server(data):\n    data.conn.error = 'denied by addon'\n"
+        elif failure == 'start-invalid':
+            source += "\ndef tls_start_server(data):\n    data.conn.cipher_list = ['UNKNOWN-CIPHER']\n"
+
         if failure.startswith('cipher-'):
             value = {'cipher-invalid': 'UNKNOWN-CIPHER', 'cipher-empty': '',
                      'cipher-tls13-name': 'TLS_AES_256_GCM_SHA384'}[failure]
             source += f'\ndef tls_clienthello(data):\n    data.context.server.cipher_list = [{value!r}]\n'
         set_relay_mode('strict-hello' if failure == 'strict-hello' else 'forward')
-        deploy(source, tls_clienthello=failure in ('hello', 'strict-hello') or failure.startswith('cipher-'))
+        deploy(source, tls_clienthello=failure in ('hello', 'strict-hello') or failure.startswith('cipher-'),
+               tls_start_server=failure.startswith('start-'))
         offset = len(exchanges)
         listener = socket.socket()
         listener.bind(('127.0.0.1', 0))
@@ -300,12 +351,27 @@ def run_tls_failure_cases(deploy, start_proxy, certificates, exchanges, set_rela
                     raw, _ = listener.accept()
                     raw.settimeout(10)
                     with raw:
-                        if failure in ('hello', 'strict-hello') or failure.startswith('cipher-'):
+                        if failure in ('hello', 'strict-hello') or failure.startswith(('cipher-', 'start-')):
                             assert not raw.recv(1), 'ClientHello veto sent TLS bytes upstream'
                         elif failure == 'server':
                             # TCP succeeds, but the upstream cannot speak TLS.
-                            assert raw.recv(1), 'Origin did not receive a ClientHello'
+                            header = bytearray()
+                            while len(header) < 5:
+                                part = raw.recv(5 - len(header))
+                                assert part, 'Origin did not receive a TLS record'
+                                header.extend(part)
+
+                            remaining = int.from_bytes(header[3:5], 'big')
+                            while remaining:
+                                part = raw.recv(remaining)
+                                assert part, 'Origin received an incomplete TLS record'
+                                remaining -= len(part)
+
                             raw.sendall(b'HTTP/1.1 400 Not TLS\r\n\r\n')
+
+                            # Isolate TLS rejection from the separate race where
+                            # immediate TCP closure removes getpeername metadata.
+                            raw.recv(1)
                         else:
                             with context.wrap_socket(raw, server_side=True) as tls:
                                 tls.recv(4096)
@@ -320,7 +386,7 @@ def run_tls_failure_cases(deploy, start_proxy, certificates, exchanges, set_rela
         thread.start()
         proxy_port, process = start_proxy(target)
         client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        if failure in ('server', 'hello', 'strict-hello') or failure.startswith('cipher-'):
+        if failure in ('server', 'hello', 'strict-hello') or failure.startswith(('cipher-', 'start-')):
             client.check_hostname = False
             client.verify_mode = ssl.CERT_NONE
         # For the client failure, keep verification enabled with no trusted CA.
@@ -344,7 +410,7 @@ def run_tls_failure_cases(deploy, start_proxy, certificates, exchanges, set_rela
             time.sleep(.02)
 
         assert all(status == 200 for _, _, status in events), events
-        keys = [(e['side'], e['attempt']) for e in outcomes if e['event'] != 'client-hello']
+        keys = [(e['side'], e['attempt']) for e in outcomes if e['event'] not in ('client-hello', 'start')]
         assert len(keys) == len(set(keys)), 'One TLS attempt reported more than one outcome'
         assert not any(e['side'] == failed_side and e['event'] == 'established' for e in outcomes), outcomes
         if failure == 'client':

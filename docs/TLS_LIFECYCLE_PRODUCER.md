@@ -58,8 +58,8 @@ fails the addon callback explicitly. Certificate values are available through
 context layers, precise handshake timestamps and offered cipher/ALPN inventories
 are not supplied by this outcome-only transport contract.
 
-`tls_start_*` and `tls_clienthello` remain rejected at deployment: their mutation
-semantics need a separate pre-handshake control contract. DTLS and QUIC are not
+`tls_start_client` remains unsupported. ClientHello and upstream start use
+separate opt-in control contracts described in TLS_UPSTREAM_OPTIONS.md. DTLS and QUIC are not
 mapped onto these TCP TLS outcomes. A plain HTTP CONNECT tunnel does not terminate
 TLS and therefore must not generate native TLS outcome hooks.
 

@@ -59,3 +59,40 @@ Each participating deployment receives an earlier accepted expression; an empty
 list can return to native defaults. Producers without the capability field keep
 rejecting cipher-list mutations explicitly. The native transport stores an
 override only for subscribed handshakes that actually request one.
+
+## Upstream start interception
+
+A content addon deployment may explicitly enable `tls_start_server: true`.
+This subscription is independent of ClientHello, defaults to false, and also
+covers hooks registered dynamically after setup. Native code invokes it once
+before the first upstream TCP TLS handshake call, after creating the SSL object.
+The existing TLS lifecycle envelope uses `side: server`, `event: start`, and the
+same attempt identity as its later outcome. Downstream start, DTLS and QUIC are
+not enabled by this subscription.
+
+### Ordering
+
+Before dispatching `tls_start_server`, Smithproxy checks the existing TCP
+readiness observation. If TCP has connected since the previous observation,
+it delivers the missing `server_connected` first, without duplicating it.
+This does not delay TLS, change socket monitoring, or fabricate a connection.
+If TCP is still pending at the native start boundary, the native order remains:
+`tls_start_server` may precede `server_connected`. The shared descriptor reflects
+only confirmed TCP metadata. Exact reference ordering is not guaranteed in that
+case; transport scheduling takes precedence over addon compatibility.
+
+The callback receives `TlsData`: `conn` is the shared upstream descriptor,
+`context` retains both sides, and `ssl_conn` is the explicit unsupported-operation
+sentinel. Passing the event is valid; using live SSL methods or replacing
+`ssl_conn` fails the callback. This is not support for arbitrary PyOpenSSL code.
+
+The addon may change `conn.sni`, `conn.alpn_offers`, and `conn.cipher_list` using
+the same native semantics described above, or set `conn.error` to veto. Accepted
+offers pass through deployments in order. Invalid/unavailable control replies
+retain the existing strict/fail-open policy. OpenSSL rejection terminates the
+handshake and logs a warning, without retrying native defaults.
+
+Changes apply only to the connection's SSL object. A changed offer clears the
+session previously selected for resumption; unchanged offers preserve it.
+Shared SSL contexts, protocol bounds, verification policy and TLS 1.3 suites
+are unchanged. Certificate verification uses the accepted upstream identity.
