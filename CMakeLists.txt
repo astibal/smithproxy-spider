@@ -324,6 +324,10 @@ if(BUILD_TESTING)
     add_test(NAME inspection_tests COMMAND inspection_tests)
     add_test(NAME inspection_api_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_api_test.py)
+    add_test(NAME hook_examples_tests
+             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/hook_examples_test.py)
+    set_tests_properties(hook_examples_tests PROPERTIES TIMEOUT 45)
+
     add_test(NAME inspection_cookbook_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_cookbook_test.py)
     set_tests_properties(inspection_cookbook_tests PROPERTIES TIMEOUT 45)

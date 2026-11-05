@@ -619,7 +619,8 @@ The adapter shares the descriptor pair with HTTP flows on that connection;
 unknown fields remain `None` until a native observation supplies them. Ordinary
 client setup without a CONNECT prelude still lacks endpoint metadata at
 `client_connected`; the later server observation fills those fields. TLS
-lifecycle metadata remains separate work. Never infer endpoints from labels.
+lifecycle metadata comes from the implemented TLS/QUIC producers described in
+[the hook guide](HOOKS_GUIDE.md). Never infer endpoints from labels.
 
 `client_connected` is awaited after native `connection-start` and before the
 first HTTP, TCP or UDP hook. `client_disconnected` is awaited after pending
@@ -630,7 +631,7 @@ mitmproxy 12.3.1 corpus fixes this ordering and identity contract. The packaged
 worker repeats the contract through the production JSON boundary.
 
 Server lifecycle hooks are driven by native TCP observations, never synthesized
-from client setup. The approved producer on `proxy-hooks` dispatches `server_connect`,
+from client setup. The integrated native producer dispatches `server_connect`,
 `server_connected`, `server_connect_error` and `server_disconnected` synchronously,
 with one Server identity per upstream attempt. TCP completion does not imply TLS
 readiness. Physical client closure and logical session retirement are reported
@@ -638,8 +639,8 @@ separately; the existing native teardown path owns socket shutdown. Legacy
 reconnects are unchanged and outside this producer contract.
 
 See `SERVER_LIFECYCLE_PRODUCER.md` for the envelope, CONNECT ordering, native
-error-veto semantics, tests and limits. General destination mutation and
-TLS/QUIC lifecycle integration remain separate work.
+error-veto semantics, tests and limits. General destination mutation remains
+separate work; scoped TLS/QUIC lifecycle integration is implemented.
 
 `addon_connection.py` now contains the initial Connection/Client/Server data model:
 state flags, endpoint/TLS fields, identity equality, detached copies, legacy
@@ -2429,16 +2430,15 @@ QUIC TLS value checkpoint (2026-10-31): the public `QuicTlsSettings`,
 match an isolated mitmproxy 12.3.1 corpus for field order, defaults, independent
 certificate-chain storage, inheritance, endpoint/context identity, hook names,
 arguments and blocking semantics. The types are available in the packaged
-worker without importing aioquic or a mitmproxy runtime. QUIC hooks remain
-fail-closed until a native producer can provide their real handshake boundary.
+worker without importing aioquic or a mitmproxy runtime. At that checkpoint QUIC hooks were rejected without a producer. The current
+scoped producer is documented in [QUIC TLS hooks](QUIC_TLS_HOOKS.md).
 
 Connection-hook value checkpoint (2026-10-31): the public
 `ServerConnectionHookData` and six client/server lifecycle hook values match a
 black-box 12.3.1 corpus for field order, endpoint identity, equality, hook names,
 arguments and blocking semantics, directly and in the packaged worker. This
-does not synthesize upstream events: only client connect/disconnect callbacks
-have a truthful producer today, while all four server callbacks remain
-fail-closed pending the ordered Smithproxy observations described above.
+did not synthesize upstream events at that checkpoint. All four server callbacks
+now have the native producer described in [Server lifecycle](SERVER_LIFECYCLE_PRODUCER.md).
 
 HTTP-hook value checkpoint (2026-10-31): all eight public HTTP hook classes in
 `mitmproxy.proxy.layers.http` and its `_hooks` child match an isolated 12.3.1

@@ -1,5 +1,9 @@
 # Smithproxy Spider
 
+**Proxy hooks:** [Deployment guide and complete addon examples](docs/HOOKS_GUIDE.md)
+cover CONNECT, TCP lifecycle, TLS, QUIC and authentication, including explicit
+subscriptions and supported mutations. The same examples appear beside the editor.
+
 **Binding API design:** [First Class API Design](docs/FIRST_CLASS_API_DESIGN.md)
 defines the required Parts model, lazy representations, transactional commit and
 semantic hold buffers. It distinguishes the target architecture from implemented

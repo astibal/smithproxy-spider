@@ -77,3 +77,7 @@ retirement, metadata, combined SNI/ALPN/cipher mutation, veto, empty ciphers,
 rejected ALPN, unavailable/strict replies, and disabled subscriptions. Baseline
 local/GRE captures and decrypted native packets remain independently validated;
 additional hook scenarios do not contaminate the baseline capture window.
+
+The fixture keeps baseline streams open until the CLI snapshot explicitly releases
+FIN, avoiding a race between short responses and live-stream diagnostics.
+See the [deployment guide](HOOKS_GUIDE.md) for a complete addon example.

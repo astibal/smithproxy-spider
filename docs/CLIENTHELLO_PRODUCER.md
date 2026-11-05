@@ -33,7 +33,7 @@ a reply is malformed or a participant is unavailable. The native fallback is
 fail-open, or terminate when strict control was negotiated.
 
 Replacing the context/ClientHello, changing the target or unsupported TLS settings
-(client-side settings, cipher/list, TLS flag or version),
+(client-side settings, TLS flag or version),
 and setting `establish_server_tls_first = True` are unsupported and rejected.
 This patch does not provide SSL-context replacement or handshake scheduling
 control. A callback failure follows the existing addon invalidation policy.

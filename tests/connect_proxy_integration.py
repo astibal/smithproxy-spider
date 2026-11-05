@@ -27,6 +27,9 @@ def main():
     parser.add_argument('--spider', type=Path, required=True)
     parser.add_argument('--native-source', type=Path, required=True)
     parser.add_argument('--fixture', type=Path, required=True)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument('--starttls-only', action='store_true')
+    selection.add_argument('--resumption-only', action='store_true')
     parser.add_argument('--broker', type=Path)
     parser.add_argument('--pam-module', type=Path)
     args = parser.parse_args()
@@ -121,7 +124,9 @@ def main():
         certificates.mkdir(parents=True)
         shutil.copytree(args.native_source / 'etc/msg/en', root / 'etc/msg/en')
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-                        '-subj', '/CN=connect-hook-test', '-keyout', str(certificates / 'ca-key.pem'),
+                        '-subj', '/CN=connect-hook-test',
+                        '-addext', 'basicConstraints=critical,CA:TRUE',
+                        '-addext', 'keyUsage=critical,keyCertSign,cRLSign,digitalSignature', '-keyout', str(certificates / 'ca-key.pem'),
                         '-out', str(certificates / 'ca-cert.pem')], check=True, capture_output=True)
         for name in ('cl', 'srv', 'portal'):
             for suffix in ('key.pem', 'cert.pem'):
@@ -217,20 +222,30 @@ def main():
             config.write_text(content)
             base_config_text = content
 
-            def start_tls_proxy(target, verify_identity=False):
+            def start_tls_proxy(target, verify_identity=False, plaintext=False, trusted_origin=False):
                 # Use the transparent listener and policy DNAT. The fixture
                 # needs no host firewall changes and does not alter CONNECT behavior.
                 port = free_port()
                 text = base_config_text.replace('nat = "none";', 'nat = "auto";')
+                if trusted_origin:
+                    text = text.replace('settings = {',
+                        f'settings = {{ ca_bundle_file="{certificates / "ca-cert.pem"}";', 1)
+                cli_port = free_port()
                 settings = {
                     'accept_tproxy': 'TRUE', 'accept_redirect': 'FALSE', 'accept_http_connect': 'FALSE',
                     'ssl_port': f'"{port}"', 'ssl_workers': '1',
                     'plaintext_workers': '-1', 'udp_workers': '-1',
-                    'allow_untrusted_issuers': 'TRUE',
+                    'allow_untrusted_issuers': 'FALSE' if trusted_origin else 'TRUE',
                     'allow_invalid_certs': 'FALSE' if verify_identity else 'TRUE',
-                    'allow_self_signed': 'TRUE',
-                    'port': str(free_port()), 'log_console': 'TRUE', 'log_level': '8',
+                    'allow_self_signed': 'FALSE' if trusted_origin else 'TRUE',
+                    'port': str(cli_port), 'log_console': 'TRUE', 'log_level': '8',
                 }
+                if trusted_origin:
+                    settings['ocsp_stapling'] = 'FALSE'
+
+                if plaintext:
+                    settings.update(ssl_workers='-1', plaintext_workers='1', plaintext_port=f'"{port}"')
+
                 for name, value in settings.items():
                     text, count = re.subn(r'(\b' + name + r'\s*=\s*)[^;]+;',
                                          lambda match: match[1] + value + ';', text, count=1)
@@ -269,11 +284,31 @@ def main():
                     assert tls_process.poll() is None, 'TLS proxy exited during startup'
                     assert time.monotonic() < deadline, 'TLS listener did not open'
                     time.sleep(.02)
+                if trusted_origin and os.environ.get('RESUMPTION_TRACE'):
+                    with socket.create_connection(('127.0.0.1', cli_port), timeout=2) as cli:
+                        cli.sendall(b'enable\r\ndebug set all 7\r\nquit\r\n')
+                        output = bytearray()
+                        while True:
+                            chunk = cli.recv(4096)
+                            if not chunk:
+                                break
+                            output.extend(chunk)
+                        (root / 'resumption-cli.log').write_bytes(output)
                 return port, tls_process
 
             def tls_relay_mode(value):
                 nonlocal mode
                 mode = value
+
+            if args.resumption_only:
+                from resumption_hook_cases import run_resumption_cases
+                run_resumption_cases(deploy, start_tls_proxy, certificates, exchanges)
+                return
+
+            if args.starttls_only:
+                from starttls_hook_cases import run_starttls_cases
+                run_starttls_cases(deploy, start_tls_proxy, certificates, exchanges, args.native_source)
+                return
 
             from tls_proxy_cases import run_tls_cases, run_tls_failure_cases
             run_tls_cases(deploy, start_tls_proxy, certificates, exchanges, tls_relay_mode)
@@ -696,6 +731,10 @@ def http_connected(flow):
                     print('PASS: failed prelude without setup still receives one native cleanup')
 
         except BaseException:
+            if args.starttls_only:
+                request = Request(spider_url + '/api/inspection', headers={'X-Spider-Token': token})
+                with urlopen(request) as response:
+                    (root / 'inspection-failure.json').write_bytes(response.read())
             if os.environ.get('TLS_TEST_DIAGNOSTICS'):
                 shutil.copytree(root, os.environ['TLS_TEST_DIAGNOSTICS'], dirs_exist_ok=True)
             for log in logs:

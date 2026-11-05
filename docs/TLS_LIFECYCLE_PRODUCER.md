@@ -1,7 +1,7 @@
 # Native TLS outcome observations
 
-This contract covers TCP TLS in Smithproxy `proxy-hooks`, using Socle's bounded
-protocol-state history (`a57b195`). It does not alter TLS scheduling or verification.
+This contract covers TCP TLS in Smithproxy master, using Socle's bounded
+protocol-state history. It does not alter TLS scheduling or verification.
 
 ## Supported events
 

@@ -1,0 +1,27 @@
+[
+  {
+    "file": "connect.py",
+    "title": "HTTP CONNECT and TCP lifecycle",
+    "deployment": "content / flow; no TLS start subscription required"
+  },
+  {
+    "file": "tcp_tls.py",
+    "title": "TCP TLS observation and upstream offers",
+    "deployment": "content / flow; tls_clienthello=true, tls_start_server=true"
+  },
+  {
+    "file": "quic.py",
+    "title": "QUIC upstream offer and outcomes",
+    "deployment": "content / flow; quic_start_server=true; IPv4 listener"
+  },
+  {
+    "file": "authentication.py",
+    "title": "SOCKS5 AAA veto",
+    "deployment": "authentication / all / message; separate from content"
+  },
+  {
+    "file": "starttls.py",
+    "title": "STARTTLS lifecycle on existing TCP",
+    "deployment": "content / flow; tls_start_server=true, tls_start_client=true; lifecycle-only addon"
+  }
+]

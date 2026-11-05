@@ -1,7 +1,7 @@
 # Native TCP server lifecycle
 
-Status: review patch on `proxy-hooks`, dependent on the shared authentication
-hook extraction. No merge or publication is included in this review.
+Status: integrated into Smithproxy master and Spider mitmproxy-api. See the
+[deployment guide](HOOKS_GUIDE.md) and [merged validation](HOOKS_INTEGRATION_CHECKPOINT.md).
 
 A successful addon setup reply advertises `control.server_lifecycle = 1`.
 Smithproxy sends these events only after that capability was negotiated, so an
@@ -20,7 +20,7 @@ native connection ID, a monotonically increasing attempt ID and one event:
 `connect` has exactly one outcome: `error`, or `connected` followed by
 `disconnected`. Shutdown and destruction share terminal bookkeeping. The legacy permanent-context reconnect path is unchanged and is outside this
 producer contract. UDP and QUIC do not produce these
-TCP observations. TLS lifecycle hooks remain separate work.
+TCP observations. TLS lifecycle hooks use a separate producer; see [TLS lifecycle](TLS_LIFECYCLE_PRODUCER.md).
 
 The message also carries the target and actual socket endpoints. Unknown
 endpoints remain null. Terminal observations indicate when the client transport
