@@ -4,7 +4,7 @@ This checkpoint closes validation of the implemented CONNECT, server, TCP TLS
 and QUIC hook subset. It does not claim full mitmproxy transport equivalence.
 No production code changed during this validation follow-up.
 
-## Tested sources
+## Pre-merge tested sources
 
 | Repository | Branch | Commit |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ See `QUIC_TLS_HOOKS.md` and the individual producer contracts for exact mutation
 semantics. In particular, QUIC SNI overrides do not replace the native
 certificate-verification identity.
 
-## Merge preparation
+## Pre-merge preparation (superseded below)
 
 Read-only merge audits used the current GitHub refs; no release branch was moved.
 
@@ -80,3 +80,44 @@ Read-only merge audits used the current GitHub refs; no release branch was moved
 
 No production refactor, reconnect change, IPv6 QUIC implementation or automatic
 release-branch merge was introduced to make the integration tests pass.
+
+## Final merged validation and publication
+
+The user authorized integration into Socle master, Smithproxy master and Spider
+mitmproxy-api. The merged candidates were tested again before publication:
+
+| Repository | Target | Tested commit |
+| --- | --- | --- |
+| Socle | master | `6764e481` |
+| Smithproxy | master | `64d4b021` |
+| Spider | mitmproxy-api | `ecaa1906` |
+
+Socle retains master's null-safe `real_socket()` diagnostics alongside the TLS
+changes. Smithproxy selects that merged Socle revision. The master patch runner
+is now part of the merged source: no test-only CMake overlay was used. All 1,046
+staged source files were verified against the local source SHA256 manifest.
+
+| Final gate | Result |
+| --- | --- |
+| Full P8 on Rhino | 53/53 sections PASS |
+| Native CTest within P8 | 60/60 PASS |
+| Complete Spider CTest | 124/124 PASS, 352.59 seconds |
+| Live TCP/TLS/CONNECT | 47 scenarios PASS |
+| Live authentication | PASS |
+| Live QUIC | 7/7 decision scenarios PASS, lifecycle/order/metadata and capture audits PASS |
+
+The first Spider run hit the worker timeout during an overlapping build; the
+complete suite passed on a clean serial rerun. The first QUIC run passed all
+functional scenarios but raced the CLI snapshot against stream retirement.
+The test origin now withholds FIN until the snapshot explicitly releases it.
+This changes only the fixture; production transport behavior is unchanged.
+The final Spider follow-up commit contains that fixture fix and this report,
+with the same tested production source and binary as `ecaa1906`.
+
+Final evidence is archived under `p3-runs/hooks-merged-20261105` in the shared
+workspace. P8 run: `20261105T160143Z-64d4b021-full`. QUIC run:
+`20261105T162113Z-ec95399a-sanity-quic`; its commit label identifies the isolated
+fixture snapshot, while the binaries are the merged candidates above.
+
+The scoped parity boundaries above remain unchanged. This closes the current
+hook integration topic, not every mitmproxy API capability.

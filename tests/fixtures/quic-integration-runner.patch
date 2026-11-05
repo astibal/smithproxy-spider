@@ -1,20 +1,38 @@
 --- a/tests/patch-runner/harness/lab-test.sh
 +++ b/tests/patch-runner/harness/lab-test.sh
-@@ -564,6 +564,13 @@
-     python3 "$ROOT/runner/tests/quic-webhook-contract.py" verify \
-         "$ROOT/results/quic-webhooks.jsonl"
+@@ -256,7 +256,8 @@
+         echo "FAIL: SPQ1_DISSECTOR is not readable: ${SPQ1_DISSECTOR:-<unset>}" >&2
+         exit 1
+     }
+-    ip netns exec "$SERVER" python3 -u "$ROOT/runner/tests/h3-origin.py" \
++    ip netns exec "$SERVER" env QUIC_ORIGIN_RELEASE_FILE="$ROOT/results/quic-origin-release" \
++        python3 -u "$ROOT/runner/tests/h3-origin.py" \
+         --certificate "$ROOT/config/certs/origin-cert.pem" \
+         --key "$ROOT/config/certs/origin-key.pem" \
+         > "$ROOT/results/h3-origin.log" 2>&1 &
+@@ -535,6 +536,7 @@
  
+     { printf 'enable\r\ndiag proxy quic list\r\n'; sleep 1; printf 'quit\r\n'; } | \
+         timeout 8 ip netns exec "$NS" nc 127.0.0.1 50000 > "$QUIC_CLI" 2>&1
++    touch "$ROOT/results/quic-origin-release"
+     wait "$QUIC_CLIENT_PID"
+     QUIC_CLIENT_PID=
+     kill -INT "$QUIC_GRE_PID" "$QUIC_NATIVE_PID" 2>/dev/null || true
+@@ -562,6 +564,13 @@
+     done
+     cat "$ROOT/results/quic-webhook-verdict.log"
+     python3 "$ROOT/runner/tests/quic-webhook-contract.py" verify \
++        "$ROOT/results/quic-webhooks.jsonl"
++
 +    # Freeze baseline capture bytes before the additional hook scenarios append
 +    # new sessions to the shared local capture file outside the GRE window.
 +    mkdir -p "$ROOT/results/quic-baseline-captures"
 +    cp "$ROOT/data/$CAPTURE_PREFIX"*.pcapng "$ROOT/results/quic-baseline-captures/"
 +    python3 "$ROOT/runner/tests/quic-webhook-contract.py" exercise \
-+        "$ROOT/results/quic-webhooks.jsonl"
-+
+         "$ROOT/results/quic-webhooks.jsonl"
+ 
  fi
- fi
- if [[ $SESSION_LIST_STRESS_TEST == 1 ]]; then
-@@ -1195,7 +1202,7 @@
+@@ -1195,7 +1204,7 @@
      [[ -s "$ROOT/results/quic-downstream.keys" ]]
      grep -Eq '_(HANDSHAKE|TRAFFIC)_SECRET ' "$ROOT/results/quic-downstream.keys"
      python3 "$ROOT/runner/tests/verify-quic-observability.py" \
@@ -23,3 +41,38 @@
          --gre "$ROOT/results/quic-observability/gre.pcap" \
          --native "$ROOT/results/quic-observability/downstream-native.pcapng" \
          --keylog "$ROOT/results/quic-downstream.keys" \
+--- a/tests/patch-runner/harness/h3-origin.py
++++ b/tests/patch-runner/harness/h3-origin.py
+@@ -3,6 +3,8 @@
+ 
+ import argparse
+ import asyncio
++import os
++from pathlib import Path
+ 
+ from aioquic.asyncio import QuicConnectionProtocol, serve
+ from aioquic.h3.connection import H3_ALPN, H3Connection
+@@ -54,9 +56,22 @@
+                     (b"x-smithproxy-h3", b"decoded"),
+                 ],
+             )
++            # The hook integration fixture snapshots all four live streams.
++            # An explicit release prevents short responses racing the CLI probe.
++            release_file = os.environ.get("QUIC_ORIGIN_RELEASE_FILE")
++            release = Path(release_file) if release_file else None
++            hold_fin = release is not None and not release.exists()
+             self.http.send_data(
+-                stream_id=http_event.stream_id, data=body, end_stream=True)
++                stream_id=http_event.stream_id, data=body, end_stream=not hold_fin)
+             self.transmit()
++            if hold_fin:
++                asyncio.create_task(self.finish_after_release(http_event.stream_id, release))
++
++    async def finish_after_release(self, stream_id, release):
++        while not release.exists():
++            await asyncio.sleep(0.02)
++        self.http.send_data(stream_id=stream_id, data=b"", end_stream=True)
++        self.transmit()
+ 
+ 
+ async def run(arguments: argparse.Namespace) -> None:
