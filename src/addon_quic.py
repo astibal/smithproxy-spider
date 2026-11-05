@@ -1,4 +1,4 @@
-"""Public QUIC TLS hook values without a QUIC transport implementation."""
+"""Public QUIC TLS hook values shared by adapters and addon code."""
 
 from dataclasses import dataclass, field
 

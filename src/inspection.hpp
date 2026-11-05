@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string_view>
 #include <vector>
 #include <chrono>
 #include <nlohmann/json.hpp>
@@ -13,6 +14,7 @@ namespace spider {
 class InspectionPool;
 class Inspection {
 public:
+    nlohmann::json quic_lifecycle(const nlohmann::json& event);
     nlohmann::json tls_lifecycle(const nlohmann::json& event);
     nlohmann::json server_lifecycle(const nlohmann::json& event);
     nlohmann::json http_connect(const nlohmann::json& event);
@@ -35,7 +37,7 @@ public:
     bool translation_required(const nlohmann::json& event) const;
     Collection collection;
 private:
-    nlohmann::json transport_lifecycle(const nlohmann::json& event, bool tls);
+    nlohmann::json transport_lifecycle(const nlohmann::json& event, std::string_view protocol);
     struct Instance {
         nlohmann::json state = nlohmann::json::object();
         std::chrono::steady_clock::time_point used = std::chrono::steady_clock::now();

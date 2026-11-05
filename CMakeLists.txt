@@ -227,6 +227,8 @@ if(BUILD_TESTING)
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_connect_transport_contract_test.py)
     add_test(NAME addon_connect_worker_tests
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_connect_worker_test.py)
+    add_test(NAME addon_quic_native_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_quic_native_test.py)
     add_test(NAME addon_tls_native_tests
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_tls_native_test.py)
     add_test(NAME addon_server_native_tests

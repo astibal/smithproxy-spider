@@ -405,12 +405,15 @@ def invoke_http_connect(observation):
         }
 
 
-def invoke_lifecycle(observation, *, tls=False):
+def invoke_lifecycle(observation, *, tls=False, quic=False):
     output = Output()
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             adapter = addon_worker.adapter
-            callback = adapter.tls_lifecycle if tls else adapter.server_lifecycle
+            if quic:
+                callback = adapter.quic_lifecycle
+            else:
+                callback = adapter.tls_lifecycle if tls else adapter.server_lifecycle
             decision = addon_worker.run(callback(observation))
 
         return {
@@ -864,7 +867,9 @@ def serve_persistent():
             sys.stdout.flush()
             break
         current['storage_directory'] = storage_directory
-        if 'tls_lifecycle' in current:
+        if 'quic_lifecycle' in current:
+            response = invoke_lifecycle(current['quic_lifecycle'], quic=True)
+        elif 'tls_lifecycle' in current:
             response = invoke_lifecycle(current['tls_lifecycle'], tls=True)
         elif 'server_lifecycle' in current:
             response = invoke_lifecycle(current['server_lifecycle'])

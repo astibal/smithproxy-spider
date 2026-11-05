@@ -2032,7 +2032,7 @@ def done():
             instance=SimpleNamespace(mode='flow'),
             connection=ApiConnection(phase='setup', instance_mode='flow'),
         )
-        with self.assertRaisesRegex(AddonRuntimeError, 'dedicated protocol lifecycle adapter'):
+        with self.assertRaisesRegex(AddonRuntimeError, 'Unsupported parent transport setup'):
             adapter.setup(parent, None, None)
         self.assertEqual(adapter.active_connections, 0)
         self.assertEqual(addon.addon.module.events, [])

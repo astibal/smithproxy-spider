@@ -46,10 +46,12 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
-    if(action == "tls-lifecycle") {
-        // TLS events follow the same pinned setup ownership as TCP.
+    if(action == "tls-lifecycle" || action == "quic-lifecycle") {
+        // Handshake events follow the same pinned setup ownership as TCP.
+        const bool quic = action == "quic-lifecycle";
+        const auto invalid = quic ? "Invalid QUIC observation" : "Invalid TLS observation";
         try {
-            const auto& observation = event.at("details").at("tls");
+            const auto& observation = event.at("details").at(quic ? "quic" : "tls");
             const auto& envelope = observation.at("envelope");
             const auto id = event.at("id").get<std::string>();
             const auto phase = envelope.at("event").get<std::string>();
@@ -63,12 +65,14 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
                (phase != "established" && phase != "failed" && phase != "client-hello" && phase != "start") ||
                (phase == "client-hello" && side != "client") ||
                (side != "client" && side != "server") || observation.dump().size() > observation_limit) {
-                return {400, {{"error", "Invalid TLS observation"}}};
+                return {400, {{"error", invalid}}};
             }
 
-            const auto decision = inspection ? inspection->tls_lifecycle(event) : nlohmann::json(nullptr);
+            const auto decision = inspection
+                ? (quic ? inspection->quic_lifecycle(event) : inspection->tls_lifecycle(event))
+                : nlohmann::json(nullptr);
             if(decision.is_null()) {
-                return {503, {{"error", "TLS callback unavailable"}}};
+                return {503, {{"error", quic ? "QUIC callback unavailable" : "TLS callback unavailable"}}};
             }
 
             nlohmann::json reply = {
@@ -86,7 +90,7 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
 
             return {200, std::move(reply)};
         } catch(const nlohmann::json::exception&) {
-            return {400, {{"error", "Invalid TLS observation"}}};
+            return {400, {{"error", invalid}}};
         }
     }
 
@@ -327,6 +331,10 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             }
             if(script_result.value("ok", false) && script_result.value("tls_start_client", false)) {
                 control["tls_start_client"] = 1;
+            }
+            if(script_result.value("ok", false) && script_result.value("quic_start_server", false)) {
+                control["quic_lifecycle"] = 1;
+                control["quic_start_server"] = 1;
             }
             if(script_result.value("ok", false) && script_result.value("tls_clienthello", false)) {
                 control["tls_clienthello"] = 1;

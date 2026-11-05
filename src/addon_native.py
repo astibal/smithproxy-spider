@@ -23,6 +23,7 @@ from addon_runtime import AddonRuntimeError
 from addon_server_native import HOOKS as SERVER_HOOKS, dispatch as dispatch_server
 from addon_clienthello_native import dispatch as dispatch_clienthello
 from addon_tls_start_native import dispatch as dispatch_tls_start
+from addon_quic_native import dispatch as dispatch_quic
 from addon_tls_native import HOOKS as TLS_HOOKS, dispatch as dispatch_tls
 
 
@@ -51,7 +52,7 @@ class NativeAddonAdapter:
     })
     HOOKS = (H2AddonEvents.HOOKS | RawAddonEvents.HOOKS |
              CONNECTION_HOOKS | PASSIVE_HOOKS | CONNECT_HOOKS | SERVER_HOOKS |
-             TLS_HOOKS | {'tls_clienthello', 'tls_start_server', 'tls_start_client'})
+             TLS_HOOKS | {'tls_clienthello', 'tls_start_server', 'tls_start_client', 'quic_start_server'})
 
     def __init__(self, generation, *, max_connections=128, body_limit=256 * 1024,
                  opaque_part_factory=None):
@@ -116,8 +117,7 @@ class NativeAddonAdapter:
         if api.phase != 'setup':
             raise AddonRuntimeError('Register connections only during native setup')
         if getattr(api, 'info', {}).get('scope') == 'transport':
-            raise AddonRuntimeError(
-                'Transport setup requires a dedicated protocol lifecycle adapter')
+            return self._setup_quic(api, client_conn, server_conn)
         identity = self._identity(api.session_id)
         if identity in self._connect_preludes:
             # CONNECT begins before target setup. Reuse its descriptors without
@@ -156,6 +156,22 @@ class NativeAddonAdapter:
         self._connections[identity] = _NativeConnection(
             setup.kind, setup.client, setup.server, setup)
         return self._start_raw(identity, setup)
+
+    def _setup_quic(self, api, client, server):
+        if api.info.get('protocol') != 'quic' or api.instance.mode != 'flow':
+            raise AddonRuntimeError('Unsupported parent transport setup')
+
+        identity = self._identity(api.session_id)
+        if identity in self._connections or len(self._connections) >= self.max_connections:
+            raise AddonRuntimeError('Duplicate QUIC setup or connection limit reached')
+
+        client, server = self._http_descriptors(client, server)
+        client.transport_protocol = 'udp'
+        server.transport_protocol = 'udp'
+        self._connections[identity] = _NativeConnection('quic', client, server)
+        if self.generation.observes('client_connected'):
+            return self._start_http(identity, client)
+        return None
 
     async def http_connect(self, observation):
         """Start the client lifecycle before the later connection-start setup."""
@@ -210,6 +226,16 @@ class NativeAddonAdapter:
 
         try:
             return await dispatch_server(self, observation)
+        except BaseException:
+            self.generation.invalidate()
+            raise
+
+    async def quic_lifecycle(self, observation):
+        if self.generation.state != 'running':
+            raise AddonRuntimeError('The addon generation is not running')
+
+        try:
+            return await dispatch_quic(self, observation)
         except BaseException:
             self.generation.invalidate()
             raise

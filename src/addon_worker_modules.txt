@@ -9,6 +9,7 @@ addon_socks5_events.py
 addon_proxy_context.py
 addon_tls.py
 addon_quic.py
+addon_quic_native.py
 addon_server_hooks.py
 addon_http_hooks.py
 addon_protocol_hooks.py

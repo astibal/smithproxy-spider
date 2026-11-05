@@ -97,6 +97,42 @@ int main(int argc, char** argv) {
         assert(engine.status()["chain"][0]["instances"] == 0);
     }
 
+    {
+        // The real worker owns one QUIC parent and carries mutations through
+        // the same lifecycle bridge used by incoming webhook messages.
+        deploy("flow", "#!mitmproxy\ndef quic_start_server(data):\n"
+                       "    data.settings.cipher_suites = [0x1301]\n"
+                       "    data.conn.sni = 'updated.test'\n",
+               {{"quic_start_server", true}});
+        auto parent = setup;
+        parent["id"] = "quic-hook-parent";
+        parent["details"]["info"]["scope"] = "transport";
+        parent["details"]["info"]["protocol"] = "quic";
+        const auto ready = engine.automatic(parent, json::array());
+        assert(ready["ok"] == true && ready["quic_start_server"] == true);
+
+        json observation = {
+            {"protocol", "quic"},
+            {"envelope", {{"version", 1}, {"connection_id", "quic-hook-parent"},
+                {"attempt", 1U}, {"side", "server"}, {"event", "start"}}},
+            {"upstream", {{"sni", "original.test"}, {"alpn", "h3"}, {"ciphers", nullptr}}}
+        };
+        const auto reply = engine.quic_lifecycle({{"id", "quic-hook-parent"},
+            {"details", {{"quic", observation}}}});
+        assert(reply["proceed"] == true);
+        assert(reply["upstream"]["sni"] == "updated.test");
+        assert(reply["upstream"]["ciphers"] == "TLS_AES_128_GCM_SHA256");
+
+        observation.erase("upstream");
+        observation["envelope"]["event"] = "established";
+        observation["alpn"] = "h3";
+        const auto outcome = engine.quic_lifecycle({{"id", "quic-hook-parent"},
+            {"details", {{"quic", observation}}}});
+        assert(outcome["proceed"] == true);
+        engine.automatic({{"action", "connection-stop"}, {"id", "quic-hook-parent"}}, json::array());
+        assert(engine.status()["chain"][0]["instances"] == 0);
+    }
+
     deploy("message", counter);
     assert(run()["logs"][0] == "1" && run()["logs"][0] == "1");
     assert(engine.status()["chain"][0]["instances"] == 0);

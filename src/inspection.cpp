@@ -230,6 +230,13 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             const bool tls_start_client = request.value("tls_start_client",
                 item != next.end() && item->value("tls_start_client", false));
 
+            if(request.contains("quic_start_server") && !request["quic_start_server"].is_boolean()) {
+                throw std::invalid_argument("quic_start_server must be a boolean");
+            }
+
+            const bool quic_start_server = request.value("quic_start_server",
+                item != next.end() && item->value("quic_start_server", false));
+
             auto addon_options = item == next.end()
                 ? nlohmann::json::array()
                 : item->value("addon_options", nlohmann::json::array());
@@ -263,7 +270,7 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             if (script_api != "mitmproxy" && !addon_options.empty()) {
                 throw std::invalid_argument("Addon options require the mitmproxy script API");
             }
-            if((tls_clienthello || tls_start_server || tls_start_client) && (script_api != "mitmproxy" || hook != "content")) {
+            if((tls_clienthello || tls_start_server || tls_start_client || quic_start_server) && (script_api != "mitmproxy" || hook != "content")) {
                 throw std::invalid_argument("TLS interception requires a content addon deployment");
             }
 
@@ -286,6 +293,7 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             (*item)["tls_clienthello"] = tls_clienthello;
             (*item)["tls_start_server"] = tls_start_server;
             (*item)["tls_start_client"] = tls_start_client;
+            (*item)["quic_start_server"] = quic_start_server;
             (*item)["hook"] = hook;
             (*item)["timeout_ms"] = timeout; (*item)["error_limit"] = error_limit;
             (*item)["max_instances"] = max_instances; (*item)["idle_seconds"] = idle_seconds;
@@ -936,6 +944,7 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
         result["tls_clienthello"] = item.value("tls_clienthello", false);
         result["tls_start_server"] = item.value("tls_start_server", false);
         result["tls_start_client"] = item.value("tls_start_client", false);
+        result["quic_start_server"] = item.value("quic_start_server", false);
     }
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     result["duration_ms"] = elapsed;
@@ -1116,20 +1125,26 @@ bool Inspection::translation_required(const nlohmann::json& event) const {
 }
 
 nlohmann::json Inspection::server_lifecycle(const nlohmann::json& event) {
-    return transport_lifecycle(event, false);
+    return transport_lifecycle(event, "server");
 }
 
 nlohmann::json Inspection::tls_lifecycle(const nlohmann::json& event) {
-    return transport_lifecycle(event, true);
+    return transport_lifecycle(event, "tls");
 }
 
-nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool tls) {
+nlohmann::json Inspection::quic_lifecycle(const nlohmann::json& event) {
+    return transport_lifecycle(event, "quic");
+}
+
+nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, std::string_view protocol) {
 
     const auto id = event.at("id").get<std::string>();
-    auto observation = event.at("details").at(tls ? "tls" : "server");
-    const auto operation = tls ? "tls_lifecycle" : "server_lifecycle";
-    const bool client_hello = tls && observation.at("envelope").at("event") == "client-hello";
-    const bool start = tls && observation.at("envelope").at("event") == "start";
+    auto observation = event.at("details").at(std::string(protocol));
+    const auto operation = std::string(protocol) + "_lifecycle";
+    const bool quic = protocol == "quic";
+    const bool handshake = protocol == "tls" || quic;
+    const bool client_hello = handshake && observation.at("envelope").at("event") == "client-hello";
+    const bool start = handshake && observation.at("envelope").at("event") == "start";
     const bool server_start = start && observation.at("envelope").at("side") == "server";
     const bool client_start = start && observation.at("envelope").at("side") == "client";
     std::vector<ConnectOwner> owners;
@@ -1147,8 +1162,9 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, bool
 
             // Subscription belongs to the deployment, including hooks added
             // dynamically after setup. Other addons do not receive this event.
-            if((client_hello && !item.value("tls_clienthello", false)) ||
-               (server_start && !item.value("tls_start_server", false)) ||
+            if((quic && !item.value("quic_start_server", false)) ||
+               (client_hello && !item.value("tls_clienthello", false)) ||
+               (server_start && !item.value(quic ? "quic_start_server" : "tls_start_server", false)) ||
                (client_start && !item.value("tls_start_client", false))) {
                 continue;
             }
@@ -1568,6 +1584,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
         bool tls_clienthello = false;
         bool tls_start_server = false;
         bool tls_start_client = false;
+        bool quic_start_server = false;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         std::string last_enabled;
         for (const auto& entry : chain)
@@ -1599,10 +1616,10 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
                 }
             }
 
-            // A multiplexed transport is not an HTTP inspection flow. Native
-            // scripts may observe its admission, but the HTTP addon adapter
-            // must not fabricate another client lifecycle for the parent.
-            if (transport_setup && item.value("script_api", "spider") == "mitmproxy") continue;
+            // Parent QUIC setup belongs only to explicitly subscribed addons.
+            // Ordinary HTTP deployments continue to see stream setup alone.
+            if (transport_setup && item.value("script_api", "spider") == "mitmproxy"
+                && !item.value("quic_start_server", false)) continue;
             if (!translate_active && !connect_owner && item.value("scope", "rules") == "rules" &&
                 event.value("traffic_rule", nlohmann::json::object()).value("mode", "") != "inspect") continue;
             std::string error;
@@ -1662,6 +1679,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
             tls_clienthello = tls_clienthello || result.value("tls_clienthello", false);
             tls_start_server = tls_start_server || result.value("tls_start_server", false);
             tls_start_client = tls_start_client || result.value("tls_start_client", false);
+            quic_start_server = quic_start_server || result.value("quic_start_server", false);
             if (result.contains("connection_close")) {
                 // Closing the transport is terminal for this callback chain.
                 // No later deployment may observe or replace bytes which the
@@ -1692,6 +1710,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
                 result["tls_clienthello"] = tls_clienthello;
                 result["tls_start_server"] = tls_start_server;
                 result["tls_start_client"] = tls_start_client;
+                result["quic_start_server"] = quic_start_server;
             }
         }
         return result;
