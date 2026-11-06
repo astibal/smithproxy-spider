@@ -221,6 +221,11 @@ def verify(path):
 
 
 def exercise(path):
+    if os.environ.get('QUIC_RESUMPTION_TEST') == '1':
+        from quic_resumption_cases import exercise_resumption
+        exercise_resumption(path, verify)
+        return
+
     root = path.parent.parent
     namespace = os.environ['DATA_NS']
     client = os.environ['CLIENT_NS']

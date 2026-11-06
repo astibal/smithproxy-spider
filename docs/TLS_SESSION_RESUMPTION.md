@@ -61,3 +61,36 @@ The independent downstream leg resumed in both versions.
 With the client flag enabled, all four matrix cases passed, including SNI
 mutation forcing a fresh upstream handshake in both TLS versions. This is a
 native cache fix, not a change to hook ordering or handshake scheduling.
+
+## QUIC downstream resumption
+
+The separate QUIC integration gate uses three independent H3 connections:
+fresh, resumed using the first connection's ticket, and a fresh control. It sends
+application data only after handshake completion; this is not 0-RTT coverage.
+
+OpenSSL skips certificate selection during a resumed downstream handshake.
+Smithproxy must still prepare the session and its forwarding upstream. The
+resumed path uses the original packet tuple retained at ClientHello, the normal
+policy/start-hook path, and a newly verified upstream connection. It does not
+mint another downstream certificate or treat the ticket as authorization to skip
+upstream certificate/hostname verification.
+
+The gate repeats this sequence for normal forwarding, an addon veto on the
+resumed connection, an origin certificate changed to an untrusted issuer, and
+a ticket deliberately offered with a different SNI. The negative cases must terminate without an application response or a client timeout;
+the following fresh control must succeed after restoring the deployment/origin.
+Each parent must retire naturally. Successful sessions retain the existing QUIC
+start/outcome ordering; the resumed session gets its own parent identity.
+
+To run in the existing isolated QUIC/Spider lab, apply
+`tests/fixtures/quic-integration-runner.patch` to the native runner, install
+`tests/quic_proxy_integration.py` as its `harness/quic-webhook-contract.py`, and
+copy `tests/quic_resumption_cases.py` beside it. Set `QUIC_RESUMPTION_TEST=1`
+and `SPIDER_INTEGRATION_BIN` for the `sanity --suite quic` invocation. The runner
+also needs its normal HTTP/3 curl and aioquic runtimes. Use the patched native
+binary; an older binary intentionally fails the middle request.
+
+Upstream QUIC ticket caching remains a separate feature. The fixture logs origin
+handshake reuse independently; downstream resumption alone does not imply
+upstream resumption. Certificate probe connections and forwarding connections
+are distinct. No cache or early-data support is added by this lifecycle fix.
