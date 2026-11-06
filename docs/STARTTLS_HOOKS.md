@@ -105,3 +105,30 @@ CTest invocation could not create worker IPC sockets; the complete rerun with
 those permissions passed. Native production code and the tested native binary
 were unchanged. Evidence and source/binary hashes are archived in the shared
 workspace under `p3-runs/starttls-hooks-20261105`.
+
+## Negative upgrade paths
+
+Run the independent SMTP failure gate with `--starttls-failures-only`, using
+otherwise the same command arguments as above. It covers rejection (454),
+disconnect after acceptance (220), a truncated ClientHello, and silent upstream
+handshakes both with and without a later socket wakeup.
+
+- Rejection leaves the connection plaintext and emits no TLS events.
+- Acceptance can create a native TLS attempt before a complete ClientHello
+  reaches an interception point. Such an attempt may emit `tls_failed_*`
+  without a preceding `tls_start_*`; no start event is invented.
+- A silent upstream emits server start followed by server failure. Each leg
+  has at most one failure and retains its attempt identity.
+- Every case retains one TCP lifecycle, with server disconnection before
+  connection stop. No failed handshake emits establishment.
+
+The silent case requires Socle `c6175be` or later (Smithproxy `f81dbca7`).
+The existing periodic timer enforces the configured handshake deadline even
+without socket activity, with approximately one-second timer granularity.
+It does not retry OpenSSL while waiting for that deadline.
+
+Validation on Rhino, 2026-11-05: all five negative cases passed, alongside
+12 positive STARTTLS and 47 TLS/CONNECT cases. The test waits for natural
+session retirement before stopping the proxy; teardown cannot manufacture
+its expected terminal events. Evidence is archived under
+`p3-runs/tls-timeout-wakeup-20261105` in the shared workspace.

@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--fixture', type=Path, required=True)
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument('--starttls-only', action='store_true')
+    selection.add_argument('--starttls-failures-only', action='store_true')
     selection.add_argument('--resumption-only', action='store_true')
     parser.add_argument('--broker', type=Path)
     parser.add_argument('--pam-module', type=Path)
@@ -222,7 +223,8 @@ def main():
             config.write_text(content)
             base_config_text = content
 
-            def start_tls_proxy(target, verify_identity=False, plaintext=False, trusted_origin=False):
+            def start_tls_proxy(target, verify_identity=False, plaintext=False, trusted_origin=False,
+                                handshake_timeout=None):
                 # Use the transparent listener and policy DNAT. The fixture
                 # needs no host firewall changes and does not alter CONNECT behavior.
                 port = free_port()
@@ -240,6 +242,9 @@ def main():
                     'allow_self_signed': 'FALSE' if trusted_origin else 'TRUE',
                     'port': str(cli_port), 'log_console': 'TRUE', 'log_level': '8',
                 }
+                if handshake_timeout is not None:
+                    settings['handshake_timeout'] = str(handshake_timeout)
+
                 if trusted_origin:
                     settings['ocsp_stapling'] = 'FALSE'
 
@@ -303,6 +308,11 @@ def main():
             if args.resumption_only:
                 from resumption_hook_cases import run_resumption_cases
                 run_resumption_cases(deploy, start_tls_proxy, certificates, exchanges)
+                return
+
+            if args.starttls_failures_only:
+                from starttls_failure_cases import run_starttls_failure_cases
+                run_starttls_failure_cases(deploy, start_tls_proxy, exchanges)
                 return
 
             if args.starttls_only:
