@@ -86,7 +86,8 @@ class CleanRoomBoundaryTests(unittest.TestCase):
                 self.assertEqual(path.name, entry)
                 # The native observation table is bundled beside the facade,
                 # but it remains Spider-owned and has no reference imports.
-                if module_name != 'inspection_protocol_state':
+                if module_name not in ('inspection_protocol_state', 'inspection_tls', 'inspection_tls_hello', 'inspection_tls_outcome',
+                       'inspection_tls_start', 'inspection_quic'):
                     self.assertRegex(module_name, r"^addon_[A-Za-z0-9_]+$")
                 self.assertTrue((ROOT / "src" / entry).is_file())
 

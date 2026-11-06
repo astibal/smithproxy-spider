@@ -128,7 +128,8 @@ def run_starttls_cases(deploy, start_proxy, certificates, exchanges, native_sour
             assert actions.count('connection-start') == actions.count('connection-stop') == 1
             for event, reply, _ in events:
                 if event['action'] in ('server-lifecycle', 'tls-lifecycle'):
-                    assert reply.get('proceed') is True, reply
+                    draft = reply.get('outcome') or reply.get('start') or reply.get('client_hello') or {}
+                    assert reply.get('proceed') is True or draft.get('decision') == 'continue', reply
             servers = [e['details']['server']['envelope']['event'] for e, _, _ in events
                        if e['action'] == 'server-lifecycle']
             assert servers == ['connect', 'connected', 'disconnected'], servers

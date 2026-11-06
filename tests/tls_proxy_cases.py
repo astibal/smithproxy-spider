@@ -453,3 +453,129 @@ def run_tls_failure_cases(deploy, start_proxy, certificates, exchanges, set_rela
         assert origin_finished.wait(12), 'Failed TLS origin did not finish'
         assert not origin_errors, origin_errors
         print(f'PASS: TLS {failure} handshake failure, once-only outcome, no application traffic')
+
+
+def run_native_clienthello_cases(deploy, start_proxy, certificates, exchanges):
+    """Exercise native main -> commit -> ProxyHooks -> real upstream TLS."""
+    for identity, hostname in (('origin', 'localhost'), ('upstream', 'upstream.test')):
+        if (certificates / (identity + '-cert.pem')).exists():
+            continue
+        subprocess.run([
+            'openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+            '-subj', '/CN=' + hostname, '-addext', 'subjectAltName=DNS:' + hostname,
+            '-keyout', str(certificates / (identity + '-key.pem')),
+            '-out', str(certificates / (identity + '-cert.pem')),
+        ], check=True, capture_output=True)
+
+    for version, commit in ((ssl.TLSVersion.TLSv1_2, True),
+                            (ssl.TLSVersion.TLSv1_3, True),
+                            (ssl.TLSVersion.TLSv1_2, False)):
+        source = '''
+def main(api, state):
+    if api.tls is None:
+        return
+    if api.tls.event is TlsEvent.START:
+        draft = api.tls.start
+        assert api.tls.transport is TlsTransport.TLS
+        assert api.message is None
+        return draft.commit()
+    if api.tls.event in (TlsEvent.ESTABLISHED, TlsEvent.FAILED):
+        outcome = api.tls.outcome
+        assert outcome.tls_version in ('TLSv1.2', 'TLSv1.3')
+        assert outcome.alpn == b'http/1.1'
+        if api.tls.side is TlsSide.SERVER:
+            assert outcome.certificates[0].startswith(b'-----BEGIN CERTIFICATE-----')
+        return outcome.commit()
+    assert api.tls.event is TlsEvent.CLIENT_HELLO
+    hello = api.tls.client_hello
+    original = hello.original()
+    assert original.sni == 'localhost'
+    assert original.alpn_offers == (b'http/1.1',)
+    hello.sni = 'upstream.test'
+    hello.alpn_offers = [b'http/1.1']
+    hello.openssl_cipher_list = 'ECDHE-RSA-AES128-GCM-SHA256'
+'''
+        if commit:
+            source += '    return hello.commit()\n'
+        deploy(source, tls_clienthello=True, tls_start_server=True,
+               tls_start_client=True, tls_lifecycle=True, native=True)
+        offset = len(exchanges)
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = context.maximum_version = version
+        identity = 'upstream' if commit else 'origin'
+        context.load_cert_chain(certificates / (identity + '-cert.pem'),
+                                certificates / (identity + '-key.pem'))
+        context.set_alpn_protocols(['http/1.1'])
+        context.set_ciphers('ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256')
+        names, ciphers, errors = [], [], []
+        context.set_servername_callback(lambda connection, name, ctx: names.append(name))
+        listener = socket.socket()
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(1)
+        listener.settimeout(10)
+        target = listener.getsockname()[1]
+
+        def serve():
+            try:
+                with listener:
+                    raw, _ = listener.accept()
+                    raw.settimeout(10)
+                    with context.wrap_socket(raw, server_side=True) as tls:
+                        ciphers.append(tls.cipher()[0])
+                        assert read_headers(tls).startswith(b'GET ')
+                        tls.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok')
+            except Exception as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        port, process = start_proxy(target)
+        try:
+            client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            client.check_hostname = False
+            client.verify_mode = ssl.CERT_NONE
+            client.minimum_version = client.maximum_version = version
+            client.set_alpn_protocols(['http/1.1'])
+            with socket.create_connection(('127.0.0.1', port), timeout=10) as raw:
+                with FragmentedTlsClient(client, raw) as tls:
+                    tls.sendall(b'GET /native HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n')
+                    response = bytearray()
+                    while True:
+                        data = tls.recv(4096)
+                        if not data:
+                            break
+                        response.extend(data)
+                    assert response.endswith(b'ok'), response
+
+            thread.join(12)
+            assert not thread.is_alive() and not errors, errors
+            assert names == ['upstream.test' if commit else 'localhost'], names
+            if commit and version == ssl.TLSVersion.TLSv1_2:
+                assert ciphers == ['ECDHE-RSA-AES128-GCM-SHA256'], ciphers
+            hello_events = [(event, reply, status) for event, reply, status in exchanges[offset:]
+                            if event['action'] == 'tls-lifecycle'
+                            and event['details']['tls']['envelope']['event'] == 'client-hello']
+            assert len(hello_events) == 1, hello_events
+            event, reply, status = hello_events[0]
+            assert status == 200 and reply['schema'] == 2, reply
+            assert event['details']['tls']['schema'] == 2, event
+            assert reply['client_hello']['sni'] == names[0], reply
+            notifications = [(e, r, code) for e, r, code in exchanges[offset:]
+                             if e['action'] == 'tls-lifecycle'
+                             and e['details']['tls']['envelope']['event'] != 'client-hello']
+            assert len(notifications) == 4, notifications
+            seen = []
+            for e, r, code in notifications:
+                observed = e['details']['tls']
+                envelope = observed['envelope']
+                key = 'start' if envelope['event'] == 'start' else 'outcome'
+                assert code == 200 and r['schema'] == 2, (e, r, code)
+                assert observed['schema'] == 2 and r[key]['decision'] == 'continue', (e, r)
+                seen.append((envelope['side'], envelope['event']))
+            for side in ('server', 'client'):
+                assert seen.index((side, 'start')) < seen.index((side, 'established')), seen
+            print(f'PASS: native ClientHello {version.name}, fragmented, commit={commit}, schema 2')
+        finally:
+            process.terminate()
+            process.wait(timeout=5)

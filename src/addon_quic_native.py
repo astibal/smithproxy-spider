@@ -1,12 +1,12 @@
 """QUIC parent handshakes, separate from HTTP/3 stream inspection."""
 
-import base64
 
 from addon_proxy_context import Context
 from addon_clienthello_native import tls_settings, reject_tls_changes
 from addon_quic import QuicTlsData, QuicTlsSettings
 from addon_runtime import AddonRuntimeError
 from addon_tls_native import NativeSSLUnavailable, dispatch as dispatch_outcome
+from inspection_tls import TlsView, TlsTransport, TlsDecision
 
 
 # QUIC uses TLS 1.3 suites. Translate wire IDs here, never in native transport.
@@ -30,10 +30,7 @@ async def dispatch(adapter, observation):
     # Established/failed events use the shared TLS outcome contract. Adapt
     # QUIC's textual ALPN to that contract without changing the hook names.
     if envelope.get('event') != 'start':
-        observed = dict(observation)
-        observed['alpn_base64'] = base64.b64encode(
-            observation.get('alpn', '').encode('ascii')).decode('ascii')
-        return await dispatch_outcome(adapter, observed)
+        return await dispatch_outcome(adapter, observation, transport=TlsTransport.QUIC)
 
     if (envelope.get('version') != 1 or envelope.get('side') != 'server'
             or type(envelope.get('attempt')) is not int or envelope['attempt'] < 1):
@@ -48,14 +45,14 @@ async def dispatch(adapter, observation):
 
     # Seed the addon settings from the current native offer. This also preserves
     # mutations accepted from an earlier addon in the deployment chain.
-    offer = observation['upstream']
+    draft = TlsView.from_observation(observation, TlsTransport.QUIC).start
     server = registered.server
-    server.sni = offer['sni']
+    server.sni = draft.sni
     server.tls = True
     context = Context(registered.client, adapter.generation.options)
     context.server = server
     cipher_suites = None
-    expression = offer.get('ciphers')
+    expression = draft.openssl_ciphersuites
     if expression is not None:
         reverse = {name: value for value, name in CIPHERS.items()}
         try:
@@ -63,7 +60,7 @@ async def dispatch(adapter, observation):
         except (KeyError, AttributeError) as error:
             raise AddonRuntimeError('Invalid native QUIC cipher expression') from error
 
-    settings = QuicTlsSettings(alpn_protocols=[offer['alpn']], cipher_suites=cipher_suites)
+    settings = QuicTlsSettings(alpn_protocols=[draft.alpn_offers[0].decode('ascii')], cipher_suites=cipher_suites)
     ssl_view = NativeSSLUnavailable()
     data = QuicTlsData(server, context, ssl_conn=ssl_view, settings=settings)
     target = server.address
@@ -90,7 +87,8 @@ async def dispatch(adapter, observation):
         server.address = target
         raise AddonRuntimeError('QUIC start cannot reroute the native transport')
     if server.error:
-        return {'proceed': False}
+        draft.decision = TlsDecision.TERMINATE
+        return draft.publish(draft.commit())
 
     # Only offer mutations can cross back into the native transport. Certificate
     # ownership and trust policy remain outside this hook's supported surface.
@@ -103,30 +101,28 @@ async def dispatch(adapter, observation):
             or settings.verify_mode is not None):
         raise AddonRuntimeError('QUIC certificates and trust policy remain native')
 
-    # Normalize the supported settings into the native wire representation.
-    # None keeps the current SNI/ALPN; an explicit empty cipher list stays empty.
-    protocols = settings.alpn_protocols
-    if protocols is None:
-        protocols = [offer['alpn']]
-    if (not isinstance(protocols, list) or len(protocols) != 1
-            or not isinstance(protocols[0], str) or not 1 <= len(protocols[0].encode('ascii')) <= 255):
-        raise AddonRuntimeError('Native QUIC requires one ALPN protocol')
-    sni = offer['sni'] if server.sni is None else server.sni
-    if not isinstance(sni, str) or '\0' in sni:
-        raise AddonRuntimeError('Invalid QUIC SNI')
-    sni = sni.encode('idna').decode('ascii') if sni else ''
-    if len(sni) > 255:
-        raise AddonRuntimeError('Invalid QUIC SNI')
+    # The adapter translates mitmproxy defaults and cipher IDs. Shared native
+    # drafts own validation, immutable snapshots and response publication.
+    if settings.alpn_protocols is not None:
+        if not isinstance(settings.alpn_protocols, list) or any(
+            not isinstance(value, str) for value in settings.alpn_protocols
+        ):
+            raise AddonRuntimeError('Native QUIC requires one ALPN protocol')
+        draft.alpn_offers = [value.encode('ascii') for value in settings.alpn_protocols]
+    if server.sni is not None:
+        draft.sni = server.sni
 
-    ciphers = None
+    draft.openssl_ciphersuites = None
     if settings.cipher_suites is not None:
         if not isinstance(settings.cipher_suites, list):
             raise AddonRuntimeError('QUIC cipher_suites must be a list')
         try:
-            ciphers = ':'.join(CIPHERS[value] for value in settings.cipher_suites)
+            draft.openssl_ciphersuites = ':'.join(CIPHERS[value] for value in settings.cipher_suites)
         except (KeyError, TypeError) as error:
             raise AddonRuntimeError('Unsupported QUIC TLS cipher suite') from error
 
-    return {'proceed': True, 'upstream': {
-        'sni': sni, 'alpn': protocols[0], 'ciphers': ciphers,
-    }}
+    try:
+        result = draft.commit()
+    except ValueError as error:
+        raise AddonRuntimeError(str(error)) from error
+    return draft.publish(result)

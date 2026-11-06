@@ -2,7 +2,13 @@
 
 def language_prelude():
     import json
-    lines = ['from typing import Any', 'class Safety:', '    Easy: str', '    Expert: str',
+    lines = ['from typing import Any', 'from enum import Enum',
+             'class TlsEvent(Enum):', '    CLIENT_HELLO = \"client_hello\"',
+             '    START = \"start\"', '    ESTABLISHED = \"established\"', '    FAILED = \"failed\"',
+             'class TlsTransport(Enum):', '    TLS = \"tls\"', '    QUIC = \"quic\"',
+             'class TlsSide(Enum):', '    CLIENT = \"client\"', '    SERVER = \"server\"',
+             'class TlsDecision(Enum):', '    CONTINUE = \"continue\"',
+             '    BYPASS = \"bypass\"', '    TERMINATE = \"terminate\"', 'class Safety:', '    Easy: str', '    Expert: str',
              'class Mode:', '    Rewrite: str', '    Translate: str',
              'class PartType:', '    Opaque: str',
              '    class Http2:', '        Part: str', '        Header: str',
@@ -23,7 +29,7 @@ def language_prelude():
                       '        ' + json.dumps(method['description'] + '\n\nEasy: ' + method['easy'] +
                           '\nExpert: ' + method['expert'] + '\n\nExample:\n' + method['example']), '        ...']
     lines += ['class SpiderApi(InspectionViews):',
-        '    bytes: bytes', '    text: str', '    side: str', '    session_id: str',
+        '    tls: TlsView | None', '    bytes: bytes', '    text: str', '    side: str', '    session_id: str',
         '    session_label: str', '    event: dict[str, Any]', '    info: dict[str, Any]',
         '    annotations: list[Any]', '    enrichments: list[Any]',
         '    l7_state: str', '    l7_bytes: bytes', '    l7_ranges: list[tuple[int, int]]',

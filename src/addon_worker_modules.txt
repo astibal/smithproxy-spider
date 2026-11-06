@@ -59,3 +59,8 @@ addon_server_native.py
 addon_tls_native.py
 addon_clienthello_native.py
 addon_tls_start_native.py
+inspection_tls_hello.py
+inspection_tls.py
+inspection_tls_outcome.py
+inspection_tls_start.py
+inspection_quic.py

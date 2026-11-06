@@ -6,6 +6,8 @@ import sys
 import textwrap
 import traceback
 
+from inspection_tls import TlsView, TlsEvent, TlsDecision, TlsSide, TlsTransport
+
 # Resource limits complement the mandatory kernel policy installed below.
 resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024,) * 2)
 cpu_supervised = sys.argv[1:] == ['--persistent', '--cpu-supervised']
@@ -40,6 +42,11 @@ class Api:
         self.event = event
         self.info = info
         self.phase = 'setup' if event.get('action') == 'connection-start' else 'content'
+        self.tls = None
+        if event.get('action') in ('tls-lifecycle', 'quic-lifecycle'):
+            self.phase = 'tls'
+            transport = TlsTransport.QUIC if event['action'] == 'quic-lifecycle' else TlsTransport.TLS
+            self.tls = TlsView.from_observation(event['details'][transport.value], transport)
         self.bytes = base64.b64decode(info.get('content', ''), validate=True)
         self.text = self.bytes.decode('utf-8', errors='replace')
         self.side = info.get('side', '')
@@ -50,7 +57,7 @@ class Api:
         for item in self.enrichments:
             item['bytes'] = base64.b64decode(item.get('content', ''), validate=True)
         views = make_views(event, self.bytes, self.enrichments)
-        self.message = None if self.phase == 'setup' else views.message
+        self.message = None if self.phase in ('setup', 'tls') else views.message
         if request.get('held_parts') and not request.get('translate_active'):
             resume_message(self.message, request['held_parts'], info, self.enrichments)
         if self.message is not None:
@@ -504,14 +511,52 @@ def close_native():
     return response
 
 
+def invoke_tls_script(current, compiled):
+    """Run a native session notification without treating it as payload bytes."""
+    output = Output()
+    namespace = {'TlsEvent': TlsEvent, 'TlsDecision': TlsDecision,
+                 'TlsSide': TlsSide, 'TlsTransport': TlsTransport,
+                 'CommitException': CommitException, 'Header': Header,
+                 'PartType': PartType, 'Mode': Mode, 'Safety': Safety}
+    try:
+        api = Api(current)
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            if native_lifecycle:
+                result = native_namespace['main'](api, native_state)
+            else:
+                exec(compiled, namespace)
+                result = namespace['__spider_script'](api)
+
+        decision = api.tls.publish(result)
+        if not isinstance(api.state, dict):
+            raise TypeError('api.state must remain a JSON object')
+        state = json.dumps(api.state, allow_nan=False, ensure_ascii=False)
+        if len(state.encode()) > 65536:
+            raise ValueError('api.state exceeds 64 KiB')
+
+        response = {'ok': True, 'replacement': None, 'decision': decision,
+                    'instance_state': json.loads(state)}
+    except BaseException:
+        response = script_error()
+
+    response['logs'] = output.text.splitlines()
+    return response
+
+
 def invoke_script(current, compiled):
+    if selected_api == 'spider' and current.get('event', {}).get('action') in ('tls-lifecycle', 'quic-lifecycle'):
+        return invoke_tls_script(current, compiled)
+
     output = Output()
     output.write(native_output.text)
     native_output.text = ''
     addon_worker.drain_startup_output(output)
     response = {'ok': False, 'replacement': None,
                 'script_api': selected_api, 'script_api_source': selection_source}
-    namespace = {'CommitException': CommitException, 'Header': Header, 'PartType': PartType, 'Mode': Mode, 'Safety': Safety}
+    namespace = {'CommitException': CommitException, 'Header': Header,
+                 'PartType': PartType, 'Mode': Mode, 'Safety': Safety,
+                 'TlsEvent': TlsEvent, 'TlsDecision': TlsDecision,
+                 'TlsSide': TlsSide, 'TlsTransport': TlsTransport}
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             # Legacy snippets keep callback-local globals. Lifecycle scripts
@@ -787,7 +832,9 @@ try:
             sys.modules[module.__name__] = module
             native_namespace = module.__dict__
             native_namespace.update(CommitException=CommitException, Header=Header,
-                                    PartType=PartType, Mode=Mode, Safety=Safety)
+                                    PartType=PartType, Mode=Mode, Safety=Safety,
+                                    TlsEvent=TlsEvent, TlsDecision=TlsDecision,
+                                    TlsSide=TlsSide, TlsTransport=TlsTransport)
             with contextlib.redirect_stdout(native_output), contextlib.redirect_stderr(native_output):
                 exec(compiled, native_namespace)
                 initializer = native_namespace.get('init')

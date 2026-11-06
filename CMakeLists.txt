@@ -229,6 +229,8 @@ if(BUILD_TESTING)
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_connect_worker_test.py)
     add_test(NAME addon_quic_native_tests
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_quic_native_test.py)
+    add_test(NAME inspection_tls_tests
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/inspection_tls_test.py)
     add_test(NAME addon_tls_native_tests
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/addon_tls_native_test.py)
     add_test(NAME addon_server_native_tests
@@ -546,6 +548,11 @@ if(BUILD_TESTING)
     add_test(NAME authentication_worker_tests
              COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/authentication_worker_test.py)
     set_tests_properties(authentication_worker_tests PROPERTIES TIMEOUT 30)
+    add_executable(inspection_tls_host_tests tests/inspection_tls_host_test.cpp)
+    target_link_libraries(inspection_tls_host_tests PRIVATE spider_core)
+    target_compile_options(inspection_tls_host_tests PRIVATE -UNDEBUG)
+    add_test(NAME inspection_tls_host_tests COMMAND inspection_tls_host_tests)
+    set_tests_properties(inspection_tls_host_tests PROPERTIES TIMEOUT 30)
     add_executable(native_lifecycle_host_tests tests/native_lifecycle_host_test.cpp)
     target_link_libraries(native_lifecycle_host_tests PRIVATE spider_core)
     target_compile_options(native_lifecycle_host_tests PRIVATE -UNDEBUG)

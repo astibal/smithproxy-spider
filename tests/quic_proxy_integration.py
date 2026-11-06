@@ -6,6 +6,7 @@ preserve the existing recorder interface; exercise adds mutation/failure cases.
 """
 
 import json
+import base64
 import os
 from pathlib import Path
 import signal
@@ -77,6 +78,54 @@ def addon(mode):
     return '\n'.join(lines) + '\n'
 
 
+def native_script(mode):
+    return """
+def main(api, state):
+    tls = api.tls
+    if tls is None:
+        return
+    assert tls.transport is TlsTransport.QUIC
+    assert api.message is None
+    if tls.event is TlsEvent.START:
+        draft = tls.start
+        assert draft.original().alpn_offers == (b'h3',)
+        draft.sni = 'other.example'
+        draft.openssl_ciphersuites = 'TLS_AES_256_GCM_SHA384'
+        if MODE == 'native-veto':
+            draft.decision = TlsDecision.TERMINATE
+        if MODE != 'native-no-commit':
+            return draft.commit()
+    elif tls.event is TlsEvent.ESTABLISHED:
+        assert tls.outcome.tls_version == 'TLSv1.3'
+        assert tls.outcome.alpn == b'h3'
+        if tls.side is TlsSide.SERVER:
+            assert tls.outcome.certificates
+            if MODE == 'native-mutation':
+                assert tls.outcome.cipher == 'TLS_AES_256_GCM_SHA384'
+        return tls.outcome.commit()
+""".replace('MODE', repr(mode))
+
+
+def proceeds(row):
+    reply = row['reply']
+    if reply.get('schema') == 2:
+        envelope = row['event']['details']['quic']['envelope']
+        key = 'start' if envelope['event'] == 'start' else 'outcome'
+        return reply[key]['decision'] == 'continue'
+    return reply.get('proceed')
+
+
+def offer_reply(row):
+    reply = row['reply']
+    if reply.get('schema') == 2:
+        start = reply['start']
+        assert len(start['alpn_offers']) == 1
+        return {'sni': start['sni'],
+                'alpn': base64.b64decode(start['alpn_offers'][0], validate=True).decode('ascii'),
+                'ciphers': start['openssl_ciphersuites']}
+    return reply['upstream']
+
+
 def serve(path):
     state = {'callback': None, 'mode': 'baseline', 'deployment': None}
     lock = threading.Lock()
@@ -90,6 +139,9 @@ def serve(path):
         value = {'operation': 'deploy', 'name': 'QUIC integration', 'hook': 'content',
                  'scope': 'all', 'instancing': 'flow', 'script_api': 'mitmproxy',
                  'script': addon(mode), 'quic_start_server': mode != 'disabled'}
+        if mode.startswith('native-'):
+            value['script_api'] = 'spider'
+            value['script'] = native_script(mode)
         if state['deployment']:
             value['id'] = state['deployment']
         result = configure(value)
@@ -208,7 +260,7 @@ def verify(path):
         parents[identity].append((envelope['side'], envelope['event']))
     baseline = [row for row in rows if row['mode'] == 'baseline' and row['event'].get('action') == 'quic-lifecycle']
     assert baseline, 'no live QUIC callbacks'
-    assert all(row['reply'].get('proceed') is True for row in baseline), baseline
+    assert all(proceeds(row) is True for row in baseline), baseline
     for identity in {row['event']['id'] for row in baseline}:
         events = parents[identity]
         assert events.count(('server', 'start')) == 1, events
@@ -230,7 +282,8 @@ def exercise(path):
     namespace = os.environ['DATA_NS']
     client = os.environ['CLIENT_NS']
     for mode, succeeds in [('mutation', True), ('veto', False), ('empty-ciphers', False),
-                           ('bad-alpn', False), ('unavailable', True), ('strict', False), ('disabled', True)]:
+                           ('bad-alpn', False), ('native-mutation', True), ('native-no-commit', True),
+                           ('native-veto', False), ('unavailable', True), ('strict', False), ('disabled', True)]:
         code = ('import json; from urllib.request import Request,urlopen; '
                 f'r=Request("http://127.0.0.1:59090/scenario",json.dumps({{"mode":{mode!r}}}).encode()); '
                 'assert json.load(urlopen(r))["ready"]')
@@ -250,25 +303,25 @@ def exercise(path):
             assert not events, events
         else:
             assert events, f'{mode}: missing QUIC event'
-        if mode == 'mutation':
-            assert all(row['status'] == 200 and row['reply'].get('proceed') is True for row in events), events
+        if mode in ('mutation', 'native-mutation', 'native-no-commit'):
+            assert all(row['status'] == 200 and proceeds(row) is True for row in events), events
             phases = [(row['event']['details']['quic']['envelope']['side'],
                        row['event']['details']['quic']['envelope']['event']) for row in events]
             assert phases.count(('server', 'start')) == 1, phases
             assert phases.count(('server', 'established')) == 1, phases
             assert phases.count(('client', 'established')) == 1, phases
-        if mode == 'mutation':
+        if mode in ('mutation', 'native-mutation'):
             starts = [row for row in events if row['event']['details']['quic']['envelope']['event'] == 'start']
-            assert starts[0]['reply']['upstream'] == {'sni': 'other.example', 'alpn': 'h3',
+            assert offer_reply(starts[0]) == {'sni': 'other.example', 'alpn': 'h3',
                                                      'ciphers': 'TLS_AES_256_GCM_SHA384'}, starts
         if mode in ('empty-ciphers', 'bad-alpn'):
             failures = [row for row in events if row['event']['details']['quic']['envelope']['event'] == 'failed']
             sides = [row['event']['details']['quic']['envelope']['side'] for row in failures]
             assert sides.count('server') == 1, failures
             assert sides.count('client') <= 1, failures
-            assert all(row['status'] == 200 and row['reply'].get('proceed') is True for row in failures), failures
-        if mode == 'veto':
-            assert any(row['reply'].get('proceed') is False for row in events), events
+            assert all(row['status'] == 200 and proceeds(row) is True for row in failures), failures
+        if mode in ('veto', 'native-veto'):
+            assert any(proceeds(row) is False for row in events), events
         print(f'PASS live QUIC scenario: {mode}', flush=True)
 
 

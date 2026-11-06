@@ -4,13 +4,14 @@ These are delayed handshake observations, not interception points. The native
 transport owns OpenSSL; no live SSL object crosses the worker boundary.
 """
 
-import base64
 import time
 
 from addon_certs import Cert
 from addon_proxy_context import Context
 from addon_runtime import AddonRuntimeError
 from addon_tls import TlsData
+from inspection_tls import TlsView, TlsDecision, TlsTransport
+from inspection_tls_outcome import optional_text
 
 
 HOOKS = frozenset({
@@ -30,14 +31,8 @@ class NativeSSLUnavailable:
         )
 
 
-def optional_text(observation, name, limit):
-    value = observation.get(name)
-    if value is not None and (not isinstance(value, str) or len(value) > limit):
-        raise AddonRuntimeError('Invalid TLS metadata: ' + name)
-    return value
 
-
-async def dispatch(adapter, observation):
+async def dispatch(adapter, observation, *, transport=TlsTransport.TLS):
     envelope = observation['envelope']
     identity = adapter._identity(envelope['connection_id'])
     attempt = envelope['attempt']
@@ -62,36 +57,20 @@ async def dispatch(adapter, observation):
     if previous is not None and attempt <= previous:
         raise AddonRuntimeError('Duplicate or stale TLS outcome')
 
-    # Validate the complete observation before modifying shared descriptors.
-    sni = optional_text(observation, 'sni', 255)
-    cipher = optional_text(observation, 'cipher', 256)
-    version = optional_text(observation, 'tls_version', 32)
-    error = optional_text(observation, 'error', 1024)
-    encoded_alpn = optional_text(observation, 'alpn_base64', 344)
-    alpn = None
-    if encoded_alpn is not None:
-        alpn = base64.b64decode(encoded_alpn, validate=True)
-        if len(alpn) > 255:
-            raise AddonRuntimeError('Invalid negotiated ALPN')
-    if event == 'failed' and not error:
-        raise AddonRuntimeError('TLS failure requires an error')
-
-    certificate_values = observation.get('certificates', [])
-    if (not isinstance(certificate_values, list) or len(certificate_values) > 64
-            or any(not isinstance(value, str) or len(value) > 65536
-                   for value in certificate_values)):
-        raise AddonRuntimeError('Invalid peer certificate chain')
-    certificates = tuple(Cert.from_pem(value.encode('ascii')) for value in certificate_values)
+    # Native scripts and addons consume the same validated observation.
+    view = TlsView.from_observation(observation, transport)
+    outcome = view.outcome
+    certificates = tuple(Cert.from_pem(value) for value in outcome.certificates)
 
     conn = registered.client if side == 'client' else registered.server
     conn.tls = True
     conn.certificate_list = certificates
-    conn.sni = sni
-    conn.alpn = alpn
-    conn.cipher = cipher
-    conn.tls_version = version
+    conn.sni = outcome.sni
+    conn.alpn = outcome.alpn
+    conn.cipher = outcome.cipher
+    conn.tls_version = outcome.tls_version
     conn.timestamp_tls_setup = time.time() if event == 'established' else None
-    conn.error = error or None
+    conn.error = outcome.error or None
 
     context = Context(registered.client, adapter.generation.options)
     context.server = registered.server
@@ -112,4 +91,6 @@ async def dispatch(adapter, observation):
         registered.server.address = target
         raise AddonRuntimeError('TLS callbacks cannot reroute an established transport')
 
-    return {'proceed': event == 'failed' or not bool(conn.error)}
+    if event == 'established' and conn.error:
+        outcome.decision = TlsDecision.TERMINATE
+    return outcome.publish(outcome.commit())

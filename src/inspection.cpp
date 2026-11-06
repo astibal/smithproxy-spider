@@ -209,6 +209,12 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             const bool network_enabled = request.value("network_enabled",
                 item != next.end() && item->value("network_enabled", false));
 
+            if(request.contains("tls_lifecycle") && !request["tls_lifecycle"].is_boolean()) {
+                throw std::invalid_argument("tls_lifecycle must be a boolean");
+            }
+            const bool tls_lifecycle = request.value("tls_lifecycle",
+                item != next.end() && item->value("tls_lifecycle", false));
+
             if(request.contains("tls_clienthello") && !request["tls_clienthello"].is_boolean()) {
                 throw std::invalid_argument("tls_clienthello must be a boolean");
             }
@@ -270,8 +276,8 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             if (script_api != "mitmproxy" && !addon_options.empty()) {
                 throw std::invalid_argument("Addon options require the mitmproxy script API");
             }
-            if((tls_clienthello || tls_start_server || tls_start_client || quic_start_server) && (script_api != "mitmproxy" || hook != "content")) {
-                throw std::invalid_argument("TLS interception requires a content addon deployment");
+            if((tls_clienthello || tls_lifecycle || tls_start_server || tls_start_client || quic_start_server) && (hook != "content" || (script_api != "mitmproxy" && instancing != "flow"))) {
+                throw std::invalid_argument("Native TLS requires a flow content deployment");
             }
 
             if (item == next.end()) {
@@ -290,6 +296,7 @@ nlohmann::json Inspection::configure(const nlohmann::json& request) {
             (*item)["script_api_source"] = validation.value("script_api_source", "selection");
             (*item)["addon_options"] = std::move(addon_options);
             (*item)["network_enabled"] = network_enabled;
+            (*item)["tls_lifecycle"] = tls_lifecycle;
             (*item)["tls_clienthello"] = tls_clienthello;
             (*item)["tls_start_server"] = tls_start_server;
             (*item)["tls_start_client"] = tls_start_client;
@@ -1038,10 +1045,24 @@ nlohmann::json Inspection::run_instance(const nlohmann::json& item, const nlohma
                 h1_suspended || (next_h1_responses.is_object() && next_h1_responses.contains("paused"));
             if (stateful_publication && (runtime->retired || closed))
                 result = failure("Translate owner retired or connection closed during callback");
-            else if (!runtime->retired && !closed)
+            else if (!runtime->retired && !closed) {
+                auto tls_progress = runtime->states.contains(key)
+                    ? runtime->states.at(key).tls_progress : std::optional<TlsProgress>{};
+                if(!runtime->addon && event.value("action", "") == "connection-start" &&
+                   (item.value("tls_clienthello", false) || item.value("tls_lifecycle", false) ||
+                    item.value("tls_start_server", false) || item.value("tls_start_client", false) ||
+                    item.value("quic_start_server", false))) {
+                    tls_progress = TlsProgress{};
+                    result["tls_clienthello"] = item.value("tls_clienthello", false);
+                    result["tls_lifecycle"] = item.value("tls_lifecycle", false);
+                    result["tls_start_server"] = item.value("tls_start_server", false);
+                    result["tls_start_client"] = item.value("tls_start_client", false);
+                    result["quic_start_server"] = item.value("quic_start_server", false);
+                }
                 runtime->states[key] = Instance{
                     next, std::chrono::steady_clock::now(), bytes, holds,
-                    translations, h1_responses, reserved, protocols};
+                    translations, h1_responses, reserved, protocols, tls_progress};
+            }
         }
     }
     if (!result.value("ok", false) && runtime->states.contains(key)) {
@@ -1136,6 +1157,55 @@ nlohmann::json Inspection::quic_lifecycle(const nlohmann::json& event) {
     return transport_lifecycle(event, "quic");
 }
 
+nlohmann::json Inspection::run_native_tls(const ConnectOwner& owner, Instance& instance,
+                                            const nlohmann::json& event,
+                                            const nlohmann::json& observation, int budget) {
+
+    auto& runtime = *owner.runtime;
+    const auto& envelope = observation.at("envelope");
+    const auto attempt = envelope.at("attempt").get<std::uint64_t>();
+    const auto phase = envelope.at("event").get<std::string>();
+    const auto side = envelope.at("side") == "client" ? 0 : 1;
+    auto& progress = *instance.tls_progress;
+    // Track each side and phase independently, but reject an outcome from
+    // an older attempt once a newer handshake has already started.
+    auto& attempts = phase == "start" ? progress.starts : progress.outcomes;
+    auto& previous = phase == "client-hello" ? progress.hello : attempts[side];
+    if(attempt <= previous || (phase == "start" && attempt <= progress.outcomes[side]) ||
+       ((phase == "established" || phase == "failed") && attempt < progress.starts[side])) {
+        throw std::runtime_error("Duplicate or stale TLS notification");
+    }
+
+    // Reserve before invoking user code. Preserve content checkpoints;
+    // a TLS notification only publishes the script's ordinary state.
+    previous = attempt;
+    auto notification = event;
+    const auto protocol = event.at("action") == "quic-lifecycle" ? "quic" : "tls";
+    notification["details"][protocol] = observation;
+    auto result = runtime.pool->run({
+        {"event", notification}, {"instance_state", instance.state},
+        {"instance", {{"mode", "flow"}, {"key", "flow:" + event.at("id").get<std::string>()},
+            {"deployment_id", owner.deployment}, {"version", owner.version}}}
+    }, budget);
+
+    if(result.value("ok", false)) {
+        const auto next = result.at("instance_state");
+        const auto bytes = state_charge(next, instance.holds, instance.translations,
+            instance.h1_responses, instance.hold_credit_reserved, instance.protocols);
+        if(!next.is_object() || next.dump().size() > 65536 ||
+           runtime.state_bytes.load() - instance.bytes + bytes > 4 * 1024 * 1024) {
+            throw std::runtime_error("TLS script state exceeds deployment quota");
+        }
+        runtime.state_bytes += bytes;
+        runtime.state_bytes -= instance.bytes;
+        instance.state = next;
+        instance.bytes = bytes;
+        instance.used = std::chrono::steady_clock::now();
+    }
+    result["phase"] = "tls";
+    return record_result({{"event", event}, {"script_id", owner.deployment}}, std::move(result));
+}
+
 nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, std::string_view protocol) {
 
     const auto id = event.at("id").get<std::string>();
@@ -1156,12 +1226,19 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, std:
 
         for(const auto& item : chain_) {
             const auto found = runtimes_.find(item.at("id").get<std::string>());
-            if(!item.value("enabled", false) || found == runtimes_.end() || !found->second->addon) {
+            if(!item.value("enabled", false) || found == runtimes_.end() ||
+               (!found->second->addon && (!handshake ||
+                    (!client_hello && !start && !quic && !item.value("tls_lifecycle", false))))) {
+                continue;
+            }
+
+            if(!found->second->addon && !client_hello && !start && !quic &&
+               !item.value("tls_lifecycle", false)) {
                 continue;
             }
 
             // Subscription belongs to the deployment, including hooks added
-            // dynamically after setup. Other addons do not receive this event.
+            // dynamically after setup. Unsubscribed scripts do not receive it.
             if((quic && !item.value("quic_start_server", false)) ||
                (client_hello && !item.value("tls_clienthello", false)) ||
                (server_start && !item.value(quic ? "quic_start_server" : "tls_start_server", false)) ||
@@ -1169,7 +1246,8 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, std:
                 continue;
             }
 
-            owners.push_back({found->first, found->second, item.value("timeout_ms", 1000)});
+            owners.push_back({found->first, found->second, item.value("timeout_ms", 1000),
+                              item.value("version", std::uint64_t{0})});
         }
     }
 
@@ -1184,7 +1262,10 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, std:
         if(!serial.try_lock_for(std::chrono::milliseconds(250))) {
             return nullptr;
         }
-        if(!runtime.addon_connections.contains(id)) {
+        const auto native_instance = runtime.states.find("flow:" + id);
+        const bool native_owner = !runtime.addon && native_instance != runtime.states.end() &&
+                                  native_instance->second.tls_progress.has_value();
+        if(!runtime.addon_connections.contains(id) && !native_owner) {
             continue;
         }
 
@@ -1209,8 +1290,13 @@ nlohmann::json Inspection::transport_lifecycle(const nlohmann::json& event, std:
 
         nlohmann::json result;
         try {
-            result = runtime.pool->run({{operation, observation}},
-                std::min<int>(static_cast<int>(remaining), owner.timeout_ms));
+            const auto budget = std::min<int>(static_cast<int>(remaining), owner.timeout_ms);
+            if(runtime.addon) {
+                result = runtime.pool->run({{operation, observation}}, budget);
+            } else {
+                result = run_native_tls(owner, native_instance->second,
+                                                 event, observation, budget);
+            }
         } catch(const std::exception&) {
             result = nullptr;
         }
@@ -1616,7 +1702,7 @@ nlohmann::json Inspection::automatic(const nlohmann::json& event, const nlohmann
                 }
             }
 
-            // Parent QUIC setup belongs only to explicitly subscribed addons.
+            // Parent QUIC addon setup belongs only to explicitly subscribed addons.
             // Ordinary HTTP deployments continue to see stream setup alone.
             if (transport_setup && item.value("script_api", "spider") == "mitmproxy"
                 && !item.value("quic_start_server", false)) continue;

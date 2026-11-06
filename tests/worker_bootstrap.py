@@ -10,8 +10,10 @@ def _native_modules(modules):
     # Production bundles this module through the worker manifest. Native-only
     # subprocess tests need it too, without loading the compatibility runtime.
     result = dict(modules or {})
-    source = Path(__file__).resolve().parents[1] / 'src/inspection_protocol_state.py'
-    result.setdefault('inspection_protocol_state', source.read_text())
+    directory = Path(__file__).resolve().parents[1] / 'src'
+    for name in ('inspection_protocol_state', 'inspection_tls', 'inspection_tls_hello', 'inspection_tls_outcome',
+                       'inspection_tls_start', 'inspection_quic'):
+        result.setdefault(name, (directory / (name + '.py')).read_text())
     return result
 
 

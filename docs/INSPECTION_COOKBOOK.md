@@ -731,3 +731,28 @@ See the [lifecycle contract](../README.md#native-script-lifecycle) for failure,
 cleanup and preview behavior, and the [RADIUS regression](../tests/native_lifecycle_test.py)
 for a real `pyrad` client used against an isolated UDP peer, including disabled
 network and rejected-password cases.
+
+## ClientHello meta editing
+
+A flow deployment with `tls_clienthello: true` receives `api.phase == "tls"`
+and `api.tls.event == TlsEvent.CLIENT_HELLO`. `api.message` is None: this is a
+session notification, not an application-content fragment. Setup and ordinary
+content invocations keep `api.tls` set to None.
+
+Edit `api.tls.client_hello` directly and return its `commit()` result. The
+`original()` method returns an immutable snapshot; uncommitted changes are
+ignored. The draft edits outgoing TLS parameters, not the received TLS bytes.
+See the [native ClientHello example](../examples/hooks/native_clienthello.py)
+and [API contract](TLS_NATIVE_API_PROPOSAL.md) for the supported fields,
+original cipher-expression semantics and wire compatibility.
+
+
+## Native TLS start and outcomes
+
+See [Native TLS and QUIC metadata API](TLS_NATIVE_API.md) for the complete
+subscription matrix, immutable snapshots, decisions and wire encoding.
+`api.tls.start` exposes a prefilled draft for TlsEvent.START;
+`api.tls.outcome` contains read-only facts for TlsEvent.ESTABLISHED and FAILED.
+Both support original() and commit(); return the commit result to publish it.
+TlsSide identifies the proxy leg and TlsTransport distinguishes TCP TLS from
+QUIC parent handshakes. Public certificates are PEM bytes, never private keys.

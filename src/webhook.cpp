@@ -36,6 +36,163 @@ std::optional<std::string> decode_content(const std::string& content) {
     }
     return decoded;
 }
+
+// Schema conversion is confined to the transport edge. Both scripting APIs
+// receive the same validated draft, including when the producer uses schema 1.
+std::optional<nlohmann::json> decode_client_hello(const nlohmann::json& observation) {
+
+    const auto& draft = observation.at("client_hello");
+    if(!draft.at("alpn_offers").is_array()) return std::nullopt;
+
+    std::string protocols;
+    for(const auto& encoded : draft.at("alpn_offers")) {
+        const auto value = decode_content(encoded.get<std::string>());
+        if(!value || value->empty() || value->size() > 255 ||
+           base64_encode(*value) != encoded.get<std::string>()) {
+            return std::nullopt;
+        }
+
+        protocols.push_back(static_cast<char>(value->size()));
+        protocols += *value;
+        if(protocols.size() > 65535) return std::nullopt;
+    }
+
+    return nlohmann::json{
+        {"envelope", observation.at("envelope")},
+        {"client_hello_base64", draft.at("original").at("body_base64")},
+        {"upstream", {{"sni", draft.at("sni")},
+            {"alpn_base64", base64_encode(protocols)},
+            {"openssl_cipher_list", draft.at("openssl_cipher_list")}}}
+    };
+}
+
+std::optional<nlohmann::json> encode_client_hello(const nlohmann::json& observation,
+                                                  const nlohmann::json& decision) {
+
+    auto draft = observation.at("client_hello");
+    draft.erase("original");
+    draft["decision"] = "continue";
+    if(!decision.at("proceed").get<bool>()) draft["decision"] = "terminate";
+    else if(decision.at("ignore_connection").get<bool>()) draft["decision"] = "bypass";
+
+    if(decision.contains("upstream")) {
+        const auto& settings = decision.at("upstream");
+        draft["sni"] = settings.at("sni");
+        draft["openssl_cipher_list"] = settings.at("openssl_cipher_list");
+        const auto protocols = decode_content(settings.at("alpn_base64").get<std::string>());
+        if(!protocols) return std::nullopt;
+
+        draft["alpn_offers"] = nlohmann::json::array();
+        for(std::size_t offset = 0; offset < protocols->size();) {
+            const auto length = static_cast<unsigned char>((*protocols)[offset++]);
+            if(!length || offset + length > protocols->size())
+                return std::nullopt;
+            draft["alpn_offers"].push_back(base64_encode(protocols->substr(offset, length)));
+            offset += length;
+        }
+    }
+    return draft;
+}
+
+// The script model is shared by both APIs. Normalize negotiated schema 2 at
+// this edge, keeping older producers and the internal deployment chain intact.
+std::optional<nlohmann::json> decode_handshake(const nlohmann::json& observation, bool quic) {
+
+    const auto& envelope = observation.at("envelope");
+    const bool start = envelope.at("event") == "start";
+    const auto& value = observation.at(start ? "start" : "outcome");
+    if(!value.is_object()) return std::nullopt;
+
+    auto decoded = value;
+    decoded["envelope"] = envelope;
+
+    // Outcomes carry facts, not editable offers. Adapt only the ALPN encoding
+    // expected by the existing internal handlers.
+    if(!start) {
+        if(quic) {
+            const auto alpn = decode_content(value.at("alpn").get<std::string>());
+            if(!alpn || alpn->size() > 255) return std::nullopt;
+            decoded["alpn"] = *alpn;
+        } else {
+            decoded["alpn_base64"] = value.at("alpn");
+            decoded.erase("alpn");
+        }
+        return decoded;
+    }
+
+    // Client-facing starts have no upstream settings to reconstruct.
+    if(envelope.at("side") == "client") return decoded;
+
+    const auto& offers = value.at("alpn_offers");
+    if(!offers.is_array() || (quic && offers.size() != 1)) return std::nullopt;
+
+    // Rebuild the internal representation: raw ALPN for QUIC, a TLS
+    // length-prefixed list otherwise. Reject malformed values before dispatch.
+    std::string protocols;
+
+    for(const auto& encoded : offers) {
+        const auto protocol = decode_content(encoded.get<std::string>());
+        if(!protocol || protocol->empty() || protocol->size() > 255 ||
+           base64_encode(*protocol) != encoded.get<std::string>()) return std::nullopt;
+
+        if(!quic) protocols.push_back(static_cast<char>(protocol->size()));
+        protocols += *protocol;
+        if(protocols.size() > 65535) return std::nullopt;
+    }
+
+    decoded["upstream"] = {{"sni", value.at("sni")}};
+    if(quic) {
+        decoded["upstream"]["alpn"] = protocols;
+        decoded["upstream"]["ciphers"] = value.at("openssl_ciphersuites");
+    } else {
+        decoded["upstream"]["alpn_base64"] = base64_encode(protocols);
+        decoded["upstream"]["openssl_cipher_list"] = value.at("openssl_cipher_list");
+    }
+
+    return decoded;
+}
+
+// Publish only the decision and editable settings; handshake facts stay local.
+std::optional<nlohmann::json> encode_handshake(const nlohmann::json& observation,
+                                               const nlohmann::json& decision, bool quic) {
+
+    const bool start = observation.at("envelope").at("event") == "start";
+    nlohmann::json draft = {{"decision", decision.at("proceed").get<bool>() ? "continue" : "terminate"}};
+    if(!start) return draft; // Do not echo immutable certificates and observations.
+
+    // Preserve the original start settings when the script made no changes.
+    draft.update(observation.at("start"));
+    draft["decision"] = decision.at("proceed").get<bool>() ? "continue" : "terminate";
+    if(!decision.contains("upstream")) return draft;
+
+    // A committed offer replaces those defaults in the negotiated API shape.
+    const auto& settings = decision.at("upstream");
+    draft["sni"] = settings.at("sni");
+    draft["alpn_offers"] = nlohmann::json::array();
+
+    if(quic) {
+        draft["openssl_ciphersuites"] = settings.at("ciphers");
+        draft["alpn_offers"].push_back(base64_encode(settings.at("alpn").get<std::string>()));
+        return draft;
+    }
+
+    draft["openssl_cipher_list"] = settings.at("openssl_cipher_list");
+    const auto protocols = decode_content(settings.at("alpn_base64").get<std::string>());
+    if(!protocols) return std::nullopt;
+
+    // Expose each TLS protocol separately, without its wire length prefix.
+    for(std::size_t offset = 0; offset < protocols->size();) {
+        const auto length = static_cast<unsigned char>((*protocols)[offset++]);
+        if(!length || offset + length > protocols->size()) return std::nullopt;
+
+        draft["alpn_offers"].push_back(base64_encode(protocols->substr(offset, length)));
+        offset += length;
+    }
+
+    return draft;
+}
+
+
 }
 
 WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
@@ -51,7 +208,7 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
         const bool quic = action == "quic-lifecycle";
         const auto invalid = quic ? "Invalid QUIC observation" : "Invalid TLS observation";
         try {
-            const auto& observation = event.at("details").at(quic ? "quic" : "tls");
+            const auto observation = event.at("details").at(quic ? "quic" : "tls");
             const auto& envelope = observation.at("envelope");
             const auto id = event.at("id").get<std::string>();
             const auto phase = envelope.at("event").get<std::string>();
@@ -66,6 +223,26 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
                (phase == "client-hello" && side != "client") ||
                (side != "client" && side != "server") || observation.dump().size() > observation_limit) {
                 return {400, {{"error", invalid}}};
+            }
+
+            const auto schema = observation.value("schema", nlohmann::json(1));
+            if(!schema.is_number_integer() || (schema != 1 && schema != 2)) {
+                return {400, {{"error", invalid}}};
+            }
+            // Keep schema conversion at the boundary; deployments share one
+            // internal event representation regardless of producer version.
+            const bool meta_handshake = phase != "client-hello" && schema == 2;
+            if(meta_handshake) {
+                const auto decoded = decode_handshake(observation, quic);
+                if(!decoded) return {400, {{"error", invalid}}};
+                event["details"][quic ? "quic" : "tls"] = *decoded;
+            }
+
+            const bool meta_hello = !quic && phase == "client-hello" && observation.value("schema", 1) == 2;
+            if(meta_hello) {
+                const auto decoded = decode_client_hello(observation);
+                if(!decoded) return {400, {{"error", invalid}}};
+                event["details"]["tls"] = *decoded;
             }
 
             const auto decision = inspection
@@ -86,6 +263,28 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             }
             if((phase == "client-hello" || phase == "start") && decision.contains("upstream")) {
                 reply["upstream"] = decision["upstream"];
+            }
+
+            // Reply in the schema negotiated by this producer, after the
+            // deployment chain has finished applying its committed decisions.
+            if(meta_handshake) {
+                const auto draft = encode_handshake(observation, decision, quic);
+                if(!draft) return {503, {{"error", "Invalid committed TLS settings"}}};
+                reply.erase("proceed");
+                reply.erase("upstream");
+                reply["schema"] = 2;
+                reply[phase == "start" ? "start" : "outcome"] = *draft;
+            }
+
+            if(meta_hello) {
+                const auto draft = encode_client_hello(observation, decision);
+                if(!draft) return {503, {{"error", "Invalid committed ALPN"}}};
+
+                reply.erase("upstream");
+                reply.erase("proceed");
+                reply.erase("ignore_connection");
+                reply["schema"] = 2;
+                reply["client_hello"] = *draft;
             }
 
             return {200, std::move(reply)};
@@ -325,19 +524,24 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             }
             if(script_result.value("ok", false) && script_result.value("tls_lifecycle", false)) {
                 control["tls_lifecycle"] = 1;
+                control["tls_schema"] = 2;
             }
             if(script_result.value("ok", false) && script_result.value("tls_start_server", false)) {
                 control["tls_start_server"] = 1;
+                control["tls_schema"] = 2;
             }
             if(script_result.value("ok", false) && script_result.value("tls_start_client", false)) {
                 control["tls_start_client"] = 1;
+                control["tls_schema"] = 2;
             }
             if(script_result.value("ok", false) && script_result.value("quic_start_server", false)) {
                 control["quic_lifecycle"] = 1;
+                control["quic_schema"] = 2;
                 control["quic_start_server"] = 1;
             }
             if(script_result.value("ok", false) && script_result.value("tls_clienthello", false)) {
                 control["tls_clienthello"] = 1;
+                control["tls_clienthello_schema"] = 2;
             }
 
             return {200, {{"action", "accept"}, {"control", std::move(control)}}};

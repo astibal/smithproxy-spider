@@ -1,12 +1,11 @@
 """One synchronous ClientHello decision before native TLS startup."""
 
 import base64
-import ipaddress
-import re
 
 from addon_proxy_context import Context
 from addon_runtime import AddonRuntimeError
 from addon_tls import ClientHello, ClientHelloData
+from inspection_tls import TlsView, TlsDecision
 
 
 def tls_settings(connection):
@@ -64,47 +63,6 @@ def read_upstream(observation):
     return settings['sni'], tuple(offers)
 
 
-def upstream_reply(server, original):
-    # None/empty offers retain native defaults, as the reference tlsconfig
-    # fills in unspecified values. An empty SNI string explicitly omits SNI.
-    sni = original[0] if server.sni is None else server.sni
-    if not isinstance(sni, str):
-        raise AddonRuntimeError('Upstream SNI must be a hostname')
-    if sni != original[0] and sni:
-        try:
-            sni = sni.encode('idna').decode('ascii')
-        except UnicodeError as error:
-            raise AddonRuntimeError('Invalid upstream SNI hostname') from error
-
-        try:
-            ipaddress.ip_address(sni)
-        except ValueError:
-            pass
-        else:
-            raise AddonRuntimeError('Upstream SNI cannot be an IP literal')
-
-        labels = sni.removesuffix('.').split('.')
-        if len(sni) > 253 or any(not re.fullmatch(r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?', label)
-                                 for label in labels):
-            raise AddonRuntimeError('Invalid upstream SNI hostname')
-
-    offers = server.alpn_offers
-    if not isinstance(offers, (list, tuple)):
-        raise AddonRuntimeError('Upstream ALPN offers must be a list or tuple')
-    offers = tuple(offers) or original[1]
-    if any(not isinstance(value, bytes) or not 1 <= len(value) <= 255
-           or value not in original[1] for value in offers):
-        raise AddonRuntimeError('Upstream ALPN must select from the native offer')
-
-    wire = b''.join(bytes([len(value)]) + value for value in offers)
-    if len(wire) > 65535:
-        raise AddonRuntimeError('Upstream ALPN offer is too large')
-
-    server.sni = sni
-    server.alpn_offers = offers
-    return {'sni': sni, 'alpn_base64': base64.b64encode(wire).decode('ascii')}
-
-
 def cipher_reply(value):
     # mitmproxy's TCP TLS configuration treats an empty list as unspecified.
     # Nonempty lists are joined verbatim: OpenSSL owns expression semantics.
@@ -141,6 +99,11 @@ async def dispatch(adapter, observation):
     previous = adapter._tls_hellos.get(identity)
     if previous is not None and attempt <= previous:
         raise AddonRuntimeError('Duplicate or stale ClientHello')
+
+    try:
+        draft = TlsView.from_observation(observation).client_hello
+    except (ValueError, TypeError) as error:
+        raise AddonRuntimeError(str(error)) from error
 
     encoded = observation.get('client_hello_base64')
     if not isinstance(encoded, str) or not encoded or len(encoded) > 512 * 1024:
@@ -203,13 +166,30 @@ async def dispatch(adapter, observation):
     if data.establish_server_tls_first:
         raise AddonRuntimeError('Native ClientHello cannot override TLS handshake ordering')
 
-    decision = {
-        'proceed': not bool(registered.client.error),
-        'ignore_connection': data.ignore_connection,
-    }
-    if upstream is not None and decision['proceed'] and not data.ignore_connection:
-        decision['upstream'] = upstream_reply(registered.server, upstream)
-        if allow_ciphers:
-            decision['upstream']['openssl_cipher_list'] = cipher_reply(registered.server.cipher_list)
+    # Compatibility mutations enter the same native draft/commit path as
+    # first-class scripts. Only addon-specific default semantics live here.
+    if registered.client.error:
+        draft.decision = TlsDecision.TERMINATE
+    elif data.ignore_connection:
+        draft.decision = TlsDecision.BYPASS
 
-    return decision
+    if upstream is not None and draft.decision is TlsDecision.CONTINUE:
+        draft.sni = upstream[0] if registered.server.sni is None else registered.server.sni
+        if not isinstance(registered.server.alpn_offers, (list, tuple)):
+            raise AddonRuntimeError('Upstream ALPN offers must be a list or tuple')
+        draft.alpn_offers = registered.server.alpn_offers or upstream[1]
+        if allow_ciphers:
+            draft.openssl_cipher_list = cipher_reply(registered.server.cipher_list)
+
+    try:
+        result = draft.commit()
+    except (ValueError, TypeError) as error:
+        raise AddonRuntimeError(str(error)) from error
+
+    if upstream is not None:
+        registered.server.sni = result.sni
+        registered.server.alpn_offers = result.alpn_offers
+    reply = draft.publish(result)
+    if not allow_ciphers and 'upstream' in reply:
+        reply['upstream'].pop('openssl_cipher_list', None)
+    return reply

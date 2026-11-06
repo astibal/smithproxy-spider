@@ -153,9 +153,9 @@ return api.message.translate()
 
 ### InspectionViews.phase
 
-Callback phase: setup at connection-start, content for payloads and offline previews.
+Callback phase: setup, content, or tls for a session TLS notification.
 
-Availability: Every callback. Setup has metadata but no Message.
+Availability: Every callback. Setup and TLS notifications have no Message.
 
 Access: read-only snapshot; type/result: `str`.
 
@@ -165,6 +165,25 @@ Expert: This member has the same behavior in both modes. It does not select or p
 
 ```python
 api.print(api.phase)
+```
+
+### InspectionViews.tls
+
+Typed TLS notification and metadata draft; None for other callbacks.
+
+Availability: Explicit ClientHello subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `TlsView | None`.
+
+Easy: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+Expert: This member has the same behavior in both modes. It does not select or persist commit safety.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
 ```
 
 ## Message
@@ -2694,3 +2713,1026 @@ Expert: Read-only observation; does not select or change commit safety.
 for stream in api.http2.state or ():
     api.print(stream.reset)
 ```
+
+## TlsView
+
+Session TLS notification; not application content.
+
+### TlsView.event
+
+Typed notification kind.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `TlsEvent`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### TlsView.side
+
+Client-facing or upstream-facing TLS leg.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `TlsSide`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### TlsView.attempt
+
+Native handshake attempt identity.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `int`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### TlsView.client_hello
+
+Draft present only for ClientHello.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `ClientHelloDraft | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### TlsView.outcome
+
+Facts and decision for established/failed events.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `OutcomeDraft | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### TlsView.start
+
+Prefilled settings for the selected transport.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `TlsStartDraft | QuicStartDraft | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### TlsView.transport
+
+TCP TLS or QUIC parent handshake.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `TlsTransport`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+## ClientHelloDraft
+
+Prefilled outgoing TLS metadata, with an immutable original observation.
+
+### ClientHelloDraft.sni
+
+Outgoing SNI; an empty string omits it.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `str`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### ClientHelloDraft.alpn_offers
+
+Select and order the effective native ALPN offer.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `list[bytes]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### ClientHelloDraft.openssl_cipher_list
+
+OpenSSL TLS <=1.2 expression; None retains native defaults.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### ClientHelloDraft.decision
+
+Continue, bypass or terminate this handshake.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `TlsDecision`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### ClientHelloDraft.original
+
+Return the stored deeply immutable original values.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `ClientHelloSnapshot`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### ClientHelloDraft.commit
+
+Validate and freeze this draft. Return the result to publish it.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `TlsCommit`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+## ClientHelloSnapshot
+
+Original peer offers and the initial native cipher expression.
+
+### ClientHelloSnapshot.sni
+
+Original peer SNI.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### ClientHelloSnapshot.alpn_offers
+
+Original peer ALPN offers.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `tuple[bytes, ...]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### ClientHelloSnapshot.cipher_suites
+
+Original peer cipher identifiers.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `tuple[int, ...]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### ClientHelloSnapshot.extensions
+
+Original peer extension values.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `tuple[tuple[int, bytes], ...]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+### ClientHelloSnapshot.openssl_cipher_list
+
+Initial native expression, not a peer wire field.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:
+    hello = api.tls.client_hello
+    hello.sni = "origin.example"
+    return hello.commit()
+```
+
+## QuicStartSnapshot
+
+Immutable effective QUIC offer.
+
+### QuicStartSnapshot.sni
+
+Original outgoing SNI.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.QUIC:
+    start = api.tls.start
+    start.openssl_ciphersuites = "TLS_AES_128_GCM_SHA256"
+    return start.commit()
+```
+
+### QuicStartSnapshot.alpn_offers
+
+One original ALPN protocol.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `tuple[bytes, ...]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.QUIC:
+    start = api.tls.start
+    start.openssl_ciphersuites = "TLS_AES_128_GCM_SHA256"
+    return start.commit()
+```
+
+### QuicStartSnapshot.openssl_ciphersuites
+
+Original TLS 1.3 cipher expression.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.QUIC:
+    start = api.tls.start
+    start.openssl_ciphersuites = "TLS_AES_128_GCM_SHA256"
+    return start.commit()
+```
+
+## QuicStartDraft
+
+QUIC upstream meta editing; not an HTTP/3 stream.
+
+### QuicStartDraft.sni
+
+Outgoing SNI.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `str`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.QUIC:
+    start = api.tls.start
+    start.openssl_ciphersuites = "TLS_AES_128_GCM_SHA256"
+    return start.commit()
+```
+
+### QuicStartDraft.alpn_offers
+
+Exactly one ASCII ALPN protocol.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `list[bytes]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.QUIC:
+    start = api.tls.start
+    start.openssl_ciphersuites = "TLS_AES_128_GCM_SHA256"
+    return start.commit()
+```
+
+### QuicStartDraft.openssl_ciphersuites
+
+OpenSSL TLS 1.3 suites; None keeps defaults.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.QUIC:
+    start = api.tls.start
+    start.openssl_ciphersuites = "TLS_AES_128_GCM_SHA256"
+    return start.commit()
+```
+
+### QuicStartDraft.decision
+
+CONTINUE or TERMINATE.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `TlsDecision`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.QUIC:
+    start = api.tls.start
+    start.openssl_ciphersuites = "TLS_AES_128_GCM_SHA256"
+    return start.commit()
+```
+
+### QuicStartDraft.original
+
+Return the stored deeply immutable original values.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `QuicStartSnapshot`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.QUIC:
+    start = api.tls.start
+    start.openssl_ciphersuites = "TLS_AES_128_GCM_SHA256"
+    return start.commit()
+```
+
+### QuicStartDraft.commit
+
+Validate and freeze this draft. Return the result to publish it.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `QuicStartCommit`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.QUIC:
+    start = api.tls.start
+    start.openssl_ciphersuites = "TLS_AES_128_GCM_SHA256"
+    return start.commit()
+```
+
+## QuicStartCommit
+
+Immutable QUIC offer decision.
+
+This type has no public schema members; see the cookbook for practical usage.
+
+## TlsStartSnapshot
+
+Original effective native start settings.
+
+### TlsStartSnapshot.sni
+
+Outgoing SNI; an empty string omits it.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.TLS:
+    start = api.tls.start
+    api.print(start.original().sni)
+    return start.commit()
+```
+
+### TlsStartSnapshot.alpn_offers
+
+Select and order the effective native ALPN offer.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `list[bytes]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.TLS:
+    start = api.tls.start
+    api.print(start.original().sni)
+    return start.commit()
+```
+
+### TlsStartSnapshot.openssl_cipher_list
+
+OpenSSL TLS <=1.2 expression; None retains native defaults.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.TLS:
+    start = api.tls.start
+    api.print(start.original().sni)
+    return start.commit()
+```
+
+## TlsStartDraft
+
+Upstream offer meta editing; client-facing settings remain read-only.
+
+### TlsStartDraft.sni
+
+Outgoing SNI; an empty string omits it.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `str`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.TLS:
+    start = api.tls.start
+    api.print(start.original().sni)
+    return start.commit()
+```
+
+### TlsStartDraft.alpn_offers
+
+Select and order the effective native ALPN offer.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `list[bytes]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.TLS:
+    start = api.tls.start
+    api.print(start.original().sni)
+    return start.commit()
+```
+
+### TlsStartDraft.openssl_cipher_list
+
+OpenSSL TLS <=1.2 expression; None retains native defaults.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.TLS:
+    start = api.tls.start
+    api.print(start.original().sni)
+    return start.commit()
+```
+
+### TlsStartDraft.decision
+
+CONTINUE or TERMINATE at TLS start.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `TlsDecision`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.TLS:
+    start = api.tls.start
+    api.print(start.original().sni)
+    return start.commit()
+```
+
+### TlsStartDraft.original
+
+Return the stored deeply immutable original values.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `TlsStartSnapshot`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.TLS:
+    start = api.tls.start
+    api.print(start.original().sni)
+    return start.commit()
+```
+
+### TlsStartDraft.commit
+
+Validate and freeze this draft. Return the result to publish it.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `TlsCommit`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.START and api.tls.transport is TlsTransport.TLS:
+    start = api.tls.start
+    api.print(start.original().sni)
+    return start.commit()
+```
+
+## OutcomeSnapshot
+
+Immutable handshake facts.
+
+### OutcomeSnapshot.sni
+
+Observed SNI.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeSnapshot.alpn
+
+Negotiated ALPN bytes.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `bytes | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeSnapshot.cipher
+
+Negotiated cipher name.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeSnapshot.tls_version
+
+Observed TLS version.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeSnapshot.error
+
+Native failure description.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeSnapshot.certificates
+
+Public peer certificate chain as immutable PEM bytes.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `tuple[bytes, ...]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+## OutcomeDraft
+
+Observed facts remain read-only; an established session may be terminated.
+
+### OutcomeDraft.sni
+
+Observed SNI.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeDraft.alpn
+
+Negotiated ALPN bytes.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `bytes | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeDraft.cipher
+
+Negotiated cipher name.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeDraft.tls_version
+
+Observed TLS version.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeDraft.error
+
+Native failure description.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `str | None`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeDraft.certificates
+
+Public peer certificate chain as immutable PEM bytes.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `tuple[bytes, ...]`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeDraft.decision
+
+CONTINUE or TERMINATE; failed events accept CONTINUE only.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: mutable draft; type/result: `TlsDecision`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeDraft.original
+
+Return the stored deeply immutable original values.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `OutcomeSnapshot`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+### OutcomeDraft.commit
+
+Validate and freeze this draft. Return the result to publish it.
+
+Availability: Explicit TLS subscription on a native flow deployment.
+
+Access: read-only snapshot; type/result: `DecisionCommit`.
+
+Easy: TLS metadata validation is independent of content Safety modes.
+
+Expert: Unsupported handshake operations remain unavailable.
+
+```python
+if api.tls is not None and api.tls.event is TlsEvent.ESTABLISHED:
+    outcome = api.tls.outcome
+    api.print(outcome.original().cipher)
+    return outcome.commit()
+```
+
+## DecisionCommit
+
+Immutable TLS decision.
+
+This type has no public schema members; see the cookbook for practical usage.
+
+## TlsCommit
+
+Owned immutable settings; publication requires returning this result.
+
+This type has no public schema members; see the cookbook for practical usage.

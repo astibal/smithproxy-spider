@@ -31,6 +31,7 @@ def main():
     selection.add_argument('--starttls-only', action='store_true')
     selection.add_argument('--starttls-failures-only', action='store_true')
     selection.add_argument('--resumption-only', action='store_true')
+    selection.add_argument('--clienthello-only', action='store_true')
     parser.add_argument('--broker', type=Path)
     parser.add_argument('--pam-module', type=Path)
     args = parser.parse_args()
@@ -101,7 +102,10 @@ def main():
                 if (event['action'] == 'tls-lifecycle' and mode == 'invalid-upstream'
                         and event['details']['tls']['envelope']['event'] == 'client-hello'):
                     # A valid SNI change must not survive an invalid ALPN offer.
-                    result['upstream']['alpn_base64'] = base64.b64encode(bytes([2]) + b'h3').decode()
+                    if result.get('schema') == 2:
+                        result['client_hello']['alpn_offers'] = [base64.b64encode(b'h3').decode()]
+                    else:
+                        result['upstream']['alpn_base64'] = base64.b64encode(bytes([2]) + b'h3').decode()
                 if (event['action'] == 'http-connect' and mode == 'hold-request' and
                         event['details']['http_connect']['envelope']['event'] == 'request'):
                     request_held.set()
@@ -164,12 +168,13 @@ def main():
 
         deployment = None
 
-        def deploy(source, tls_clienthello=False, tls_start_server=False, tls_start_client=False):
+        def deploy(source, tls_clienthello=False, tls_start_server=False, tls_start_client=False, native=False, tls_lifecycle=False):
             nonlocal deployment
             value = {'operation': 'deploy', 'name': 'CONNECT test', 'hook': 'content',
-                     'scope': 'all', 'instancing': 'flow', 'script_api': 'mitmproxy',
-                     'script': '#!mitmproxy\n' + source, 'tls_clienthello': tls_clienthello,
-                     'tls_start_server': tls_start_server, 'tls_start_client': tls_start_client}
+                     'scope': 'all', 'instancing': 'flow', 'script_api': 'spider' if native else 'mitmproxy',
+                     'script': source if native else '#!mitmproxy\n' + source, 'tls_clienthello': tls_clienthello,
+                     'tls_start_server': tls_start_server, 'tls_start_client': tls_start_client,
+                     'tls_lifecycle': tls_lifecycle}
             if deployment:
                 value['id'] = deployment
             state = configure(value)
@@ -320,9 +325,13 @@ def main():
                 run_starttls_cases(deploy, start_tls_proxy, certificates, exchanges, args.native_source)
                 return
 
-            from tls_proxy_cases import run_tls_cases, run_tls_failure_cases
+            from tls_proxy_cases import run_tls_cases, run_tls_failure_cases, run_native_clienthello_cases
+            if args.clienthello_only:
+                run_native_clienthello_cases(deploy, start_tls_proxy, certificates, exchanges)
+                return
             run_tls_cases(deploy, start_tls_proxy, certificates, exchanges, tls_relay_mode)
             run_tls_failure_cases(deploy, start_tls_proxy, certificates, exchanges, tls_relay_mode)
+            run_native_clienthello_cases(deploy, start_tls_proxy, certificates, exchanges)
             mode = 'forward'
 
             proxy = launch([args.proxy, '--config-file', config, '--debug'], process_env(root))

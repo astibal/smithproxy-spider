@@ -123,7 +123,8 @@ def run_starttls_failure_cases(deploy, start_proxy, exchanges):
             assert all(status == 200 for _, _, status in events), events
             for event, reply, _ in events:
                 if event['action'] == 'tls-lifecycle':
-                    assert reply.get('proceed') is True, reply
+                    draft = reply.get('outcome') or reply.get('start') or reply.get('client_hello') or {}
+                    assert reply.get('proceed') is True or draft.get('decision') == 'continue', reply
 
             assert len({e['id'] for e, _, _ in events}) == 1, events
             actions = [e['action'] for e, _, _ in events]

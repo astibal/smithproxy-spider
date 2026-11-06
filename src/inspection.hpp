@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <optional>
 #include <mutex>
 #include <map>
 #include <memory>
@@ -38,6 +39,11 @@ public:
     Collection collection;
 private:
     nlohmann::json transport_lifecycle(const nlohmann::json& event, std::string_view protocol);
+    struct TlsProgress {
+        std::uint64_t hello = 0;
+        std::uint64_t starts[2]{};
+        std::uint64_t outcomes[2]{}; // client and server, independently
+    };
     struct Instance {
         nlohmann::json state = nlohmann::json::object();
         std::chrono::steady_clock::time_point used = std::chrono::steady_clock::now();
@@ -47,6 +53,7 @@ private:
         nlohmann::json h1_responses = nullptr; // ordered origin/local response slots
         bool hold_credit_reserved = false; // backend-owned until this instance ends
         nlohmann::json protocols = nullptr; // opt-in Spider-local protocol observations
+        std::optional<TlsProgress> tls_progress; // present only for a subscribed setup owner
     };
     static std::size_t state_charge(const nlohmann::json& state, const nlohmann::json& holds,
                                    const nlohmann::json& translations,
@@ -78,7 +85,12 @@ private:
         std::string deployment;
         std::shared_ptr<Runtime> runtime;
         int timeout_ms;
+        std::uint64_t version = 0;
     };
+
+    nlohmann::json run_native_tls(const ConnectOwner& owner, Instance& instance,
+                                         const nlohmann::json& event,
+                                         const nlohmann::json& observation, int budget);
 
     struct ConnectPin {
         std::timed_mutex serial;

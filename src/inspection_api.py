@@ -6,6 +6,7 @@ from inspection_protocol_state import H1MessageState, H2MessageState, H2StreamSt
 import re
 import base64
 import hashlib
+from inspection_tls import TlsView
 
 
 class Safety:
@@ -907,8 +908,12 @@ class InspectionViews:
     instance: InstanceContext = documented('Identity and lifecycle mode of this invocation.', 'api.print(api.instance.mode, api.instance.key, api.instance.version)')
     connection: Connection = documented('Explicit live connection mode and HTTP/2 policy.',
         'api.connection.set_mode(Mode.Translate)\nreturn api.message.translate()', access='staged connection policy')
-    phase: str = documented('Callback phase: setup at connection-start, content for payloads and offline previews.',
-        'api.print(api.phase)', availability='Every callback. Setup has metadata but no Message.')
+    phase: str = documented('Callback phase: setup, content, or tls for a session TLS notification.',
+        'api.print(api.phase)', availability='Every callback. Setup and TLS notifications have no Message.')
+    tls: TlsView | None = documented(
+        'Typed TLS notification and metadata draft; None for other callbacks.',
+        'if api.tls is not None and api.tls.event is TlsEvent.CLIENT_HELLO:\n    hello = api.tls.client_hello\n    hello.sni = "origin.example"\n    return hello.commit()',
+        availability='Explicit ClientHello subscription on a native flow deployment.', default=None)
 
 
 def make_views(event, payload, enrichments):
@@ -933,12 +938,15 @@ def api_schema():
              RewritePart, H1ChunkedBody, H2Body, PartContent, H2Headers, HpackField,
              PartList, HeldCommit, Connection, ConnectionHttp2,
              H1MessageState, H2MessageState, H2StreamState]
-    return {'version': '0.6', 'root': 'InspectionViews', 'types': {
+    schema = {'version': '0.6', 'root': 'InspectionViews', 'types': {
         cls.__name__: {'description': cls.__doc__, 'fields': [
             {'name': f.name, 'type': str(f.type).replace("<class '", '').replace("'>", ''),
              **dict(f.metadata)} for f in (fields(cls) if is_dataclass(cls) else ())],
              'methods': [method.__api_doc__ for method in vars(cls).values() if hasattr(method, '__api_doc__')]}
              for cls in types}}
+    from inspection_tls import api_types
+    schema['types'].update(api_types())
+    return schema
 
 
 # The isolated worker embeds these sources before entering the sandbox. Standalone

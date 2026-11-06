@@ -119,7 +119,8 @@ def run_resumption_cases(deploy, start_proxy, certificates, exchanges):
             assert all(status == 200 for _, _, status in events), events
             for event, reply, _ in events:
                 if event['action'] in ('server-lifecycle', 'tls-lifecycle'):
-                    assert reply.get('proceed') is True, reply
+                    draft = reply.get('outcome') or reply.get('start') or reply.get('client_hello') or {}
+                    assert reply.get('proceed') is True or draft.get('decision') == 'continue', reply
 
             identities = {e['id'] for e, _, _ in events}
             assert len(identities) == 3, identities

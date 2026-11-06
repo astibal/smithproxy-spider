@@ -1,12 +1,13 @@
 """TLS start interception without transferring native SSL ownership."""
 
 from addon_clienthello_native import (
-    cipher_reply, read_upstream, reject_tls_changes, tls_settings, upstream_reply,
+    cipher_reply, reject_tls_changes, tls_settings,
 )
 from addon_proxy_context import Context
 from addon_runtime import AddonRuntimeError
 from addon_tls import TlsData
-from addon_tls_native import NativeSSLUnavailable, optional_text
+from addon_tls_native import NativeSSLUnavailable
+from inspection_tls import TlsView, TlsDecision
 
 
 async def dispatch(adapter, observation):
@@ -37,22 +38,15 @@ async def dispatch(adapter, observation):
 
     server = registered.server
     conn = registered.client if side == 'client' else server
-    upstream = None
+    view = TlsView.from_observation(observation)
+    draft = view.start
     if side == 'server':
-        upstream = read_upstream(observation)
-        if upstream is None:
-            raise AddonRuntimeError('TLS start requires native upstream settings')
-
-        expression = observation['upstream'].get('openssl_cipher_list')
-        if expression is not None and not isinstance(expression, str):
-            raise AddonRuntimeError('Invalid native OpenSSL cipher expression')
-
-        server.sni, server.alpn_offers = upstream
+        server.sni = draft.sni
+        server.alpn_offers = tuple(draft.alpn_offers)
+        expression = draft.openssl_cipher_list
         server.cipher_list = expression.split(':') if expression is not None else []
     else:
-        # Client start carries observations only, before SSL_accept. Negotiated
-        # values and the establishment timestamp belong to the later outcome.
-        conn.sni = optional_text(observation, 'sni', 255)
+        conn.sni = draft.original().sni or None
 
     conn.tls = True
 
@@ -88,11 +82,18 @@ async def dispatch(adapter, observation):
         raise AddonRuntimeError('TLS start cannot replace native context or transport')
 
     if conn.error:
-        return {'proceed': False}
+        draft.decision = TlsDecision.TERMINATE
+    elif side == 'server':
+        # Unspecified addon settings preserve mitmproxy defaults. Native
+        # scripts use the draft directly and can explicitly clear ALPN.
+        draft.sni = draft.sni if server.sni is None else server.sni
+        if not isinstance(server.alpn_offers, (list, tuple)):
+            raise AddonRuntimeError('Upstream ALPN offers must be a list or tuple')
+        draft.alpn_offers = server.alpn_offers or draft.alpn_offers
+        draft.openssl_cipher_list = cipher_reply(server.cipher_list)
 
-    if side == 'client':
-        return {'proceed': True}
-
-    settings = upstream_reply(server, upstream)
-    settings['openssl_cipher_list'] = cipher_reply(server.cipher_list)
-    return {'proceed': True, 'upstream': settings}
+    try:
+        result = draft.commit()
+    except ValueError as error:
+        raise AddonRuntimeError(str(error)) from error
+    return draft.publish(result)
