@@ -78,7 +78,8 @@ bool SmithproxyClient::renew_webhook() {
     if (!legacy_webhook_api_) {
         auto params = nlohmann::json{{"url", config_.callback_url},
                                      {"tls_verify", config_.verify_tls},
-                                     {"ttl_seconds", 60}};
+                                     {"ttl_seconds", 60},
+                                     {"connection_start_synchronous", true}};
         if (!lease_id_.empty()) params["lease_id"] = lease_id_;
         const auto response = post_json(config_.api_url + "/api/v2/webhook/lease",
             {{"auth_token", auth_token_}, {"csrf_token", csrf_token_}, {"params", std::move(params)}},
@@ -113,7 +114,9 @@ bool SmithproxyClient::renew_webhook() {
 
     const nlohmann::json request = {
         {"auth_token", auth_token_}, {"csrf_token", csrf_token_},
-        {"params", {{"rande_url", config_.callback_url}, {"rande_tls_verify", config_.verify_tls}}}
+        {"params", {{"rande_url", config_.callback_url},
+                    {"rande_tls_verify", config_.verify_tls},
+                    {"connection_start_synchronous", true}}}
     };
     const auto response = post_json(config_.api_url + "/api/webhook/register", request, config_.verify_tls);
     if (!response.error.empty()) { publish_status("error", "register: " + response.error); return false; }

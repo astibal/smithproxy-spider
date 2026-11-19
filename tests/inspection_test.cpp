@@ -66,12 +66,18 @@ int main() {
     setup["action"] = "connection-start";
     setup["details"]["info"].erase("content");
     setup["details"]["info"].erase("side");
+    setup["details"]["info"]["synchronous"] = true;
     setup["details"]["info"]["webhook_control"] = {{"version", 1}, {"sequence", 0}, {"rewrite", false}};
     runtime.configure({{"script", "if api.phase == 'setup':\n    api.connection.request_rewrite()\n    return\nreturn api.bytes.upper()"},
                        {"enabled", true}, {"scope", "all"}});
     auto setup_reply = spider::process_webhook(store, decisions, setup, std::nullopt, nullptr, &runtime);
     assert(setup_reply.body["action"] == "accept");
     assert(setup_reply.body["control"]["rewrite"] == true);
+    auto asynchronous_setup = setup;
+    asynchronous_setup["details"]["info"]["synchronous"] = false;
+    auto asynchronous_reply = spider::process_webhook(
+        store, decisions, asynchronous_setup, std::nullopt, nullptr, &runtime);
+    assert(asynchronous_reply.body.empty());
     // Endpoint INSPECT rules must select the setup callback too. Setup must
     // not produce a GUI ticket or increment a payload-match counter.
     setup["details"]["info"]["session"] = "tcp_127.0.0.1:1234+tcp_127.0.0.2:80";

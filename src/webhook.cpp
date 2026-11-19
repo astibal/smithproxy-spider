@@ -46,6 +46,10 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
+    const bool synchronous_start = action == "connection-start" &&
+        event.value("details", nlohmann::json::object())
+            .value("info", nlohmann::json::object())
+            .value("synchronous", false);
     constexpr std::array<std::string_view, 9> supported{
         "access-request", "connection-content", "connection-start", "connection-stop",
         "connection-info", "hostname-info", "info", "neighbor", "ping",
@@ -103,7 +107,7 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     const auto enrichments = enrichment && raw_payload
         ? enrichment->process(event, *raw_payload) : std::vector<SxbnEnvelope>{};
     auto script_result = nlohmann::json(nullptr);
-    if (inspection) {
+    if (inspection && (action != "connection-start" || synchronous_start)) {
         auto inputs = nlohmann::json::array();
         for (const auto& item : enrichments) inputs.push_back({{"metadata", item.metadata}, {"content", base64_encode(item.payload)}});
         if (event.contains("collections")) {
