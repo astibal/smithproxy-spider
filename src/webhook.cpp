@@ -46,10 +46,10 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     if (!event.is_object()) return {400, {{"error", "JSON object required"}}};
 
     const auto action = event.value("action", "");
-    const bool synchronous_start = action == "connection-start" &&
-        event.value("details", nlohmann::json::object())
-            .value("info", nlohmann::json::object())
-            .value("synchronous", false);
+    const bool synchronous = event.value("details", nlohmann::json::object())
+        .value("info", nlohmann::json::object())
+        .value("synchronous", action == "connection-content");
+    const bool controlling = action == "connection-start" || action == "connection-content";
     constexpr std::array<std::string_view, 9> supported{
         "access-request", "connection-content", "connection-start", "connection-stop",
         "connection-info", "hostname-info", "info", "neighbor", "ping",
@@ -62,7 +62,8 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
         return {200, {{"action", "info-response"},
                       {"protocols", {{"connection-content", {"sxbn-001"}}}}}};
     }
-    const auto ticket = decisions.prepare(event);
+    const auto ticket = controlling && !synchronous
+        ? std::shared_ptr<DecisionBroker::Ticket>{} : decisions.prepare(event);
     decisions.observe(event);
     if (action == "connection-stop" || action == "connection-start") decisions.heavy_traffic.stop(event.value("id", ""));
     if (action == "connection-content") {
@@ -107,7 +108,7 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
     const auto enrichments = enrichment && raw_payload
         ? enrichment->process(event, *raw_payload) : std::vector<SxbnEnvelope>{};
     auto script_result = nlohmann::json(nullptr);
-    if (inspection && (action != "connection-start" || synchronous_start)) {
+    if (inspection && (!controlling || synchronous)) {
         auto inputs = nlohmann::json::array();
         for (const auto& item : enrichments) inputs.push_back({{"metadata", item.metadata}, {"content", base64_encode(item.payload)}});
         if (event.contains("collections")) {
@@ -165,7 +166,7 @@ WebhookReply process_webhook(SessionStore& store, DecisionBroker& decisions,
             return {200, {{"action", "replace"}, {"content", script_result["replacement"]}}};
         return {200, {{"action", "unchanged"}}};
     }
-    if (action == "connection-content") return decisions.wait(ticket, event);
+    if (action == "connection-content" && synchronous) return decisions.wait(ticket, event);
     return {200, nlohmann::json::object()};
 }
 

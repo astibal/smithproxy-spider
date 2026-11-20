@@ -34,7 +34,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(401, {"error": "access denied"})
                 return
             callback = body["params"]["rande_url"]
-            assert body["params"]["connection_start_synchronous"] is True
+            assert body["params"]["synchronous_mode"] is True
             Handler.callback = callback
             self.reply(200, {"status": "accepted"})
             threading.Thread(target=send_ping, args=(callback,), daemon=True).start()
@@ -44,7 +44,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(401, {"error": "access denied"})
                 return
             params = body["params"]
-            assert params["connection_start_synchronous"] is True
+            assert params["synchronous_mode"] is True
             Handler.callback = params["url"]
             presented = params.get("lease_id")
             if presented not in (None, lease_id):

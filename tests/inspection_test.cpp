@@ -78,6 +78,13 @@ int main() {
     auto asynchronous_reply = spider::process_webhook(
         store, decisions, asynchronous_setup, std::nullopt, nullptr, &runtime);
     assert(asynchronous_reply.body.empty());
+    auto asynchronous_content = event;
+    asynchronous_content["details"]["info"]["synchronous"] = false;
+    const auto runs_before_async_content = runtime.status()["runs"];
+    asynchronous_reply = spider::process_webhook(
+        store, decisions, asynchronous_content, std::nullopt, nullptr, &runtime);
+    assert(asynchronous_reply.body.empty());
+    assert(runtime.status()["runs"] == runs_before_async_content);
     // Endpoint INSPECT rules must select the setup callback too. Setup must
     // not produce a GUI ticket or increment a payload-match counter.
     setup["details"]["info"]["session"] = "tcp_127.0.0.1:1234+tcp_127.0.0.2:80";

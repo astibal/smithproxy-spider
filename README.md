@@ -274,10 +274,10 @@ for session tokens, acquires an owned v2 webhook lease (with automatic fallback
 to the legacy API), renews it every 20 seconds, and adds a process-local random
 token to its callback URL.
 
-The registration requests synchronous `connection-start` delivery. Smithproxy
-marks these callbacks with `details.info.synchronous: true`; Spider runs setup
-scripts only for marked callbacks. Unmarked connection starts remain observation
-events and their replies have no control effect.
+The registration requests `synchronous_mode`. Smithproxy then waits for every
+controlling webhook event and marks it with `details.info.synchronous: true`;
+Spider runs setup and content scripts only for marked callbacks. Unmarked events
+remain observations and their replies have no control effect.
 
 Serve `frontend/` on the workstation, for example:
 
